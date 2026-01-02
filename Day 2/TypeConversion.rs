@@ -26,3 +26,16 @@ fn main() {
 
     println!("x = {}", x);
 }
+
+
+
+/*
+
+Why Shadowing Is Powerful
+
+Change type
+
+Keep immutability
+
+Cleaner logic
+*/
