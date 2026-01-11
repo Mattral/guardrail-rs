@@ -1,9 +1,3 @@
-Great choice. Rust is an excellent language to learn—especially for someone with your engineering + ML background—because it builds **low-level correctness, memory safety, and performance intuition** that transfers to systems, robotics, and high-reliability domains.
-
-Below is a **30-day beginner-friendly Rust roadmap**, followed by **Day 1 in full detail with very basic programs and explanations**.
-
----
-
 # 🦀 Rust in 30 Days — Beginner Roadmap
 
 **Goal:** From zero → comfortable writing small Rust programs and understanding ownership.
