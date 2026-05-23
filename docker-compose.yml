@@ -1,0 +1,39 @@
+# docker-compose for local development and evaluation.
+#
+# Usage:
+#   cp guardrail.example.toml guardrail.toml   # edit upstream_url etc.
+#   docker compose up -d
+#
+# guardrail-rs:  http://localhost:8080
+# Prometheus UI: http://localhost:9091
+
+services:
+  guardrail-rs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: guardrail-rs:latest
+    container_name: guardrail-rs
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./guardrail.toml:/etc/guardrail/guardrail.toml:ro
+      - ./models:/etc/guardrail/models:ro
+    command: ["run", "--config", "/etc/guardrail/guardrail.toml"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/guardrail", "validate", "--config", "/etc/guardrail/guardrail.toml"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: guardrail-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./contrib/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - guardrail-rs
+    restart: unless-stopped
