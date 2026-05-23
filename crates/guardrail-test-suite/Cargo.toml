@@ -1,0 +1,20 @@
+[package]
+name        = "guardrail-test-suite"
+description = "End-to-end integration tests for guardrail-rs (not published)"
+version.workspace = true
+edition.workspace = true
+publish     = false
+
+[dependencies]
+
+[dev-dependencies]
+guardrail-core        = { path = "../guardrail-core" }
+guardrail-config      = { path = "../guardrail-config" }
+guardrail-classifiers = { path = "../guardrail-classifiers" }
+guardrail-proxy       = { path = "../guardrail-proxy" }
+
+tokio      = { workspace = true }
+reqwest    = { workspace = true }
+serde_json = { workspace = true }
+wiremock   = "0.6"
+tempfile   = "3"
