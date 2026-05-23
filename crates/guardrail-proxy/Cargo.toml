@@ -1,0 +1,44 @@
+[package]
+name        = "guardrail-proxy"
+description = "HTTP reverse-proxy server for guardrail-rs"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+homepage.workspace    = true
+categories.workspace  = true
+keywords.workspace    = true
+
+[features]
+default = []
+onnx = ["guardrail-config/onnx", "guardrail-classifiers/onnx"]
+
+[dependencies]
+guardrail-core        = { path = "../guardrail-core" }
+guardrail-config      = { path = "../guardrail-config" }
+guardrail-classifiers = { path = "../guardrail-classifiers" }
+
+tokio          = { workspace = true }
+hyper          = { workspace = true }
+hyper-util     = { workspace = true }
+http-body-util = { workspace = true }
+reqwest        = { workspace = true }
+bytes          = { workspace = true }
+futures        = { workspace = true }
+
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+anyhow     = { workspace = true }
+
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+prometheus          = { workspace = true }
+uuid                = { workspace = true }
+
+[dev-dependencies]
+tokio-stream = { workspace = true }
+wiremock     = "0.6"
+tempfile     = "3"
+tokio-test   = "0.4"

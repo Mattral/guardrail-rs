@@ -1,0 +1,125 @@
+# guardrail-rs example configuration
+#
+# Copy this file to `guardrail.toml`, adjust `server.upstream_url` to point at
+# your LLM provider, and run:
+#
+#   guardrail run --config guardrail.toml
+#
+# Validate without starting the server:
+#
+#   guardrail validate --config guardrail.toml
+
+[server]
+# Address the proxy listens on. Point your application's OpenAI/Anthropic
+# client `base_url` at this address instead of the real provider.
+listen_addr = "0.0.0.0:8080"
+
+# The real upstream API. All allowed/redacted requests are forwarded here
+# with the original Authorization header intact.
+upstream_url = "https://api.openai.com"
+
+# Per-request timeout when calling the upstream, in seconds.
+upstream_timeout_secs = 60
+
+# Maximum request body size accepted from clients, in bytes (default: 10 MiB).
+max_body_size_bytes = 10485760
+
+
+[pipeline]
+# What to do if a stage itself errors (not the same as a request being
+# blocked — this is for internal stage failures, e.g. a malformed model file).
+#
+#   "allow" (default) — fail open: treat the error as if the stage said Allow.
+#   "block"            — fail closed: block the request.
+on_error = "allow"
+
+
+# ── Stage 1: Regex-based prompt injection scanner ────────────────────────────
+# Fastest stage; runs first. Uses a bundled rule set covering common jailbreak
+# patterns, system-prompt extraction attempts, and delimiter-injection attacks.
+[stages.regex_injection]
+enabled = true
+
+# Optional: path to a custom rule file (one regex per line, '#' for comments).
+# If unset, the bundled rule set is used.
+# custom_rules_path = "rules/custom-injection.rules"
+
+# If true, matches are logged but the request is allowed through.
+# Useful for dry-running new rules in production before enforcing them.
+log_only = false
+
+
+# ── Stage 2: ONNX semantic injection classifier (optional) ───────────────────
+# Requires building with `--features onnx` and providing model files.
+# Catches semantic injection attacks that evade regex patterns.
+[stages.onnx_injection]
+enabled = false
+# model_path = "models/prompt-injection-v1.onnx"
+# tokenizer_path = "models/deberta-tokenizer/tokenizer.json"
+threshold = 0.85
+
+
+# ── Stage 3: PII detection and redaction ──────────────────────────────────────
+# Detects and replaces PII before it reaches the upstream LLM or the
+# toxicity classifier. Never blocks; always redacts and forwards.
+[stages.pii_redaction]
+enabled = true
+
+# Entity types to detect. Valid values:
+#   "email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key"
+entities = ["email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key"]
+
+# Apply Luhn checksum validation to candidate credit-card numbers before
+# redacting, to reduce false positives on arbitrary 16-digit numbers.
+validate_luhn = true
+
+
+# ── Stage 4: ONNX toxicity classifier (optional) ──────────────────────────────
+# Requires building with `--features onnx` and providing model files.
+[stages.toxicity]
+enabled = false
+# model_path = "models/toxicity-v1.onnx"
+# tokenizer_path = "models/roberta-tokenizer/tokenizer.json"
+threshold = 0.90
+
+
+# ── Stage 5: User-defined policy rules ────────────────────────────────────────
+# Evaluated last, in order. The first matching rule's action is applied.
+# See docs/policy-rules.md for the full condition/action reference.
+
+[[policy.rules]]
+name = "require-system-prompt"
+enabled = false
+action = "block"
+condition.type = "system_prompt_absent"
+message = "Requests must include a system prompt in this deployment."
+
+[[policy.rules]]
+name = "max-input-tokens"
+enabled = false
+action = "block"
+condition.type = "token_count_exceeds"
+condition.limit = 8000
+message = "Input exceeds the configured token limit for this deployment."
+
+[[policy.rules]]
+name = "block-competitor-mentions"
+enabled = false
+action = "block"
+condition.type = "content_contains"
+condition.keywords = ["competitor-x", "competitor-y"]
+message = "Mentions of named competitors are not permitted in this deployment."
+
+
+# ── Observability ─────────────────────────────────────────────────────────────
+[observability]
+# NOTE: /metrics and /healthz are currently served on the same address as
+# `server.listen_addr` (alongside the proxy endpoints). `metrics_addr` is
+# reserved for a future release that will serve metrics on a separate port.
+metrics_addr = "0.0.0.0:9090"
+
+# Log level: "trace", "debug", "info", "warn", "error".
+log_level = "info"
+
+# Emit logs as JSON (recommended for production / log aggregation).
+json_logs = false

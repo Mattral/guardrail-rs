@@ -1,0 +1,46 @@
+[package]
+name        = "guardrail-classifiers"
+description = "Classifier implementations for guardrail-rs: regex, ONNX, and PII redaction"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+homepage.workspace    = true
+categories.workspace  = true
+keywords.workspace    = true
+
+[features]
+default = []
+# Enable ONNX-backed classifiers (requires ort + tokenizers)
+onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
+# Enable ONNX-based NER PII detection
+onnx-pii = ["onnx"]
+# Enable CUDA GPU acceleration (implies onnx)
+onnx-cuda = ["onnx", "ort/cuda"]
+
+[dependencies]
+guardrail-core = { path = "../guardrail-core" }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+regex          = { workspace = true }
+async-trait    = { workspace = true }
+tracing        = { workspace = true }
+tokio          = { workspace = true }
+
+# Optional ONNX deps (behind feature flag)
+ort         = { version = "2", optional = true }
+tokenizers  = { version = "0.19", optional = true }
+ndarray     = { version = "0.15", optional = true }
+
+[dev-dependencies]
+tokio      = { workspace = true }
+rstest     = "0.23"
+proptest   = "1"
+tokio-test = "0.4"
+criterion  = { version = "0.5", features = ["html_reports", "async_tokio"] }
+
+[[bench]]
+name = "classifier_benchmarks"
+harness = false
