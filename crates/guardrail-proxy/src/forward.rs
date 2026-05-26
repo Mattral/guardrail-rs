@@ -70,7 +70,7 @@ pub async fn forward_request(
     builder
         .send()
         .await
-        .map_err(|e| GuardrailError::Upstream(e.to_string()))
+        .map_err(GuardrailError::from)
 }
 
 /// Read the full response body as bytes.
@@ -85,7 +85,7 @@ pub async fn read_body(response: Response) -> Result<Bytes, GuardrailError> {
     response
         .bytes()
         .await
-        .map_err(|e| GuardrailError::Upstream(e.to_string()))
+        .map_err(GuardrailError::from)
 }
 
 /// Headers that must never be forwarded to the upstream as-is.
@@ -93,7 +93,15 @@ pub async fn read_body(response: Response) -> Result<Bytes, GuardrailError> {
 /// `host` is stripped because the upstream has its own host; `content-length`
 /// is stripped because the body may have changed size after redaction (and
 /// `reqwest` recomputes it); `connection` is a hop-by-hop header per RFC 7230.
-pub const STRIPPED_REQUEST_HEADERS: &[&str] = &["host", "content-length", "connection"];
+/// Headers stripped from the **request** before forwarding upstream.
+///
+/// `host` is recomputed for the upstream's own hostname; `content-length` is
+/// recomputed because the body may change size after redaction;
+/// `connection` is hop-by-hop per RFC 7230; `x-guardrail-key` is
+/// guardrail-rs's own caller-authentication secret and must never reach the
+/// upstream LLM provider.
+pub const STRIPPED_REQUEST_HEADERS: &[&str] =
+    &["host", "content-length", "connection", "x-guardrail-key"];
 
 /// Headers that must never be forwarded back to the client as-is.
 ///
