@@ -170,18 +170,7 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
     }
 
     // 3. PII redaction
-    if config.stages.pii_redaction.enabled {
-        let entities = PiiEntityList::from_strings(&config.stages.pii_redaction.entities)
-            .map_err(|e| ConfigLoadError::StageBuild {
-                stage: "pii_redaction".into(),
-                source: guardrail_core::error::GuardrailError::Config(e),
-            })?;
-
-        let redactor = PiiRedactor::new(entities.0, config.stages.pii_redaction.validate_luhn)
-            .map_err(|source| ConfigLoadError::StageBuild {
-                stage: "pii_redaction".into(),
-                source,
-            })?;
+    if let Some(redactor) = build_pii_redactor(config)? {
         builder = builder.stage(redactor);
     }
 
@@ -233,6 +222,78 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
     Ok(builder.build())
 }
 
+/// Construct the [`PiiRedactor`] used by the **request**-side
+/// `pii_redaction` stage, if enabled.
+///
+/// Returns `Ok(None)` if `config.stages.pii_redaction.enabled` is `false`.
+///
+/// # Errors
+///
+/// Returns [`ConfigLoadError::StageBuild`] if the configured entity list is
+/// invalid or the underlying regex patterns fail to compile.
+fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoadError> {
+    if !config.stages.pii_redaction.enabled {
+        return Ok(None);
+    }
+
+    let entities = PiiEntityList::from_strings(&config.stages.pii_redaction.entities).map_err(
+        |e| ConfigLoadError::StageBuild {
+            stage: "pii_redaction".into(),
+            source: guardrail_core::error::GuardrailError::Config(e),
+        },
+    )?;
+
+    let redactor = PiiRedactor::new(entities.0, config.stages.pii_redaction.validate_luhn)
+        .map_err(|source| ConfigLoadError::StageBuild {
+            stage: "pii_redaction".into(),
+            source,
+        })?;
+
+    Ok(Some(redactor))
+}
+
+/// Construct the [`PiiRedactor`] used for **response**-side redaction, if
+/// both `stages.pii_redaction.enabled` and `stages.pii_redaction.redact_responses`
+/// are `true`.
+///
+/// This intentionally shares the same entity list, Luhn-validation setting,
+/// and replacement tokens as the request-side redactor — there is no
+/// separate configuration surface for response redaction beyond the
+/// `redact_responses` toggle, so that enabling output redaction can never
+/// silently use different (e.g. weaker) rules than the input side.
+///
+/// # Errors
+///
+/// Returns [`ConfigLoadError::StageBuild`] under the same conditions as
+/// [`build_pii_redactor`].
+///
+/// # Examples
+///
+/// ```rust
+/// use guardrail_config::loader::build_response_redactor;
+/// use guardrail_config::Config;
+///
+/// let toml_str = r#"
+/// [server]
+/// listen_addr = "0.0.0.0:8080"
+/// upstream_url = "https://api.openai.com"
+///
+/// [stages.pii_redaction]
+/// enabled = true
+/// redact_responses = true
+/// "#;
+///
+/// let config: Config = toml::from_str(toml_str).unwrap();
+/// let redactor = build_response_redactor(&config).unwrap();
+/// assert!(redactor.is_some());
+/// ```
+pub fn build_response_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoadError> {
+    if !config.stages.pii_redaction.redact_responses {
+        return Ok(None);
+    }
+    build_pii_redactor(config)
+}
+
 fn convert_condition(c: &PolicyConditionConfig) -> PolicyCondition {
     match c {
         PolicyConditionConfig::ContentContains { keywords } => {
@@ -281,6 +342,10 @@ pub struct ConfigHandle {
     path: PathBuf,
     config: ArcSwap<Config>,
     pipeline: ArcSwap<Pipeline>,
+    /// `Some(redactor)` if response-side PII redaction is enabled; `None` otherwise.
+    /// Wrapped in an extra `Option` layer so `ArcSwap` always holds a value
+    /// (an empty `Arc<None>` when response redaction is disabled).
+    response_redactor: ArcSwap<Option<PiiRedactor>>,
 }
 
 impl ConfigHandle {
@@ -293,11 +358,13 @@ impl ConfigHandle {
         let path = path.as_ref().to_path_buf();
         let config = load_config(&path)?;
         let pipeline = build_pipeline(&config)?;
+        let response_redactor = build_response_redactor(&config)?;
 
         Ok(Self {
             path,
             config: ArcSwap::from_pointee(config),
             pipeline: ArcSwap::from_pointee(pipeline),
+            response_redactor: ArcSwap::from_pointee(response_redactor),
         })
     }
 
@@ -315,9 +382,11 @@ impl ConfigHandle {
     pub fn reload(&self) -> Result<(), ConfigLoadError> {
         let new_config = load_config(&self.path)?;
         let new_pipeline = build_pipeline(&new_config)?;
+        let new_response_redactor = build_response_redactor(&new_config)?;
 
         self.config.store(Arc::new(new_config));
         self.pipeline.store(Arc::new(new_pipeline));
+        self.response_redactor.store(Arc::new(new_response_redactor));
 
         tracing::info!(path = %self.path.display(), "configuration reloaded");
         Ok(())
@@ -335,6 +404,26 @@ impl ConfigHandle {
     /// Get a snapshot of the current configuration.
     pub fn config(&self) -> Arc<Config> {
         self.config.load_full()
+    }
+
+    /// Get a snapshot of the response-side PII redactor configuration.
+    ///
+    /// Returns an `Arc<Option<PiiRedactor>>`: `Arc::new(None)` if response
+    /// redaction is disabled (`stages.pii_redaction.enabled = false` or
+    /// `stages.pii_redaction.redact_responses = false`), or
+    /// `Arc::new(Some(redactor))` otherwise. Callers typically do:
+    ///
+    /// ```rust,no_run
+    /// # use guardrail_config::ConfigHandle;
+    /// # let handle = ConfigHandle::load("guardrail.toml").unwrap();
+    /// let redactor_snapshot = handle.response_redactor();
+    /// if let Some(redactor) = (*redactor_snapshot).as_ref() {
+    ///     // redact response body using `redactor`
+    ///     let _ = redactor;
+    /// }
+    /// ```
+    pub fn response_redactor(&self) -> Arc<Option<PiiRedactor>> {
+        self.response_redactor.load_full()
     }
 }
 
@@ -454,5 +543,74 @@ mod tests {
         let config: Config = toml::from_str(toml_str).unwrap();
         let pipeline = build_pipeline(&config).unwrap();
         assert_eq!(pipeline.len(), 0);
+    }
+
+    // ── Response-side redaction ───────────────────────────────────────────────
+
+    #[test]
+    fn test_response_redactor_disabled_by_default() {
+        let config: Config = toml::from_str(MINIMAL).unwrap();
+        assert!(!config.stages.pii_redaction.redact_responses);
+        let redactor = build_response_redactor(&config).unwrap();
+        assert!(redactor.is_none());
+    }
+
+    #[test]
+    fn test_response_redactor_enabled() {
+        let toml_str = r#"
+            [server]
+            listen_addr = "0.0.0.0:8080"
+            upstream_url = "https://api.openai.com"
+
+            [stages.pii_redaction]
+            enabled = true
+            redact_responses = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let redactor = build_response_redactor(&config).unwrap();
+        assert!(redactor.is_some());
+    }
+
+    #[test]
+    fn test_response_redactor_not_built_if_pii_stage_disabled() {
+        // redact_responses = true is meaningless if the PII stage itself is off.
+        let toml_str = r#"
+            [server]
+            listen_addr = "0.0.0.0:8080"
+            upstream_url = "https://api.openai.com"
+
+            [stages.pii_redaction]
+            enabled = false
+            redact_responses = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let redactor = build_response_redactor(&config).unwrap();
+        assert!(redactor.is_none());
+    }
+
+    #[test]
+    fn test_config_handle_response_redactor_default_none() {
+        let f = write_temp_config(MINIMAL);
+        let handle = ConfigHandle::load(f.path()).unwrap();
+        assert!(handle.response_redactor().is_none());
+    }
+
+    #[test]
+    fn test_config_handle_response_redactor_reload() {
+        let toml_str = r#"
+            [server]
+            listen_addr = "0.0.0.0:8080"
+            upstream_url = "https://api.openai.com"
+
+            [stages.pii_redaction]
+            enabled = true
+            redact_responses = true
+        "#;
+        let f = write_temp_config(toml_str);
+        let handle = ConfigHandle::load(f.path()).unwrap();
+        assert!(handle.response_redactor().is_some());
+
+        handle.reload().unwrap();
+        assert!(handle.response_redactor().is_some());
     }
 }

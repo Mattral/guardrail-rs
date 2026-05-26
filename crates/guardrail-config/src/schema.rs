@@ -134,6 +134,17 @@ pub struct PiiRedactionConfig {
     /// Default: `true`.
     #[serde(default = "default_true")]
     pub validate_luhn: bool,
+    /// Whether to also scan and redact PII in non-streaming LLM **responses**
+    /// before returning them to the caller. Default: `false`.
+    ///
+    /// This adds a JSON parse + re-serialize pass to every non-streaming
+    /// response (see [`guardrail_proxy::response`]). Streaming responses
+    /// (`"stream": true`) are never affected by this option — see
+    /// `docs/architecture.md` for the streaming-redaction roadmap.
+    ///
+    /// [`guardrail_proxy::response`]: https://docs.rs/guardrail-proxy/latest/guardrail_proxy/response/index.html
+    #[serde(default)]
+    pub redact_responses: bool,
 }
 
 impl Default for PiiRedactionConfig {
@@ -142,6 +153,7 @@ impl Default for PiiRedactionConfig {
             enabled: true,
             entities: default_pii_entities(),
             validate_luhn: true,
+            redact_responses: false,
         }
     }
 }
@@ -290,7 +302,7 @@ pub enum PolicyActionConfig {
     LogOnly,
 }
 
-/// Observability (metrics, tracing) configuration.
+/// Observability (metrics, tracing, audit log) configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ObservabilityConfig {
     /// Address for the Prometheus `/metrics` endpoint. Default: `"0.0.0.0:9090"`.
@@ -302,6 +314,9 @@ pub struct ObservabilityConfig {
     /// Whether to emit logs as JSON. Default: `false`.
     #[serde(default)]
     pub json_logs: bool,
+    /// Rotating NDJSON audit log file settings.
+    #[serde(default)]
+    pub audit_log: AuditLogConfig,
 }
 
 impl Default for ObservabilityConfig {
@@ -310,8 +325,59 @@ impl Default for ObservabilityConfig {
             metrics_addr: default_metrics_addr(),
             log_level: default_log_level(),
             json_logs: false,
+            audit_log: AuditLogConfig::default(),
         }
     }
+}
+
+/// Rotating NDJSON audit log file configuration.
+///
+/// When enabled, every pipeline decision (`allow`, `redact`, `block`) is
+/// additionally written as a newline-delimited JSON record to a rotating
+/// file under `directory`, independent of `log_level`/`json_logs` (which
+/// control general application logs). See [`guardrail_proxy::audit_log`] for
+/// the implementation.
+///
+/// [`guardrail_proxy::audit_log`]: https://docs.rs/guardrail-proxy/latest/guardrail_proxy/audit_log/index.html
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuditLogConfig {
+    /// Whether the NDJSON audit log file is enabled. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Directory to write audit log files into. Default: `"./audit-logs"`.
+    #[serde(default = "default_audit_log_directory")]
+    pub directory: String,
+    /// File name prefix; rotation suffixes (e.g. `.2026-06-13`) are appended
+    /// by the rolling file appender. Default: `"audit"`.
+    #[serde(default = "default_audit_log_prefix")]
+    pub file_name_prefix: String,
+    /// Rotation interval: `"minutely"`, `"hourly"`, `"daily"`, or `"never"`.
+    /// Default: `"daily"`.
+    #[serde(default = "default_audit_log_rotation")]
+    pub rotation: String,
+}
+
+impl Default for AuditLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            directory: default_audit_log_directory(),
+            file_name_prefix: default_audit_log_prefix(),
+            rotation: default_audit_log_rotation(),
+        }
+    }
+}
+
+fn default_audit_log_directory() -> String {
+    "./audit-logs".to_string()
+}
+
+fn default_audit_log_prefix() -> String {
+    "audit".to_string()
+}
+
+fn default_audit_log_rotation() -> String {
+    "daily".to_string()
 }
 
 fn default_metrics_addr() -> String {
