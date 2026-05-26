@@ -168,6 +168,33 @@ pub fn validate_config(config: &Config) -> Vec<String> {
         ));
     }
 
+    // ── Audit log ─────────────────────────────────────────────────────────
+    if config.observability.audit_log.enabled {
+        const VALID_ROTATIONS: &[&str] = &["minutely", "hourly", "daily", "never"];
+        let rotation = config.observability.audit_log.rotation.as_str();
+        if !VALID_ROTATIONS.contains(&rotation) {
+            errors.push(format!(
+                "observability.audit_log.rotation '{rotation}' is not valid. \
+                 Valid values: {}",
+                VALID_ROTATIONS.join(", ")
+            ));
+        }
+
+        if config.observability.audit_log.directory.trim().is_empty() {
+            errors.push(
+                "observability.audit_log.directory must not be empty when audit_log is enabled"
+                    .into(),
+            );
+        }
+
+        if config.observability.audit_log.file_name_prefix.trim().is_empty() {
+            errors.push(
+                "observability.audit_log.file_name_prefix must not be empty when audit_log is enabled"
+                    .into(),
+            );
+        }
+    }
+
     errors
 }
 
@@ -312,5 +339,63 @@ mod tests {
         let config: Config = toml::from_str(toml_str).unwrap();
         let errors = validate_config(&config);
         assert!(errors.iter().any(|e| e.contains("log_level")));
+    }
+
+    #[test]
+    fn test_audit_log_disabled_by_default_is_valid() {
+        let config: Config = toml::from_str(minimal_valid_toml()).unwrap();
+        assert!(!config.observability.audit_log.enabled);
+        let errors = validate_config(&config);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+    }
+
+    #[test]
+    fn test_audit_log_invalid_rotation() {
+        let toml_str = r#"
+        [server]
+        listen_addr = "0.0.0.0:8080"
+        upstream_url = "https://api.openai.com"
+
+        [observability.audit_log]
+        enabled = true
+        rotation = "weekly"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let errors = validate_config(&config);
+        assert!(errors.iter().any(|e| e.contains("rotation")));
+    }
+
+    #[test]
+    fn test_audit_log_empty_directory() {
+        let toml_str = r#"
+        [server]
+        listen_addr = "0.0.0.0:8080"
+        upstream_url = "https://api.openai.com"
+
+        [observability.audit_log]
+        enabled = true
+        directory = ""
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let errors = validate_config(&config);
+        assert!(errors.iter().any(|e| e.contains("directory")));
+    }
+
+    #[test]
+    fn test_audit_log_valid_config() {
+        let toml_str = r#"
+        [server]
+        listen_addr = "0.0.0.0:8080"
+        upstream_url = "https://api.openai.com"
+
+        [observability.audit_log]
+        enabled = true
+        directory = "/var/log/guardrail"
+        file_name_prefix = "audit"
+        rotation = "daily"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let errors = validate_config(&config);
+        assert!(errors.is_empty(), "errors: {errors:?}");
     }
 }
