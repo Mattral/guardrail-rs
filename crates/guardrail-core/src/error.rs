@@ -1,4 +1,20 @@
 //! Unified error type for all guardrail-rs crates.
+//!
+//! ## A note on `Upstream` and the dependency budget
+//!
+//! Per the project's dependency budget (spec §20), `guardrail-core` does not
+//! depend on `reqwest` by default — it is the foundational crate and should
+//! remain usable in constrained / embedded contexts without pulling in an
+//! HTTP client. However, the spec's error model calls for
+//! `Upstream(#[from] reqwest::Error)` so that `?` works ergonomically at the
+//! call site in `guardrail-proxy`.
+//!
+//! We resolve this by making `reqwest` an **optional** dependency gated
+//! behind the `reqwest-errors` feature. `guardrail-proxy` enables this
+//! feature; consumers of `guardrail-core` alone (e.g. a future WASM build,
+//! or someone embedding just the classifiers) get the lighter
+//! `Upstream(String)` variant with no behavioral difference apart from the
+//! `#[from]` conversion.
 
 /// Top-level error type used throughout `guardrail-rs`.
 ///
@@ -20,7 +36,19 @@ pub enum GuardrailError {
     #[error("Configuration error: {0}")]
     Config(String),
 
-    /// The upstream LLM request failed.
+    /// The upstream LLM request failed (`reqwest-errors` feature enabled).
+    ///
+    /// Carries the original [`reqwest::Error`] for inspection (status code,
+    /// timeout vs. connect-error classification, etc.) via `?`.
+    #[cfg(feature = "reqwest-errors")]
+    #[error("Upstream request failed: {0}")]
+    Upstream(#[from] reqwest::Error),
+
+    /// The upstream LLM request failed (`reqwest-errors` feature disabled).
+    ///
+    /// Carries a pre-formatted message instead of the original error type,
+    /// avoiding a hard dependency on `reqwest` in minimal builds.
+    #[cfg(not(feature = "reqwest-errors"))]
     #[error("Upstream request failed: {0}")]
     Upstream(String),
 
@@ -62,6 +90,34 @@ impl GuardrailError {
         GuardrailError::StageFailed {
             stage: stage.into(),
             source: Box::new(source),
+        }
+    }
+
+    /// Construct an `Upstream` error from a message string.
+    ///
+    /// Available regardless of the `reqwest-errors` feature, so call sites
+    /// that just want to report a string don't need to feature-gate.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_core::GuardrailError;
+    ///
+    /// let err = GuardrailError::upstream("connection refused");
+    /// assert!(err.to_string().contains("connection refused"));
+    /// ```
+    pub fn upstream(message: impl Into<String>) -> Self {
+        #[cfg(feature = "reqwest-errors")]
+        {
+            // We can't construct a real reqwest::Error from a string, so in
+            // this feature configuration we fall back to Internal for
+            // string-only construction. Call sites with an actual
+            // reqwest::Error should use `?` / `.into()` instead.
+            GuardrailError::Internal(format!("upstream: {}", message.into()))
+        }
+        #[cfg(not(feature = "reqwest-errors"))]
+        {
+            GuardrailError::Upstream(message.into())
         }
     }
 }
