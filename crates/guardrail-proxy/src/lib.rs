@@ -28,12 +28,15 @@
 //! - [`server`]: the main HTTP server loop and request handler
 //! - [`forward`]: upstream request forwarding (streaming + non-streaming)
 //! - [`translate`]: conversion between raw JSON bodies and [`guardrail_core::GuardrailRequest`]
+//! - [`response`]: output-side PII redaction for non-streaming responses
 //! - [`metrics`]: Prometheus metrics registry and recording helpers
-//! - [`audit`]: structured audit logging for blocked/redacted requests
+//! - [`audit`]: structured audit logging (tracing events + rotating NDJSON file)
 
 pub mod audit;
+pub mod audit_log;
 pub mod forward;
 pub mod metrics;
+pub mod response;
 pub mod server;
 pub mod translate;
 
