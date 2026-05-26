@@ -112,8 +112,11 @@ pub async fn run_server(config: Arc<ConfigHandle>) -> anyhow::Result<ServerHandl
                     let io = TokioIo::new(stream);
 
                     tokio::spawn(async move {
+                        state.metrics.active_connections.inc();
+
+                        let service_state = state.clone();
                         let service = service_fn(move |req| {
-                            let state = state.clone();
+                            let state = service_state.clone();
                             async move { handle_request(state, req).await }
                         });
 
@@ -123,6 +126,8 @@ pub async fn run_server(config: Arc<ConfigHandle>) -> anyhow::Result<ServerHandl
                         {
                             tracing::debug!(error = %e, "connection error");
                         }
+
+                        state.metrics.active_connections.dec();
                     });
                 }
                 _ = shutdown_rx.changed() => {
@@ -253,6 +258,7 @@ async fn proxy_request(
     let request_id = guardrail_req.id.to_string();
 
     // Run the pipeline, recording per-stage latency histograms.
+    let pipeline_start = Instant::now();
     let metrics_for_observer = state.metrics.clone();
     let (decision, final_req) = match pipeline
         .run_with_observer(guardrail_req, |stage_name, elapsed| {
@@ -281,17 +287,21 @@ async fn proxy_request(
             }
         }
     };
+    state
+        .metrics
+        .pipeline_duration_seconds
+        .observe(pipeline_start.elapsed().as_secs_f64());
 
     // Record audit + metrics.
     let audit_record = AuditRecord::from_decision(&final_req, &decision);
     audit_record.emit();
 
-    let decision_label = decision.name();
+    let decision_label = decision.name().to_string();
     let provider_label = provider_label(&provider);
     state
         .metrics
         .requests_total
-        .with_label_values(&[decision_label, provider_label])
+        .with_label_values(&[decision_label.as_str(), provider_label])
         .inc();
 
     if let Decision::Redact { .. } = &decision {
@@ -311,14 +321,17 @@ async fn proxy_request(
             error_body_response(StatusCode::FORBIDDEN, &body)
         }
         Decision::Allow | Decision::Redact { .. } => {
-            forward_to_upstream(&state, &config, &path, &final_req, forward_headers).await
+            forward_to_upstream(&state, &config, &path, &final_req, &request_id, forward_headers)
+                .await
         }
     };
 
+    let elapsed = start.elapsed().as_secs_f64();
     state
         .metrics
-        .pipeline_duration_seconds
-        .observe(start.elapsed().as_secs_f64());
+        .request_duration_seconds
+        .with_label_values(&[decision_label.as_str()])
+        .observe(elapsed);
 
     response
 }
@@ -328,6 +341,7 @@ async fn forward_to_upstream(
     config: &guardrail_config::Config,
     path: &str,
     req: &GuardrailRequest,
+    request_id: &str,
     headers: Vec<(String, String)>,
 ) -> Response<Full<Bytes>> {
     let timeout = Duration::from_secs(config.server.upstream_timeout_secs);
@@ -346,6 +360,12 @@ async fn forward_to_upstream(
             let status = StatusCode::from_u16(upstream_resp.status().as_u16())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
+            let content_type = upstream_resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+
             let mut builder = Response::builder().status(status);
 
             for (name, value) in upstream_resp.headers().iter() {
@@ -362,9 +382,19 @@ async fn forward_to_upstream(
             }
 
             match forward::read_body(upstream_resp).await {
-                Ok(body) => builder
-                    .body(Full::new(body))
-                    .unwrap_or_else(|_| internal_error_response()),
+                Ok(body) => {
+                    let body = maybe_redact_response(
+                        state,
+                        request_id,
+                        &body,
+                        content_type.as_deref(),
+                        req.stream,
+                    );
+
+                    builder
+                        .body(Full::new(body))
+                        .unwrap_or_else(|_| internal_error_response())
+                }
                 Err(e) => {
                     tracing::error!(error = %e, "failed to read upstream response body");
                     internal_error_response()
@@ -373,12 +403,71 @@ async fn forward_to_upstream(
         }
         Err(e) => {
             tracing::error!(error = %e, "upstream request failed");
+            state
+                .metrics
+                .upstream_errors_total
+                .with_label_values(&[classify_upstream_error(&e)])
+                .inc();
             error_response(
                 StatusCode::BAD_GATEWAY,
                 "upstream request failed",
                 "upstream_error",
             )
         }
+    }
+}
+
+/// If response-side PII redaction is enabled and the response is a
+/// non-streaming JSON document, scan it for PII and return the redacted
+/// bytes. Otherwise return `body` unchanged.
+///
+/// Any redactions are recorded in [`Metrics::response_redacted_total`] and
+/// emitted as a `guardrail::audit` event.
+fn maybe_redact_response(
+    state: &Arc<AppState>,
+    request_id: &str,
+    body: &Bytes,
+    content_type: Option<&str>,
+    is_streaming: bool,
+) -> Bytes {
+    let redactor_snapshot = state.config.response_redactor();
+    let redactor = match &*redactor_snapshot {
+        Some(r) => r,
+        None => return body.clone(),
+    };
+
+    if !crate::response::is_redactable_response(content_type, is_streaming) {
+        return body.clone();
+    }
+
+    match crate::response::redact_response_body(body, redactor) {
+        Some((new_body, summary)) => {
+            state.metrics.response_redacted_total.inc();
+            tracing::info!(
+                target: "guardrail::audit",
+                request_id = %request_id,
+                decision = "response_redact",
+                total_redactions = summary.total_redactions,
+                entity_types = ?summary.entity_types,
+                "response PII redacted"
+            );
+            Bytes::from(new_body)
+        }
+        None => body.clone(),
+    }
+}
+
+/// Classify a [`GuardrailError::Upstream`] into a coarse error class for the
+/// `guardrail_upstream_errors_total` metric label.
+fn classify_upstream_error(err: &guardrail_core::GuardrailError) -> &'static str {
+    let msg = err.to_string().to_lowercase();
+    if msg.contains("timed out") || msg.contains("timeout") {
+        "timeout"
+    } else if msg.contains("connect") || msg.contains("connection refused") || msg.contains("dns")
+    {
+        "connect"
+    } else {
+        "other"
     }
 }
 
@@ -602,7 +691,129 @@ mod tests {
         assert_eq!(resp.status(), 200);
         let body = resp.text().await.unwrap();
         assert!(body.contains("guardrail_requests_total"));
+        assert!(body.contains("guardrail_active_connections"));
+        assert!(body.contains("guardrail_request_duration_seconds"));
 
         handle.shutdown();
+    }
+
+    #[test]
+    fn test_classify_upstream_error() {
+        use guardrail_core::GuardrailError;
+
+        assert_eq!(
+            classify_upstream_error(&GuardrailError::Upstream(
+                "operation timed out".to_string()
+            )),
+            "timeout"
+        );
+        assert_eq!(
+            classify_upstream_error(&GuardrailError::Upstream(
+                "tcp connect error: connection refused".to_string()
+            )),
+            "connect"
+        );
+        assert_eq!(
+            classify_upstream_error(&GuardrailError::Upstream(
+                "something unexpected happened".to_string()
+            )),
+            "other"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maybe_redact_response_without_redactor_passthrough() {
+        let toml_str = r#"
+            [server]
+            listen_addr = "127.0.0.1:0"
+            upstream_url = "https://api.openai.com"
+        "#;
+        let f = write_temp_config(toml_str);
+        let config = Arc::new(ConfigHandle::load(f.path()).unwrap());
+        let state = Arc::new(AppState {
+            config,
+            http_client: reqwest::Client::new(),
+            metrics: Metrics::new(),
+        });
+
+        let body = Bytes::from(
+            r#"{"choices":[{"message":{"role":"assistant","content":"Email me at user@example.com"}}]}"#,
+        );
+
+        let out = maybe_redact_response(
+            &state,
+            "req-1",
+            &body,
+            Some("application/json"),
+            false,
+        );
+
+        // Response redaction is disabled by default; body passes through unchanged.
+        assert_eq!(out, body);
+        assert_eq!(state.metrics.response_redacted_total.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_maybe_redact_response_with_redactor_enabled() {
+        let toml_str = r#"
+            [server]
+            listen_addr = "127.0.0.1:0"
+            upstream_url = "https://api.openai.com"
+
+            [stages.pii_redaction]
+            enabled = true
+            redact_responses = true
+        "#;
+        let f = write_temp_config(toml_str);
+        let config = Arc::new(ConfigHandle::load(f.path()).unwrap());
+        let state = Arc::new(AppState {
+            config,
+            http_client: reqwest::Client::new(),
+            metrics: Metrics::new(),
+        });
+
+        let body = Bytes::from(
+            r#"{"choices":[{"message":{"role":"assistant","content":"Email me at user@example.com"}}]}"#,
+        );
+
+        let out = maybe_redact_response(
+            &state,
+            "req-2",
+            &body,
+            Some("application/json"),
+            false,
+        );
+
+        let text = String::from_utf8(out.to_vec()).unwrap();
+        assert!(text.contains("[EMAIL]"));
+        assert!(!text.contains("user@example.com"));
+        assert_eq!(state.metrics.response_redacted_total.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_maybe_redact_response_skips_streaming() {
+        let toml_str = r#"
+            [server]
+            listen_addr = "127.0.0.1:0"
+            upstream_url = "https://api.openai.com"
+
+            [stages.pii_redaction]
+            enabled = true
+            redact_responses = true
+        "#;
+        let f = write_temp_config(toml_str);
+        let config = Arc::new(ConfigHandle::load(f.path()).unwrap());
+        let state = Arc::new(AppState {
+            config,
+            http_client: reqwest::Client::new(),
+            metrics: Metrics::new(),
+        });
+
+        let body = Bytes::from(r#"{"choices":[{"message":{"content":"user@example.com"}}]}"#);
+
+        // is_streaming = true -> passthrough even though redaction is enabled.
+        let out = maybe_redact_response(&state, "req-3", &body, Some("application/json"), true);
+        assert_eq!(out, body);
+        assert_eq!(state.metrics.response_redacted_total.get(), 0);
     }
 }
