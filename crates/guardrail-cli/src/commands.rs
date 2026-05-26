@@ -24,10 +24,13 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<()> {
 async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let config_handle = Arc::new(ConfigHandle::load(&config_path)?);
 
-    // Build the tracing subscriber (fmt layer + optional audit-log layer).
-    // The `_audit_guard` must be kept alive for the lifetime of the process
-    // so the background audit-log writer thread keeps running.
-    let _audit_guard = init_tracing(&config_handle.config().observability);
+    // Build the tracing subscriber: fmt layer + optional audit-log layer +
+    // optional OpenTelemetry OTLP layer. Guards/providers must be kept alive
+    // for the entire process lifetime.
+    let (
+        _audit_guard,
+        _otel_provider,
+    ) = init_tracing(&config_handle.config().observability)?;
 
     let handle = guardrail_proxy::run_server(config_handle.clone()).await?;
     tracing::info!(addr = %handle.local_addr(), "guardrail-rs is running");
@@ -45,7 +48,10 @@ async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
                 tracing::info!("SIGHUP received — reloading configuration");
                 match reload_handle.reload() {
                     Ok(()) => tracing::info!("configuration reloaded successfully"),
-                    Err(e) => tracing::error!(error = %e, "configuration reload failed — keeping previous config"),
+                    Err(e) => tracing::error!(
+                        error = %e,
+                        "configuration reload failed — keeping previous config"
+                    ),
                 }
             }
         });
@@ -56,8 +62,13 @@ async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     tracing::info!("shutdown signal received, stopping server");
     handle.shutdown();
 
-    // Give in-flight connections a brief grace period to complete.
+    // Grace period for in-flight connections.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Flush all OTel spans before exit.
+    if let Some(provider) = _otel_provider {
+        guardrail_proxy::telemetry::shutdown_tracer_provider(provider);
+    }
 
     Ok(())
 }
@@ -70,16 +81,16 @@ fn validate(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     match guardrail_config::loader::load_config(&config_path) {
         Ok(config) => {
             println!("✓ configuration is valid");
-            println!("  listen_addr:          {}", config.server.listen_addr);
-            println!("  upstream_url:         {}", config.server.upstream_url);
+            println!("  server:               {}:{}", config.server.host, config.server.port);
+            println!("  upstream.url:         {}", config.upstream.url);
             println!(
                 "  regex_injection:      {}",
                 if config.stages.regex_injection.enabled { "enabled" } else { "disabled" }
             );
             println!(
-                "  pii_redaction:        {}{}",
-                if config.stages.pii_redaction.enabled { "enabled" } else { "disabled" },
-                if config.stages.pii_redaction.redact_responses { " (+ response redaction)" } else { "" }
+                "  pii_redactor:         {}{}",
+                if config.stages.pii_redactor.enabled { "enabled" } else { "disabled" },
+                if config.stages.pii_redactor.redact_responses { " (+ response redaction)" } else { "" }
             );
             println!("  policy rules:         {}", config.policy.rules.len());
             println!(
@@ -87,9 +98,8 @@ fn validate(config_path: std::path::PathBuf) -> anyhow::Result<()> {
                 if config.observability.audit_log.enabled {
                     format!(
                         "enabled → {}/{}.* ({})",
-                        config.observability.audit_log.directory,
-                        config.observability.audit_log.file_name_prefix,
-                        config.observability.audit_log.rotation,
+                        config.observability.audit_log.path,
+                        config.observability.audit_log.max_size_mb,
                     )
                 } else {
                     "disabled".to_string()
@@ -149,71 +159,89 @@ async fn check(text: String, config_path: std::path::PathBuf) -> anyhow::Result<
     Ok(())
 }
 
-/// Initialize the `tracing` subscriber.
+/// Initialize the layered `tracing` subscriber.
 ///
-/// Installs a layered subscriber consisting of:
-/// - A `fmt` layer for human-readable (or JSON) application logs filtered
-///   by `observability.log_level`.
-/// - An optional NDJSON audit-log file layer (filtered to
-///   `target = "guardrail::audit"`) if `observability.audit_log.enabled`.
+/// Installs three layers on top of a `Registry`:
 ///
-/// Returns an optional [`tracing_appender::non_blocking::WorkerGuard`] that
-/// **must be kept alive** for the duration of the process. Dropping it stops
-/// the background audit-log writer thread and may lose buffered records.
+/// 1. **`fmt` layer** — human-readable or JSON application logs, filtered by
+///    `log_level`. `log_format = "json"` switches to JSON output.
+/// 2. **Audit-log layer** (optional) — NDJSON file writer filtered to
+///    `target = "guardrail::audit"`. Non-fatal if misconfigured.
+/// 3. **OTel OTLP layer** (optional) — exports distributed traces to the
+///    configured gRPC endpoint. Fatal if the endpoint is set but unusable.
+///
+/// # Returns
+///
+/// `(Option<WorkerGuard>, Option<SdkTracerProvider>)` — both must be kept
+/// alive for the entire process. Drop order at shutdown: server first, then
+/// call [`guardrail_proxy::telemetry::shutdown_tracer_provider`] on the
+/// provider to flush buffered spans.
+///
+/// # Errors
+///
+/// Returns `Err` only if an OTLP endpoint is configured but the exporter
+/// cannot be built. Audit-log errors are non-fatal.
 ///
 /// # Panics
 ///
-/// Panics if a global subscriber has already been set (i.e. `init_tracing`
-/// is called more than once). This is an application-level invariant;
-/// `init_tracing` must only be called once at startup.
+/// Panics if called more than once (global subscriber already set).
 fn init_tracing(
     observability: &guardrail_config::ObservabilityConfig,
-) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+) -> anyhow::Result<(
+    Option<tracing_appender::non_blocking::WorkerGuard>,
+    Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+)> {
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
 
+    // Layer 1: fmt — apply log_level filter only to this layer so audit
+    // events are never suppressed by the log_level setting.
     let env_filter = EnvFilter::try_new(&observability.log_level)
         .unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // Apply env_filter only to the fmt layer so the audit-log layer receives
-    // events at all levels regardless of log_level — it has its own
-    // target-based filter that only passes `guardrail::audit` events.
-    let fmt_layer = {
-        use tracing_subscriber::Layer;
-        if observability.json_logs {
-            fmt::layer()
-                .json()
-                .with_filter(env_filter)
-                .boxed()
-        } else {
-            fmt::layer()
-                .with_filter(env_filter)
-                .boxed()
+    let fmt_layer = if observability.log_format == "json" {
+        fmt::layer().json().with_filter(env_filter).boxed()
+    } else {
+        fmt::layer().with_filter(env_filter).boxed()
+    };
+
+    // Layer 2: audit-log (non-fatal).
+    let (audit_layer, guard) = {
+        let res = guardrail_proxy::audit_log::build_layer::<tracing_subscriber::Registry>(
+            &observability.audit_log,
+        );
+        match res {
+            Ok(Some((layer, g))) => (Some(layer), Some(g)),
+            Ok(None) => (None, None),
+            Err(e) => {
+                eprintln!("warning: NDJSON audit log disabled: {e}");
+                (None, None)
+            }
         }
     };
 
-    // Build the audit-log layer if enabled.
-    let audit_result = guardrail_proxy::audit_log::build_layer::<tracing_subscriber::Registry>(
-        &observability.audit_log,
-    );
-
-    let (audit_layer, guard) = match audit_result {
-        Ok(Some((layer, guard))) => (Some(layer), Some(guard)),
-        Ok(None) => (None, None),
-        Err(e) => {
-            // Audit-log misconfiguration is non-fatal: log a warning and
-            // continue without file-based auditing.
-            eprintln!("warning: audit log disabled due to configuration error: {e}");
-            (None, None)
+    // Layer 3: OTel OTLP (fatal if endpoint set but broken).
+    let (otel_layer, provider) = {
+        let res = guardrail_proxy::telemetry::build_otel_layer::<tracing_subscriber::Registry>(
+            observability,
+        );
+        match res {
+            Ok(Some((layer, p))) => {
+                tracing::debug!(endpoint = %observability.otlp_endpoint, "OTel OTLP tracing enabled");
+                (Some(layer), Some(p))
+            }
+            Ok(None) => (None, None),
+            Err(e) => return Err(anyhow::anyhow!("OpenTelemetry init failed: {e}")),
         }
     };
 
     tracing_subscriber::registry()
         .with(fmt_layer)
         .with(audit_layer)
+        .with(otel_layer)
         .init();
 
-    guard
+    Ok((guard, provider))
 }
 
 /// Wait for either Ctrl-C or (on Unix) SIGTERM.
@@ -251,8 +279,11 @@ mod tests {
 
     const MINIMAL: &str = r#"
         [server]
-        listen_addr = "0.0.0.0:8080"
-        upstream_url = "https://api.openai.com"
+        host = "0.0.0.0"
+        port = 8080
+
+        [upstream]
+        url = "https://api.openai.com"
     "#;
 
     #[test]
