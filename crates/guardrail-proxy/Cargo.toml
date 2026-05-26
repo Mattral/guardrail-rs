@@ -8,14 +8,15 @@ license.workspace     = true
 repository.workspace  = true
 homepage.workspace    = true
 categories.workspace  = true
-keywords.workspace    = true
+keywords.workspace  = true
+readme             = "../../README.md"
 
 [features]
 default = []
 onnx = ["guardrail-config/onnx", "guardrail-classifiers/onnx"]
 
 [dependencies]
-guardrail-core        = { path = "../guardrail-core" }
+guardrail-core        = { path = "../guardrail-core", features = ["reqwest-errors"] }
 guardrail-config      = { path = "../guardrail-config" }
 guardrail-classifiers = { path = "../guardrail-classifiers" }
 
@@ -35,6 +36,10 @@ anyhow     = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
 tracing-appender    = "0.2"
+tracing-opentelemetry = { workspace = true }
+opentelemetry        = { workspace = true }
+opentelemetry_sdk    = { workspace = true }
+opentelemetry-otlp   = { workspace = true }
 prometheus          = { workspace = true }
 uuid                = { workspace = true }
 
