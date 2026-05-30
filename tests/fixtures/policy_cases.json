@@ -1,0 +1,102 @@
+{
+  "description": "Sample requests paired with a policy configuration snippet, used to test the PolicyEngine's when/then evaluation independent of the regex/PII stages.",
+  "cases": [
+    {
+      "name": "competitor_mention_blocked",
+      "policy_rule": {
+        "name": "block-competitor-mentions",
+        "enabled": true,
+        "when": { "content_contains": ["competitor-x"] },
+        "then": { "action": "block", "message": "Competitor mentions are not permitted." }
+      },
+      "messages": [
+        { "role": "user", "content": "How does our product compare to competitor-x?" }
+      ],
+      "expected_decision": "block",
+      "expected_code": "policy_violation"
+    },
+    {
+      "name": "competitor_mention_case_insensitive",
+      "policy_rule": {
+        "name": "block-competitor-mentions",
+        "enabled": true,
+        "when": { "content_contains": ["competitor-x"] },
+        "then": { "action": "block" }
+      },
+      "messages": [
+        { "role": "user", "content": "Tell me about COMPETITOR-X's pricing." }
+      ],
+      "expected_decision": "block",
+      "expected_code": "policy_violation"
+    },
+    {
+      "name": "no_match_falls_through_to_allow",
+      "policy_rule": {
+        "name": "block-competitor-mentions",
+        "enabled": true,
+        "when": { "content_contains": ["competitor-x"] },
+        "then": { "action": "block" }
+      },
+      "messages": [
+        { "role": "user", "content": "What's the weather like today?" }
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "disabled_rule_does_not_fire",
+      "policy_rule": {
+        "name": "block-competitor-mentions",
+        "enabled": false,
+        "when": { "content_contains": ["competitor-x"] },
+        "then": { "action": "block" }
+      },
+      "messages": [
+        { "role": "user", "content": "Tell me about competitor-x." }
+      ],
+      "expected_decision": "allow",
+      "note": "Rule exists but enabled=false, so it must not fire."
+    },
+    {
+      "name": "system_prompt_required_violation",
+      "policy_rule": {
+        "name": "require-system-prompt",
+        "enabled": true,
+        "when": { "system_prompt_absent": true },
+        "then": { "action": "block", "message": "Requests must include a system prompt." }
+      },
+      "messages": [
+        { "role": "user", "content": "Hello there." }
+      ],
+      "expected_decision": "block",
+      "expected_code": "policy_violation"
+    },
+    {
+      "name": "system_prompt_present_passes",
+      "policy_rule": {
+        "name": "require-system-prompt",
+        "enabled": true,
+        "when": { "system_prompt_absent": true },
+        "then": { "action": "block" }
+      },
+      "messages": [
+        { "role": "system", "content": "You are a helpful assistant." },
+        { "role": "user", "content": "Hello there." }
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "always_catch_all",
+      "policy_rule": {
+        "name": "default-deny",
+        "enabled": true,
+        "when": { "always": true },
+        "then": { "action": "block", "message": "Default deny." }
+      },
+      "messages": [
+        { "role": "user", "content": "Literally anything at all." }
+      ],
+      "expected_decision": "block",
+      "expected_code": "policy_violation"
+    }
+  ]
+}
