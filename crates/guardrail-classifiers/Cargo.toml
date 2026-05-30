@@ -8,7 +8,8 @@ license.workspace     = true
 repository.workspace  = true
 homepage.workspace    = true
 categories.workspace  = true
-keywords.workspace    = true
+keywords.workspace  = true
+readme             = "../../README.md"
 
 [features]
 default = []
