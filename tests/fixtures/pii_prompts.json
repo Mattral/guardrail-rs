@@ -1,0 +1,80 @@
+{
+  "description": "Requests containing PII that must be redacted (Decision::Redact) rather than blocked. expected_redacted_text shows the sanitized form the upstream LLM should receive.",
+  "cases": [
+    {
+      "name": "email_address",
+      "messages": [
+        { "role": "user", "content": "Please send the invoice to alice@example.com" }
+      ],
+      "expected_decision": "redact",
+      "expected_entities": ["email"],
+      "expected_redacted_text": "Please send the invoice to [EMAIL]"
+    },
+    {
+      "name": "phone_number",
+      "messages": [
+        { "role": "user", "content": "Call me back at 555-867-5309 tomorrow." }
+      ],
+      "expected_decision": "redact",
+      "expected_entities": ["phone"],
+      "expected_redacted_text": "Call me back at [PHONE] tomorrow."
+    },
+    {
+      "name": "credit_card_valid_luhn",
+      "messages": [
+        { "role": "user", "content": "My card number is 4532015112830366, please update billing." }
+      ],
+      "expected_decision": "redact",
+      "expected_entities": ["credit_card"],
+      "note": "4532015112830366 passes the Luhn checksum."
+    },
+    {
+      "name": "credit_card_invalid_luhn_not_redacted",
+      "messages": [
+        { "role": "user", "content": "The reference number is 1234567890123456." }
+      ],
+      "expected_decision": "allow",
+      "note": "Fails Luhn check; with validate_luhn=true (default) this is NOT treated as a credit card and is allowed through unredacted."
+    },
+    {
+      "name": "ssn",
+      "messages": [
+        { "role": "user", "content": "My SSN is 123-45-6789 for the background check." }
+      ],
+      "expected_decision": "redact",
+      "expected_entities": ["ssn"]
+    },
+    {
+      "name": "api_key_openai",
+      "messages": [
+        { "role": "user", "content": "Here's my key: sk-proj-aBcDeFgHiJkLmNoPqRsTuVwXyZ123456 — can you debug this?" }
+      ],
+      "expected_decision": "redact",
+      "expected_entities": ["api_key"]
+    },
+    {
+      "name": "aws_access_key",
+      "messages": [
+        { "role": "user", "content": "Found this in our logs: AKIAIOSFODNN7EXAMPLE — is this a leak?" }
+      ],
+      "expected_decision": "redact",
+      "expected_entities": ["aws_key"]
+    },
+    {
+      "name": "multiple_entities_one_message",
+      "messages": [
+        { "role": "user", "content": "Contact alice@example.com or call 555-867-5309 for support." }
+      ],
+      "expected_decision": "redact",
+      "expected_entities": ["email", "phone"]
+    },
+    {
+      "name": "ip_address",
+      "messages": [
+        { "role": "user", "content": "The server at 192.168.1.105 is timing out." }
+      ],
+      "expected_decision": "redact",
+      "expected_entities": ["ip_address"]
+    }
+  ]
+}
