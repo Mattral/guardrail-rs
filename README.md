@@ -10,8 +10,8 @@ enforcing custom policy rules — all with single-digit-millisecond overhead.
 
 ```text
 ┌──────────┐     ┌──────────────────┐     ┌────────────┐     ┌───────────────┐
-│  Your    │ ──▶│   guardrail-rs   │ ──▶ │  Pipeline  │ ──▶│   OpenAI /    │
-│  App     │     │  (drop-in proxy) │     │  (Stages)  │     │  Anthropic /… │
+│  Your    │ ──▶ │   guardrail-rs    │ ──▶ │  Pipeline   │ ──▶ │   OpenAI /     │
+│  App     │     │  (drop-in proxy)  │     │  (Stages)   │     │  Anthropic /…  │
 └──────────┘     └──────────────────┘     └────────────┘     └───────────────┘
                           │
                           ▼
@@ -42,13 +42,15 @@ enforcing custom policy rules — all with single-digit-millisecond overhead.
 ```bash
 # 1. Copy and edit the example configuration
 cp guardrail.example.toml guardrail.toml
-# edit guardrail.toml: set server.upstream_url to your provider
+# edit guardrail.toml: set server.upstream_url
 
 # 2. Validate the configuration
-cargo run -p guardrail-cli -- validate --config guardrail.toml
+just validate
+# or: cargo run -p guardrail-cli -- validate --config guardrail.toml
 
 # 3. Run the proxy
-cargo run -p guardrail-cli -- run --config guardrail.toml
+just run
+# or: cargo run -p guardrail-cli -- run --config guardrail.toml
 ```
 
 Then point your application at `http://localhost:8080` instead of
@@ -61,6 +63,26 @@ client = OpenAI(
     base_url="http://localhost:8080/v1",
     api_key="sk-...",  # forwarded to the real upstream unchanged
 )
+```
+
+### Environment variable overrides
+
+Configuration can be overridden without editing `guardrail.toml`:
+
+| Variable | Overrides |
+|----------|-----------|
+| `GUARDRAIL_UPSTREAM` | `server.upstream_url` |
+| `GUARDRAIL_PORT` | Port component of `server.listen_addr` |
+| `GUARDRAIL_LOG_LEVEL` | `observability.log_level` |
+| `GUARDRAIL_OTLP_ENDPOINT` | `observability.otlp_endpoint` |
+
+### Hot reload (Unix)
+
+Send `SIGHUP` to reload configuration without dropping connections:
+
+```bash
+pkill -HUP guardrail
+# or: just reload
 ```
 
 ## What gets checked
@@ -113,12 +135,29 @@ crates/
 ## Development
 
 ```bash
-cargo build --workspace
-cargo test --workspace
-cargo bench -p guardrail-classifiers
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all -- --check
+# Install just (task runner)
+cargo install just
+
+# Build
+just build
+
+# Test (requires cargo-nextest: cargo install cargo-nextest)
+just test
+
+# Lint
+just lint
+
+# Format
+just fmt
+
+# Full CI check locally
+just ci
+
+# Generate coverage report (requires cargo-tarpaulin)
+just coverage
 ```
+
+See `justfile` for all available recipes (`just --list`).
 
 ## License
 

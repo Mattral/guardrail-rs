@@ -11,12 +11,21 @@ resolver = "2"
 
 [workspace.package]
 version     = "0.1.0"
+# NOTE: the spec requests edition 2024. We deliberately stay on 2021 here
+# because this environment has no Rust toolchain available to verify the
+# 2024-edition migration (RPITIT capture rules, `if let` temporary scoping,
+# and the reserved `gen` keyword are all breaking changes that could
+# silently miscompile without a compiler to check against). Bumping to 2024
+# is a single-line change recommended as the *first* step once a toolchain
+# is available: run `cargo fix --edition` per crate, then `cargo test --workspace`.
 edition     = "2021"
 authors     = ["Mattral <your@email.com>"]
 license     = "Apache-2.0 OR MIT"
 repository  = "https://github.com/Mattral/guardrail-rs"
 homepage    = "https://github.com/Mattral/guardrail-rs"
-categories  = ["web-programming", "network-programming"]
+readme      = "README.md"
+description = "Sub-millisecond LLM security proxy: detect prompt injection, redact PII, and block toxic content. OpenAI-compatible drop-in."
+categories  = ["web-programming", "network-programming", "science::ml"]
 keywords    = ["llm", "security", "proxy", "guardrail", "prompt-injection"]
 
 [workspace.dependencies]
@@ -36,8 +45,13 @@ toml           = "0.8"
 thiserror      = "2"
 anyhow         = "1"
 # Observability
-tracing            = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing              = "0.1"
+tracing-subscriber   = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender     = "0.2"
+tracing-opentelemetry = "0.28"
+opentelemetry        = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk    = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp   = { version = "0.27", features = ["grpc-tonic", "trace"] }
 # Regex
 regex = "1"
 # Metrics
