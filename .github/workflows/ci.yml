@@ -15,6 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Format ─────────────────────────────────────────────────────────────────
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
@@ -25,6 +26,7 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  # ── Lint ───────────────────────────────────────────────────────────────────
   clippy:
     name: clippy
     runs-on: ubuntu-latest
@@ -34,24 +36,62 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: |
+          cargo clippy --workspace --all-targets -- -D warnings
 
+  # ── Tests (nextest) ────────────────────────────────────────────────────────
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.toolchain }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          # Primary: stable on Linux
+          - os: ubuntu-latest
+            toolchain: stable
+          # Cross-platform: stable on macOS (arm64 runner)
+          - os: macos-latest
+            toolchain: stable
+          # Cross-platform: stable on Windows
+          - os: windows-latest
+            toolchain: stable
+          # Beta Rust: catch upcoming breakage early
+          - os: ubuntu-latest
+            toolchain: beta
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-${{ matrix.toolchain }}
+      - uses: taiki-e/install-action@nextest
+      - name: cargo nextest run (CI profile)
+        run: cargo nextest run --workspace --profile ci
+      - name: Upload test results (JUnit)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.os }}-${{ matrix.toolchain }}
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+      - name: cargo test --doc
+        run: cargo test --workspace --doc
+
+  # ── No-default-features build ──────────────────────────────────────────────
+  no-default-features:
+    name: build (no-default-features)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test (default features)
-        run: cargo test --workspace
-      - name: cargo test (doc tests)
-        run: cargo test --workspace --doc
+      - run: cargo check -p guardrail-core --no-default-features
+      - run: cargo check -p guardrail-classifiers --no-default-features
 
+  # ── ONNX feature build ─────────────────────────────────────────────────────
   build-onnx:
     name: build (onnx feature)
     runs-on: ubuntu-latest
@@ -62,8 +102,9 @@ jobs:
       - name: cargo check --features onnx
         run: cargo check --workspace --features onnx
 
+  # ── MSRV ───────────────────────────────────────────────────────────────────
   msrv:
-    name: MSRV check
+    name: MSRV (1.75)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,11 +114,79 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
 
+  # ── Code coverage ──────────────────────────────────────────────────────────
+  coverage:
+    name: coverage (tarpaulin → Codecov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+      - name: Generate coverage (XML + stdout summary)
+        run: |
+          cargo tarpaulin \
+            --workspace \
+            --exclude guardrail-test-suite \
+            --out Xml Stdout \
+            --output-dir coverage/ \
+            --timeout 300 \
+            --ignore-tests \
+            2>&1 | tee coverage/tarpaulin-stdout.txt
+      - name: Enforce ≥ 80% line coverage
+        run: |
+          # Extract the coverage percentage from the tarpaulin stdout.
+          # Line looks like: "X% coverage, Y/Z lines covered"
+          PCT=$(grep -oP '\d+\.\d+(?=% coverage)' coverage/tarpaulin-stdout.txt | tail -1)
+          echo "Measured line coverage: ${PCT}%"
+          python3 -c "
+          pct = float('${PCT}')
+          if pct < 80.0:
+              print(f'Coverage {pct:.1f}% is below the 80% threshold.')
+              raise SystemExit(1)
+          print(f'Coverage {pct:.1f}% meets the 80% threshold. ✓')
+          "
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/cobertura.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  # ── License & advisory checks ──────────────────────────────────────────────
   deny:
-    name: cargo-deny (licenses & advisories)
+    name: cargo-deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  # ── Security audit ─────────────────────────────────────────────────────────
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  # ── Documentation build ────────────────────────────────────────────────────
+  docs:
+    name: docs (rustdoc + mdbook)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc (no deps)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+      - name: Install mdBook
+        run: cargo install mdbook --locked
+      - name: mdbook build
+        run: mdbook build
