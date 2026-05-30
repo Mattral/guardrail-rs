@@ -59,8 +59,11 @@ async fn clean_request_is_forwarded_to_upstream() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
         "#,
         upstream.uri()
     );
@@ -107,8 +110,11 @@ async fn prompt_injection_is_blocked_before_upstream() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
         "#,
         upstream.uri()
     );
@@ -160,8 +166,11 @@ async fn pii_is_redacted_before_forwarding() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
         "#,
         upstream.uri()
     );
@@ -217,8 +226,11 @@ async fn custom_policy_rule_blocks_keyword() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
 
         [[policy.rules]]
         name = "block-acme-corp-mentions"
@@ -273,8 +285,11 @@ async fn streaming_flag_is_preserved() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
         "#,
         upstream.uri()
     );
@@ -311,8 +326,11 @@ async fn upstream_failure_returns_bad_gateway() {
     // Use a port nothing is listening on.
     let config_toml = r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "http://127.0.0.1:1"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "http://127.0.0.1:1"
         upstream_timeout_secs = 1
     "#;
 
@@ -343,8 +361,11 @@ async fn upstream_failure_returns_bad_gateway() {
 async fn health_and_metrics_endpoints() {
     let config_toml = r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "https://api.openai.com"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "https://api.openai.com"
     "#;
 
     let (handle, _f) = start_proxy(config_toml).await;
@@ -402,10 +423,13 @@ async fn response_pii_is_redacted_when_enabled() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
 
-        [stages.pii_redaction]
+        [upstream]
+        url = "{}"
+
+        [stages.pii_redactor]
         enabled = true
         redact_responses = true
         "#,
@@ -468,8 +492,11 @@ async fn response_pii_passes_through_when_disabled() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
         "#,
         upstream.uri()
     );
@@ -515,10 +542,13 @@ async fn streaming_response_is_never_redacted() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
 
-        [stages.pii_redaction]
+        [upstream]
+        url = "{}"
+
+        [stages.pii_redactor]
         enabled = true
         redact_responses = true
         "#,
@@ -573,8 +603,11 @@ async fn audit_log_config_does_not_break_proxy() {
     let config_toml = format!(
         r#"
         [server]
-        listen_addr = "127.0.0.1:0"
-        upstream_url = "{}"
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
 
         [observability.audit_log]
         enabled = true
