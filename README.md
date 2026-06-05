@@ -1,3 +1,4 @@
+
 # 🦀 Rust in 30 Days — Beginner Roadmap
 
 **Goal:** From zero → comfortable writing small Rust programs and understanding ownership.
