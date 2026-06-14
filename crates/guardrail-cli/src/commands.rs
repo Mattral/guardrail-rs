@@ -19,21 +19,44 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<()> {
 /// `guardrail run --config <path>`
 ///
 /// Starts the proxy server and blocks until SIGINT/SIGTERM is received.
+/// On Unix, SIGHUP triggers a live configuration reload (pipeline and response
+/// redactor are swapped atomically; no connections are dropped).
 async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let config_handle = Arc::new(ConfigHandle::load(&config_path)?);
 
-    init_tracing(&config_handle.config().observability);
+    // Build the tracing subscriber (fmt layer + optional audit-log layer).
+    // The `_audit_guard` must be kept alive for the lifetime of the process
+    // so the background audit-log writer thread keeps running.
+    let _audit_guard = init_tracing(&config_handle.config().observability);
 
     let handle = guardrail_proxy::run_server(config_handle.clone()).await?;
     tracing::info!(addr = %handle.local_addr(), "guardrail-rs is running");
 
-    // Wait for SIGINT (Ctrl-C) or SIGTERM, then perform graceful shutdown.
+    // Spawn the SIGHUP hot-reload task (Unix only).
+    #[cfg(unix)]
+    {
+        let reload_handle = config_handle.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sighup = signal(SignalKind::hangup())
+                .expect("failed to install SIGHUP handler");
+            loop {
+                sighup.recv().await;
+                tracing::info!("SIGHUP received — reloading configuration");
+                match reload_handle.reload() {
+                    Ok(()) => tracing::info!("configuration reloaded successfully"),
+                    Err(e) => tracing::error!(error = %e, "configuration reload failed — keeping previous config"),
+                }
+            }
+        });
+    }
+
     wait_for_shutdown_signal().await;
 
     tracing::info!("shutdown signal received, stopping server");
     handle.shutdown();
 
-    // Give in-flight connections a brief grace period.
+    // Give in-flight connections a brief grace period to complete.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     Ok(())
@@ -47,17 +70,31 @@ fn validate(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     match guardrail_config::loader::load_config(&config_path) {
         Ok(config) => {
             println!("✓ configuration is valid");
-            println!("  listen_addr:   {}", config.server.listen_addr);
-            println!("  upstream_url:  {}", config.server.upstream_url);
+            println!("  listen_addr:          {}", config.server.listen_addr);
+            println!("  upstream_url:         {}", config.server.upstream_url);
             println!(
-                "  regex_injection: {}",
+                "  regex_injection:      {}",
                 if config.stages.regex_injection.enabled { "enabled" } else { "disabled" }
             );
             println!(
-                "  pii_redaction:   {}",
-                if config.stages.pii_redaction.enabled { "enabled" } else { "disabled" }
+                "  pii_redaction:        {}{}",
+                if config.stages.pii_redaction.enabled { "enabled" } else { "disabled" },
+                if config.stages.pii_redaction.redact_responses { " (+ response redaction)" } else { "" }
             );
-            println!("  policy rules:    {}", config.policy.rules.len());
+            println!("  policy rules:         {}", config.policy.rules.len());
+            println!(
+                "  audit_log:            {}",
+                if config.observability.audit_log.enabled {
+                    format!(
+                        "enabled → {}/{}.* ({})",
+                        config.observability.audit_log.directory,
+                        config.observability.audit_log.file_name_prefix,
+                        config.observability.audit_log.rotation,
+                    )
+                } else {
+                    "disabled".to_string()
+                }
+            );
             Ok(())
         }
         Err(e) => {
@@ -112,20 +149,71 @@ async fn check(text: String, config_path: std::path::PathBuf) -> anyhow::Result<
     Ok(())
 }
 
-/// Initialize the `tracing` subscriber based on observability config.
-fn init_tracing(observability: &guardrail_config::schema::ObservabilityConfig) {
+/// Initialize the `tracing` subscriber.
+///
+/// Installs a layered subscriber consisting of:
+/// - A `fmt` layer for human-readable (or JSON) application logs filtered
+///   by `observability.log_level`.
+/// - An optional NDJSON audit-log file layer (filtered to
+///   `target = "guardrail::audit"`) if `observability.audit_log.enabled`.
+///
+/// Returns an optional [`tracing_appender::non_blocking::WorkerGuard`] that
+/// **must be kept alive** for the duration of the process. Dropping it stops
+/// the background audit-log writer thread and may lose buffered records.
+///
+/// # Panics
+///
+/// Panics if a global subscriber has already been set (i.e. `init_tracing`
+/// is called more than once). This is an application-level invariant;
+/// `init_tracing` must only be called once at startup.
+fn init_tracing(
+    observability: &guardrail_config::ObservabilityConfig,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let filter = EnvFilter::try_new(&observability.log_level)
+    let env_filter = EnvFilter::try_new(&observability.log_level)
         .unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let subscriber = fmt::Subscriber::builder().with_env_filter(filter);
+    // Apply env_filter only to the fmt layer so the audit-log layer receives
+    // events at all levels regardless of log_level — it has its own
+    // target-based filter that only passes `guardrail::audit` events.
+    let fmt_layer = {
+        use tracing_subscriber::Layer;
+        if observability.json_logs {
+            fmt::layer()
+                .json()
+                .with_filter(env_filter)
+                .boxed()
+        } else {
+            fmt::layer()
+                .with_filter(env_filter)
+                .boxed()
+        }
+    };
 
-    if observability.json_logs {
-        subscriber.json().init();
-    } else {
-        subscriber.init();
-    }
+    // Build the audit-log layer if enabled.
+    let audit_result = guardrail_proxy::audit_log::build_layer::<tracing_subscriber::Registry>(
+        &observability.audit_log,
+    );
+
+    let (audit_layer, guard) = match audit_result {
+        Ok(Some((layer, guard))) => (Some(layer), Some(guard)),
+        Ok(None) => (None, None),
+        Err(e) => {
+            // Audit-log misconfiguration is non-fatal: log a warning and
+            // continue without file-based auditing.
+            eprintln!("warning: audit log disabled due to configuration error: {e}");
+            (None, None)
+        }
+    };
+
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(audit_layer)
+        .init();
+
+    guard
 }
 
 /// Wait for either Ctrl-C or (on Unix) SIGTERM.
