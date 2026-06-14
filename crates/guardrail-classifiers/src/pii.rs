@@ -19,7 +19,8 @@ use std::borrow::Cow;
 // ── Entity types ─────────────────────────────────────────────────────────────
 
 /// The type of PII entity detected.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PiiEntityType {
     /// Email address (RFC 5321).
     Email,
@@ -54,14 +55,23 @@ impl PiiEntityType {
 
 // ── Redaction record (for audit log) ─────────────────────────────────────────
 
-/// A single redaction that was applied to a request.
-#[derive(Debug, Clone)]
+/// A single redaction that was applied to a request or response.
+///
+/// **Offset caveat:** `offset` and `length` are byte positions in the text
+/// *as seen by the pattern that matched*, after any earlier patterns in the
+/// configured entity list have already been applied. For a single
+/// `PiiEntityType`, offsets are accurate against the pre-redaction input for
+/// that entity's pass; across entity types, offsets are not directly
+/// comparable to a single shared "original text" coordinate space. Consumers
+/// that need precise original-text spans should match on `entity_type` and
+/// re-scan the original text with that entity's pattern.
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct RedactionRecord {
     /// The type of entity that was redacted.
     pub entity_type: PiiEntityType,
-    /// The character offset in the original text where the match began.
+    /// The byte offset where the match began (see offset caveat above).
     pub offset: usize,
-    /// The length (in bytes) of the original matched text.
+    /// The length (in bytes) of the matched text.
     pub length: usize,
 }
 
@@ -196,7 +206,8 @@ impl PiiRedactor {
 
     /// Redact PII in a plain text string, returning the sanitized text.
     ///
-    /// This is the core operation; [`evaluate`] calls this for each message.
+    /// This is the core operation; [`PiiRedactor::redact_request`] and
+    /// [`PiiRedactor::redact_response_text`] call this for each piece of text.
     ///
     /// # Examples
     ///
@@ -209,9 +220,53 @@ impl PiiRedactor {
     /// assert!(!out.contains("user@example.com"));
     /// ```
     pub fn redact_text(&self, input: &str) -> String {
+        self.redact_text_with_records(input).0
+    }
+
+    /// Redact PII in a plain text string, returning both the sanitized text
+    /// and a list of [`RedactionRecord`]s describing what was found (entity
+    /// type, byte offset, and length in the **original** text).
+    ///
+    /// If no PII is found, the returned `Vec` is empty and the returned
+    /// string equals `input`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_classifiers::{PiiRedactor, PiiEntityType};
+    ///
+    /// let redactor = PiiRedactor::default();
+    /// let (out, records) = redactor.redact_text_with_records("Email me at user@example.com");
+    /// assert!(out.contains("[EMAIL]"));
+    /// assert_eq!(records.len(), 1);
+    /// assert_eq!(records[0].entity_type, PiiEntityType::Email);
+    /// ```
+    pub fn redact_text_with_records(&self, input: &str) -> (String, Vec<RedactionRecord>) {
         let mut result = Cow::Borrowed(input);
+        let mut records = Vec::new();
 
         for entry in &self.patterns {
+            // Record matches against the *current* (possibly already-redacted)
+            // text before this entry's pass. Offsets are best-effort: once an
+            // earlier pattern has changed the text, later offsets are relative
+            // to the post-earlier-pass text, not the original input. This is
+            // acceptable for audit purposes (entity type + count matter most);
+            // see `RedactionRecord` docs.
+            for m in entry.regex.find_iter(&result) {
+                if entry.entity_type == PiiEntityType::CreditCard && self.validate_luhn {
+                    let digits_only: String =
+                        m.as_str().chars().filter(|c| c.is_ascii_digit()).collect();
+                    if !luhn_valid(&digits_only) {
+                        continue;
+                    }
+                }
+                records.push(RedactionRecord {
+                    entity_type: entry.entity_type.clone(),
+                    offset: m.start(),
+                    length: m.len(),
+                });
+            }
+
             // Special handling for credit cards: apply Luhn check.
             if entry.entity_type == PiiEntityType::CreditCard && self.validate_luhn {
                 let replaced = entry.regex.replace_all(&result, |caps: &regex::Captures<'_>| {
@@ -232,7 +287,7 @@ impl PiiRedactor {
             }
         }
 
-        result.into_owned()
+        (result.into_owned(), records)
     }
 
     /// Redact PII in all messages of a request.
@@ -244,27 +299,18 @@ impl PiiRedactor {
         req: &GuardrailRequest,
     ) -> Option<(GuardrailRequest, Vec<RedactionRecord>)> {
         let mut any_changed = false;
-        let mut records = Vec::new();
+        let mut all_records = Vec::new();
 
         let new_messages: Vec<ChatMessage> = req
             .messages
             .iter()
             .map(|msg| {
                 let original_text = msg.content.as_text();
-                let redacted_text = self.redact_text(&original_text);
+                let (redacted_text, records) = self.redact_text_with_records(&original_text);
 
-                if redacted_text != original_text {
+                if !records.is_empty() {
                     any_changed = true;
-                    // Record each redaction for the audit log
-                    for entry in &self.patterns {
-                        for m in entry.regex.find_iter(&original_text) {
-                            records.push(RedactionRecord {
-                                entity_type: entry.entity_type.clone(),
-                                offset: m.start(),
-                                length: m.len(),
-                            });
-                        }
-                    }
+                    all_records.extend(records);
                     ChatMessage {
                         role: msg.role.clone(),
                         content: MessageContent::Text(redacted_text),
@@ -281,7 +327,40 @@ impl PiiRedactor {
 
         let mut mutated = req.clone();
         mutated.messages = new_messages;
-        Some((mutated, records))
+        Some((mutated, all_records))
+    }
+
+    /// Redact PII in a single block of free-form text (e.g. an LLM response).
+    ///
+    /// This is the response-side counterpart to [`PiiRedactor::redact_request`].
+    /// Use it to sanitize assistant-generated content before returning it to
+    /// the caller, so that PII the model echoes back (or hallucinates) from
+    /// its training data or tool outputs never reaches the client unredacted.
+    ///
+    /// Returns `None` if no PII was found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_classifiers::PiiRedactor;
+    ///
+    /// let redactor = PiiRedactor::default();
+    ///
+    /// let (sanitized, records) = redactor
+    ///     .redact_response_text("Sure, you can reach support at help@example.com.")
+    ///     .unwrap();
+    /// assert!(sanitized.contains("[EMAIL]"));
+    /// assert_eq!(records.len(), 1);
+    ///
+    /// assert!(redactor.redact_response_text("Nothing sensitive here.").is_none());
+    /// ```
+    pub fn redact_response_text(&self, text: &str) -> Option<(String, Vec<RedactionRecord>)> {
+        let (redacted, records) = self.redact_text_with_records(text);
+        if records.is_empty() {
+            None
+        } else {
+            Some((redacted, records))
+        }
     }
 }
 
@@ -458,6 +537,55 @@ mod tests {
         let first = r.redact_text(input);
         let second = r.redact_text(&first);
         assert_eq!(first, second, "redaction must be idempotent");
+    }
+
+    // ── Response-side redaction ───────────────────────────────────────────────
+
+    #[test]
+    fn test_redact_response_text_with_pii() {
+        let r = PiiRedactor::default();
+        let (sanitized, records) = r
+            .redact_response_text("You can reach our support team at help@example.com.")
+            .unwrap();
+
+        assert!(sanitized.contains("[EMAIL]"));
+        assert!(!sanitized.contains("help@example.com"));
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].entity_type, PiiEntityType::Email);
+    }
+
+    #[test]
+    fn test_redact_response_text_without_pii_returns_none() {
+        let r = PiiRedactor::default();
+        assert!(r.redact_response_text("Here is a haiku about autumn leaves.").is_none());
+    }
+
+    #[test]
+    fn test_redact_response_text_multiple_entities() {
+        let r = PiiRedactor::default();
+        let (sanitized, records) = r
+            .redact_response_text("Email alice@example.com or call 555-867-5309.")
+            .unwrap();
+
+        assert!(sanitized.contains("[EMAIL]"));
+        assert!(sanitized.contains("[PHONE]"));
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn test_redact_text_with_records_matches_redact_text() {
+        let r = PiiRedactor::default();
+        let input = "Contact user@example.com for info";
+        let (text_only, _) = r.redact_text_with_records(input);
+        assert_eq!(text_only, r.redact_text(input));
+    }
+
+    #[test]
+    fn test_redaction_record_serializes() {
+        let r = PiiRedactor::default();
+        let (_, records) = r.redact_text_with_records("Email me at user@example.com");
+        let json = serde_json::to_string(&records[0]).unwrap();
+        assert!(json.contains("\"entity_type\":\"email\""));
     }
 
     // ── Property-based tests ──────────────────────────────────────────────────
