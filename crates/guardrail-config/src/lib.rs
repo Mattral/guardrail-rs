@@ -42,6 +42,7 @@ pub mod validate;
 
 pub use loader::{ConfigHandle, ConfigLoadError};
 pub use schema::{
-    Config, PiiEntityList, PipelineConfig, PolicyRuleConfig, ServerConfig, StagesConfig,
+    AuditLogConfig, Config, ObservabilityConfig, PiiEntityList, PipelineConfig, PolicyRuleConfig,
+    ServerConfig, StagesConfig,
 };
 pub use validate::validate_config;

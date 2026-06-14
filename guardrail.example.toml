@@ -73,6 +73,11 @@ entities = ["email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aw
 # redacting, to reduce false positives on arbitrary 16-digit numbers.
 validate_luhn = true
 
+# Whether to also scan non-streaming LLM *responses* for PII before
+# returning them to the caller. Default: false.
+# Streaming responses (stream: true) are never scanned; see docs/architecture.md.
+redact_responses = false
+
 
 # ── Stage 4: ONNX toxicity classifier (optional) ──────────────────────────────
 # Requires building with `--features onnx` and providing model files.
@@ -123,3 +128,18 @@ log_level = "info"
 
 # Emit logs as JSON (recommended for production / log aggregation).
 json_logs = false
+
+# ── Rotating NDJSON audit log file ────────────────────────────────────────────
+# When enabled, every pipeline decision (allow, redact, block) is written as a
+# newline-delimited JSON record to a rotating file, independently of the
+# general application log. Suitable for ingestion by Filebeat, Vector, etc.
+#
+# Hot-reload note: the audit log settings are applied once at startup.
+# Changing them requires a process restart (SIGHUP reloads the pipeline
+# and response-redactor, but not the tracing subscriber stack).
+[observability.audit_log]
+enabled = false
+directory = "./audit-logs"
+file_name_prefix = "audit"
+# Rotation interval: "minutely", "hourly", "daily", or "never".
+rotation = "daily"
