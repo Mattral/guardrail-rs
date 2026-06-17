@@ -16,14 +16,16 @@
 #![deny(missing_docs)]
 #![warn(clippy::all)]
 
+pub mod classifier;
 pub mod injection;
 pub mod pii;
 
 #[cfg(feature = "onnx")]
 pub mod onnx;
 
+pub use classifier::{Classifier, ClassifierScore, RegexBackend, RegexMatchResult};
 pub use injection::RegexInjectionScanner;
-pub use pii::PiiRedactor;
+pub use pii::{PiiEntityType, PiiRedactor, RedactionRecord};
 
 #[cfg(feature = "onnx")]
 pub use onnx::{OnnxInjectionClassifier, ToxicityClassifier};
