@@ -1,145 +1,162 @@
 # guardrail-rs example configuration
 #
-# Copy this file to `guardrail.toml`, adjust `server.upstream_url` to point at
-# your LLM provider, and run:
-#
-#   guardrail run --config guardrail.toml
-#
-# Validate without starting the server:
-#
-#   guardrail validate --config guardrail.toml
+# Copy this file to `guardrail.toml` and edit `[upstream].url` at minimum.
+# Run `guardrail validate --config guardrail.toml` after any change.
 
+# ── Server ─────────────────────────────────────────────────────────────────────
 [server]
-# Address the proxy listens on. Point your application's OpenAI/Anthropic
-# client `base_url` at this address instead of the real provider.
-listen_addr = "0.0.0.0:8080"
+host = "0.0.0.0"
+port = 8080
 
-# The real upstream API. All allowed/redacted requests are forwarded here
-# with the original Authorization header intact.
-upstream_url = "https://api.openai.com"
+# Number of Tokio worker threads. 0 = number of logical CPUs.
+workers = 0
 
-# Per-request timeout when calling the upstream, in seconds.
-upstream_timeout_secs = 60
+# Maximum accepted client request body size, in bytes.
+max_body_size_bytes = 10485760  # 10 MiB
 
-# Maximum request body size accepted from clients, in bytes (default: 10 MiB).
-max_body_size_bytes = 10485760
+# ── Upstream LLM provider ─────────────────────────────────────────────────────
+[upstream]
+# Point this at the real provider. OpenAI- and Anthropic-shaped requests are
+# both supported (auto-detected by path: /v1/chat/completions vs /v1/messages).
+url = "https://api.openai.com"
 
+# Per-request timeout to the upstream, in seconds.
+timeout_secs = 120
 
+# TCP connection timeout, in seconds.
+connect_timeout = 10
+
+# ── Caller authentication (optional) ──────────────────────────────────────────
+# When enabled, callers must present a matching key in the X-Guardrail-Key
+# header. This is separate from the upstream Authorization header, which is
+# always forwarded opaquely and never inspected by guardrail-rs.
+[auth]
+require_key = false
+# keys = ["grk-your-generated-key-here"]
+
+# ── Pipeline ordering ──────────────────────────────────────────────────────────
 [pipeline]
-# What to do if a stage itself errors (not the same as a request being
-# blocked — this is for internal stage failures, e.g. a malformed model file).
-#
-#   "allow" (default) — fail open: treat the error as if the stage said Allow.
-#   "block"            — fail closed: block the request.
+# Ordered list of request-side stages. Removing an entry disables that stage
+# regardless of its own [stages.*] enabled flag.
+request_stages = ["regex_injection", "onnx_injection", "pii_redactor", "toxicity", "policy"]
+
+# Ordered list of response-side stages.
+response_stages = ["output_pii_redactor"]
+
+# Behavior when the pipeline itself errors unexpectedly (not the same as a
+# stage's own Block decision): "allow" (fail-open, default) or "block".
 on_error = "allow"
 
-
-# ── Stage 1: Regex-based prompt injection scanner ────────────────────────────
-# Fastest stage; runs first. Uses a bundled rule set covering common jailbreak
-# patterns, system-prompt extraction attempts, and delimiter-injection attacks.
+# ── Stage 1: regex-based prompt injection detection ───────────────────────────
 [stages.regex_injection]
 enabled = true
 
-# Optional: path to a custom rule file (one regex per line, '#' for comments).
-# If unset, the bundled rule set is used.
-# custom_rules_path = "rules/custom-injection.rules"
+# Path to a custom rule file (one regex per line, # for comments).
+# Empty string = use the bundled rule set.
+rules_file = ""
 
-# If true, matches are logged but the request is allowed through.
-# Useful for dry-running new rules in production before enforcing them.
-log_only = false
+# Additional patterns appended to whichever rule set is active.
+extra_rules = []
 
+# What to do on a match: "block" (default), "redact" (not meaningful for this
+# stage), or "log_only" (dry-run mode — logs but allows the request).
+action = "block"
 
-# ── Stage 2: ONNX semantic injection classifier (optional) ───────────────────
-# Requires building with `--features onnx` and providing model files.
-# Catches semantic injection attacks that evade regex patterns.
+# ── Stage 2: ONNX semantic injection classifier (optional) ────────────────────
+# Requires building with --features onnx and providing model files.
+# See docs/onnx-models.md.
 [stages.onnx_injection]
 enabled = false
-# model_path = "models/prompt-injection-v1.onnx"
-# tokenizer_path = "models/deberta-tokenizer/tokenizer.json"
+model_path = ""
+tokenizer_path = ""
 threshold = 0.85
-
+action = "block"
+on_error = "allow"
 
 # ── Stage 3: PII detection and redaction ──────────────────────────────────────
 # Detects and replaces PII before it reaches the upstream LLM or the
-# toxicity classifier. Never blocks; always redacts and forwards.
-[stages.pii_redaction]
+# toxicity classifier. Default action is "redact" (sanitize and continue).
+[stages.pii_redactor]
 enabled = true
 
 # Entity types to detect. Valid values:
 #   "email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key"
 entities = ["email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key"]
 
+action = "redact"
+
 # Apply Luhn checksum validation to candidate credit-card numbers before
 # redacting, to reduce false positives on arbitrary 16-digit numbers.
 validate_luhn = true
 
 # Whether to also scan non-streaming LLM *responses* for PII before
-# returning them to the caller. Default: false.
-# Streaming responses (stream: true) are never scanned; see docs/architecture.md.
+# returning them to the caller. Streaming responses (stream: true) are
+# never scanned — see docs/architecture.md.
 redact_responses = false
 
+# Custom replacement tokens (all optional; shown values are the defaults).
+[stages.pii_redactor.replacements]
+email = "[EMAIL]"
+phone = "[PHONE]"
+credit_card = "[CARD]"
+ssn = "[SSN]"
+ip_address = "[IP_ADDRESS]"
+api_key = "[API_KEY]"
+aws_key = "[AWS_KEY]"
 
-# ── Stage 4: ONNX toxicity classifier (optional) ──────────────────────────────
-# Requires building with `--features onnx` and providing model files.
+# ── Stage 4: ONNX toxicity classifier (optional) ───────────────────────────────
 [stages.toxicity]
 enabled = false
-# model_path = "models/toxicity-v1.onnx"
-# tokenizer_path = "models/roberta-tokenizer/tokenizer.json"
+model_path = ""
+tokenizer_path = ""
 threshold = 0.90
-
-
-# ── Stage 5: User-defined policy rules ────────────────────────────────────────
-# Evaluated last, in order. The first matching rule's action is applied.
-# See docs/policy-rules.md for the full condition/action reference.
-
-[[policy.rules]]
-name = "require-system-prompt"
-enabled = false
 action = "block"
-condition.type = "system_prompt_absent"
-message = "Requests must include a system prompt in this deployment."
+scan_roles = ["user"]
+on_error = "allow"
 
-[[policy.rules]]
-name = "max-input-tokens"
-enabled = false
-action = "block"
-condition.type = "token_count_exceeds"
-condition.limit = 8000
-message = "Input exceeds the configured token limit for this deployment."
-
+# ── Stage 5: user-defined policy rules ─────────────────────────────────────────
+# Evaluated last, in order. The first enabled rule whose `when` condition
+# matches determines the outcome. See docs/policy-rules.md for the full
+# condition reference and worked examples.
 [[policy.rules]]
 name = "block-competitor-mentions"
 enabled = false
+
+[policy.rules.when]
+content_contains = ["competitor-x", "competitor-y"]
+
+[policy.rules.then]
 action = "block"
-condition.type = "content_contains"
-condition.keywords = ["competitor-x", "competitor-y"]
 message = "Mentions of named competitors are not permitted in this deployment."
 
 
 # ── Observability ─────────────────────────────────────────────────────────────
 [observability]
-# NOTE: /metrics and /healthz are currently served on the same address as
-# `server.listen_addr` (alongside the proxy endpoints). `metrics_addr` is
-# reserved for a future release that will serve metrics on a separate port.
-metrics_addr = "0.0.0.0:9090"
-
 # Log level: "trace", "debug", "info", "warn", "error".
 log_level = "info"
 
-# Emit logs as JSON (recommended for production / log aggregation).
-json_logs = false
+# Log output format: "pretty" (human-readable, default) or "json".
+# Use "json" in production for log aggregation (Datadog, Splunk, Loki, etc.).
+log_format = "pretty"
 
-# ── Rotating NDJSON audit log file ────────────────────────────────────────────
+# Reserved for a future release that serves /metrics on a separate port.
+# /metrics is currently served on server.host:server.port alongside the
+# proxy endpoints regardless of this setting.
+metrics_port = 9090
+
+# OpenTelemetry OTLP gRPC endpoint for distributed tracing.
+# Leave empty (default) to disable OTLP export.
+# Example: "http://localhost:4317" for a local Jaeger/Tempo collector.
+otlp_endpoint = ""
+
+# ── Structured NDJSON audit log ────────────────────────────────────────────────
 # When enabled, every pipeline decision (allow, redact, block) is written as a
-# newline-delimited JSON record to a rotating file, independently of the
-# general application log. Suitable for ingestion by Filebeat, Vector, etc.
+# newline-delimited JSON record to `path`, independently of the general
+# application log. Suitable for ingestion by Filebeat, Vector, etc.
 #
-# Hot-reload note: the audit log settings are applied once at startup.
-# Changing them requires a process restart (SIGHUP reloads the pipeline
-# and response-redactor, but not the tracing subscriber stack).
+# KNOWN LIMITATION: rotation is not yet size-based; max_size_mb is currently
+# advisory only. See crates/guardrail-proxy/src/audit_log.rs.
 [observability.audit_log]
 enabled = false
-directory = "./audit-logs"
-file_name_prefix = "audit"
-# Rotation interval: "minutely", "hourly", "daily", or "never".
-rotation = "daily"
+path = "./guardrail-audit.ndjson"
+max_size_mb = 100

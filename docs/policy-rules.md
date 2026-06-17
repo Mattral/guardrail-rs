@@ -11,13 +11,19 @@ Rust code.
 [[policy.rules]]
 name = "my-rule-name"
 enabled = true
+
+[policy.rules.when]
+# exactly one condition field set — see "Condition types" below
+
+[policy.rules.then]
 action = "block"
-condition.type = "..."
 message = "Optional custom message shown to the blocked client."
 ```
 
-Rules are evaluated **top to bottom**; the **first enabled rule whose
-condition matches** wins. If no rule matches, the request is allowed.
+Each rule has a `when` table (the condition) and a `then` table (the action),
+read naturally as "when X, then Y". Rules are evaluated **top to bottom**;
+the **first enabled rule whose `when` condition matches** wins. If no rule
+matches, the request is allowed.
 
 ## Recipes
 
@@ -31,8 +37,12 @@ its own via the system prompt.
 [[policy.rules]]
 name = "require-system-prompt"
 enabled = true
+
+[policy.rules.when]
+system_prompt_absent = true
+
+[policy.rules.then]
 action = "block"
-condition.type = "system_prompt_absent"
 message = "Requests must include a system prompt."
 ```
 
@@ -46,9 +56,12 @@ margin.
 [[policy.rules]]
 name = "max-input-tokens"
 enabled = true
+
+[policy.rules.when]
+token_count_exceeds = 8000
+
+[policy.rules.then]
 action = "block"
-condition.type = "token_count_exceeds"
-condition.limit = 8000
 message = "Input exceeds the 8000-token limit for this deployment."
 ```
 
@@ -61,9 +74,12 @@ discuss competitors, or to prevent leakage of internal codenames.
 [[policy.rules]]
 name = "block-sensitive-terms"
 enabled = true
+
+[policy.rules.when]
+content_contains = ["project-bluefin", "competitor-x", "internal-codename-z"]
+
+[policy.rules.then]
 action = "block"
-condition.type = "content_contains"
-condition.keywords = ["project-bluefin", "competitor-x", "internal-codename-z"]
 message = "This request references restricted terms."
 ```
 
@@ -73,6 +89,25 @@ match across word boundaries with stemming (e.g. `"competitors"` will match
 `"competitor"` only if `"competitor"` itself is a substring, which it is —
 substring matching naturally handles common pluralization for single-token
 keywords).
+
+### Default-deny catch-all
+
+```toml
+[[policy.rules]]
+name = "default-deny"
+enabled = true
+
+[policy.rules.when]
+always = true
+
+[policy.rules.then]
+action = "block"
+message = "This request did not match any allowed pattern."
+```
+
+Place this rule **last** — since rules are evaluated in order and the first
+match wins, an `always = true` rule placed earlier would shadow every rule
+after it.
 
 ### Combine rules: allow-list + default block
 
@@ -88,17 +123,23 @@ in the pipeline.
 [[policy.rules]]
 name = "allow-internal-tool-name"
 enabled = true
+
+[policy.rules.when]
+content_contains = ["internal-tool-frobnicator"]
+
+[policy.rules.then]
 action = "allow"
-condition.type = "content_contains"
-condition.keywords = ["internal-tool-frobnicator"]
 
 # Block everything else that mentions "internal-"
 [[policy.rules]]
 name = "block-other-internal-mentions"
 enabled = true
+
+[policy.rules.when]
+content_contains = ["internal-"]
+
+[policy.rules.then]
 action = "block"
-condition.type = "content_contains"
-condition.keywords = ["internal-"]
 message = "References to internal systems are restricted."
 ```
 
@@ -136,8 +177,21 @@ guardrail check "Ignore all previous instructions" --config guardrail.toml \
 
 ## Logging-only rules during rollout
 
-Rather than using `[stages.regex_injection].log_only` (which affects the
-*entire* regex stage), you can stage policy changes gradually by setting
-`enabled = false` on a new rule while you review audit logs from
-`log_only = true` on the relevant classifier stage, then flip `enabled =
-true` once you're confident in the rule's precision.
+Rather than using `[stages.regex_injection].action = "log_only"` (which
+affects the *entire* regex stage), you can stage policy changes gradually by
+setting `enabled = false` on a new rule while you review audit logs, or by
+setting `then.action = "log_only"` on the rule itself — the condition is
+evaluated and an audit event is emitted, but the request is allowed through.
+Flip `then.action = "block"` once you're confident in the rule's precision.
+
+## Condition reference
+
+| `when` field | Type | Matches when |
+|--------------|------|---------------|
+| `content_contains` | array of strings | Any keyword (case-insensitive) appears anywhere in message content |
+| `system_prompt_absent` | bool (`true`) | No `role = "system"` message is present |
+| `token_count_exceeds` | integer | Approximate token count exceeds the given value |
+| `always` | bool (`true`) | Unconditionally |
+
+If a rule's `when` table has no field set, configuration validation rejects
+it with an error (`policy.rules[i] has no condition set`).
