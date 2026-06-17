@@ -1,11 +1,20 @@
 # docker-compose for local development and evaluation.
 #
 # Usage:
-#   cp guardrail.example.toml guardrail.toml   # edit upstream_url etc.
+#   cp guardrail.example.toml guardrail.toml   # edit [upstream].url etc.
 #   docker compose up -d
 #
 # guardrail-rs:  http://localhost:8080
 # Prometheus UI: http://localhost:9091
+# Grafana:       http://localhost:3000 (admin/admin)
+# Ollama:        http://localhost:11434 (zero-API-key local LLM for testing)
+#
+# To test guardrail-rs against Ollama instead of a real provider with no API
+# key required, set in guardrail.toml:
+#   [upstream]
+#   url = "http://ollama:11434"
+# and pull a model after first start:
+#   docker compose exec ollama ollama pull llama3.2:1b
 
 services:
   guardrail-rs:
@@ -26,6 +35,21 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    depends_on:
+      - ollama
+
+  # Zero-API-key local LLM backend for development and CI smoke tests.
+  # guardrail-rs talks to this exactly like any OpenAI-compatible upstream
+  # once Ollama's OpenAI-compatible endpoint is targeted
+  # (http://ollama:11434/v1 — see Ollama docs for the compatible routes).
+  ollama:
+    image: ollama/ollama:latest
+    container_name: guardrail-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
 
   prometheus:
     image: prom/prometheus:latest
@@ -37,3 +61,20 @@ services:
     depends_on:
       - guardrail-rs
     restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: guardrail-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - ./contrib/grafana-dashboard.json:/var/lib/grafana/dashboards/guardrail-rs.json:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  ollama-models:
