@@ -8,7 +8,8 @@ license.workspace     = true
 repository.workspace  = true
 homepage.workspace    = true
 categories.workspace  = true
-keywords.workspace    = true
+keywords.workspace  = true
+readme             = "../../README.md"
 
 [dependencies]
 serde       = { workspace = true }
@@ -17,6 +18,16 @@ thiserror   = { workspace = true }
 uuid        = { workspace = true }
 async-trait = { workspace = true }
 tracing     = { workspace = true }
+# Optional: enables GuardrailError::Upstream(#[from] reqwest::Error).
+# See the module doc in src/error.rs for the rationale.
+reqwest     = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enables `reqwest::Error` as the inner type of `GuardrailError::Upstream`,
+# matching the spec exactly. Off by default to keep guardrail-core's
+# dependency footprint minimal; guardrail-proxy enables this feature.
+reqwest-errors = ["reqwest"]
 
 [dev-dependencies]
 tokio       = { workspace = true }
