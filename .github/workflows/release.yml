@@ -8,9 +8,32 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: write
+  packages: write
+  id-token: write  # Required for crates.io Trusted Publishing (OIDC).
+
 jobs:
+  # ── Verify the release commit is clean ──────────────────────────────────────
+  verify:
+    name: pre-release checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --workspace
+      - run: cargo test --workspace --doc
+
+  # ── Build cross-platform binaries ────────────────────────────────────────────
   build-binaries:
     name: build (${{ matrix.target }})
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -18,12 +41,21 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            archive_ext: tar.gz
+            cross: true
           - os: macos-latest
             target: x86_64-apple-darwin
+            archive_ext: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+            bin_suffix: .exe
     steps:
       - uses: actions/checkout@v4
 
@@ -33,77 +65,172 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+      - name: Install cross (for aarch64-linux)
+        if: matrix.cross
+        run: cargo install cross --locked
 
-      - name: Build
+      - name: Build (native)
+        if: "!matrix.cross"
         run: cargo build --release -p guardrail-cli --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release -p guardrail-cli --target ${{ matrix.target }}
+
+      - name: Extract version from tag
+        id: version
         shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Package (tar.gz)
+        if: matrix.archive_ext == 'tar.gz'
         run: |
+          ARTIFACT="guardrail-rs-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz"
           mkdir -p dist
-          BIN=target/${{ matrix.target }}/release/guardrail
-          ARCHIVE="guardrail-rs-${{ matrix.target }}.tar.gz"
-          tar -czf "dist/${ARCHIVE}" -C "$(dirname "$BIN")" "$(basename "$BIN")" \
-            -C "${GITHUB_WORKSPACE}" guardrail.example.toml README.md LICENSE-APACHE LICENSE-MIT
+          tar -czf "dist/${ARTIFACT}" \
+            -C "target/${{ matrix.target }}/release" \
+            guardrail${{ matrix.bin_suffix || '' }} \
+            -C "${GITHUB_WORKSPACE}" \
+            guardrail.example.toml README.md LICENSE-APACHE LICENSE-MIT
+          echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+        id: pkg_tar
+
+      - name: Package (zip, Windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $target  = "${{ matrix.target }}"
+          $artifact = "guardrail-rs-${version}-${target}.zip"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path @(
+            "target/$target/release/guardrail.exe",
+            "guardrail.example.toml",
+            "README.md",
+            "LICENSE-APACHE",
+            "LICENSE-MIT"
+          ) -DestinationPath "dist/$artifact"
 
       - uses: actions/upload-artifact@v4
         with:
           name: guardrail-rs-${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: dist/*
 
+  # ── Build & push multi-arch Docker image ─────────────────────────────────────
   docker:
-    name: build & push Docker image
+    name: Docker image
+    needs: verify
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
 
       - uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  publish-release:
-    name: Create GitHub Release
+  # ── Publish to crates.io via Trusted Publishing ───────────────────────────────
+  publish:
+    name: Publish to crates.io
     needs: [build-binaries, docker]
+    runs-on: ubuntu-latest
+    environment: crates-io   # GitHub Environment with OIDC permission.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Publish in dependency order (leaves before roots).
+      - name: Publish guardrail-core
+        run: cargo publish -p guardrail-core --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for guardrail-core to be indexed
+        run: sleep 20
+
+      - name: Publish guardrail-classifiers
+        run: cargo publish -p guardrail-classifiers --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for guardrail-classifiers to be indexed
+        run: sleep 20
+
+      - name: Publish guardrail-config
+        run: cargo publish -p guardrail-config --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for guardrail-config to be indexed
+        run: sleep 20
+
+      - name: Publish guardrail-proxy
+        run: cargo publish -p guardrail-proxy --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for guardrail-proxy to be indexed
+        run: sleep 20
+
+      - name: Publish guardrail-cli
+        run: cargo publish -p guardrail-cli --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ── Create GitHub Release ─────────────────────────────────────────────────────
+  github-release:
+    name: GitHub Release
+    needs: [build-binaries, docker, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      - name: Generate SHA256 checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS.txt
           generate_release_notes: true
+          body_path: CHANGELOG.md
