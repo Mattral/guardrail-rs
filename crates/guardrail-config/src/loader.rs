@@ -10,9 +10,7 @@ use guardrail_core::{
     policy::{PolicyAction, PolicyCondition, PolicyEngine, PolicyRule},
 };
 
-use crate::schema::{
-    Config, PiiEntityList, PolicyActionConfig, PolicyConditionConfig,
-};
+use crate::schema::{Config, PiiEntityList};
 
 /// Errors that can occur while loading or validating configuration.
 #[derive(Debug, thiserror::Error)]
@@ -52,19 +50,33 @@ pub enum ConfigLoadError {
     },
 }
 
-/// Load a [`Config`] from a TOML file and validate it.
+/// Load a [`Config`] from a TOML file, then apply environment-variable
+/// overrides, and finally validate.
+///
+/// ## Environment variable overlay
+///
+/// The following variables, if set, override the corresponding TOML fields:
+///
+/// | Variable | Overrides |
+/// |----------|-----------|
+/// | `GUARDRAIL_CONFIG` | *(path; handled by the caller — not a config field)* |
+/// | `GUARDRAIL_UPSTREAM` | `upstream.url` |
+/// | `GUARDRAIL_PORT` | `server.listen_addr()` port component |
+/// | `GUARDRAIL_LOG_LEVEL` | `observability.log_level` |
+/// | `GUARDRAIL_OTLP_ENDPOINT` | `observability.otlp_endpoint` |
 ///
 /// # Errors
 ///
 /// Returns [`ConfigLoadError::Io`] if the file cannot be read,
 /// [`ConfigLoadError::Parse`] if it isn't valid TOML, or
-/// [`ConfigLoadError::Validation`] if validation fails.
+/// [`ConfigLoadError::Validation`] if validation fails after env overrides.
 ///
 /// # Examples
 ///
 /// ```rust,no_run
 /// use guardrail_config::loader::load_config;
 ///
+/// // GUARDRAIL_UPSTREAM=https://api.anthropic.com overrides upstream_url at runtime.
 /// let config = load_config("guardrail.toml").unwrap();
 /// ```
 pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigLoadError> {
@@ -74,10 +86,14 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigLoadError> {
         source,
     })?;
 
-    let config: Config = toml::from_str(&contents).map_err(|source| ConfigLoadError::Parse {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let mut config: Config =
+        toml::from_str(&contents).map_err(|source| ConfigLoadError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+
+    // Apply environment-variable overrides (later layers win over TOML).
+    apply_env_overrides(&mut config);
 
     let errors = crate::validate::validate_config(&config);
     if !errors.is_empty() {
@@ -87,165 +103,216 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigLoadError> {
     Ok(config)
 }
 
+/// Apply environment-variable overrides to a partially-constructed [`Config`].
+///
+/// Recognized variables: `GUARDRAIL_UPSTREAM`, `GUARDRAIL_PORT`,
+/// `GUARDRAIL_LOG_LEVEL`, `GUARDRAIL_OTLP_ENDPOINT`.
+///
+/// Unknown or malformed values are silently ignored; validation runs
+/// afterwards and will catch issues.
+fn apply_env_overrides(config: &mut Config) {
+    if let Ok(upstream) = std::env::var("GUARDRAIL_UPSTREAM") {
+        if !upstream.trim().is_empty() {
+            tracing::debug!(env = "GUARDRAIL_UPSTREAM", value = %upstream, "applying env override");
+            config.upstream.url = upstream;
+        }
+    }
+
+    if let Ok(port_str) = std::env::var("GUARDRAIL_PORT") {
+        if let Ok(port) = port_str.trim().parse::<u16>() {
+            tracing::debug!(env = "GUARDRAIL_PORT", port, "applying env override");
+            config.server.port = port;
+        }
+    }
+
+    if let Ok(level) = std::env::var("GUARDRAIL_LOG_LEVEL") {
+        if !level.trim().is_empty() {
+            tracing::debug!(
+                env = "GUARDRAIL_LOG_LEVEL",
+                value = %level,
+                "applying env override"
+            );
+            config.observability.log_level = level;
+        }
+    }
+
+    if let Ok(endpoint) = std::env::var("GUARDRAIL_OTLP_ENDPOINT") {
+        if !endpoint.trim().is_empty() {
+            tracing::debug!(
+                env = "GUARDRAIL_OTLP_ENDPOINT",
+                value = %endpoint,
+                "applying env override"
+            );
+            config.observability.otlp_endpoint = endpoint;
+        }
+    }
+}
+
 /// Build a [`Pipeline`] from a validated [`Config`].
 ///
-/// Stages are added in a fixed, security-conscious order:
-///
-/// 1. `regex_injection` — fastest, catches the majority of attacks
-/// 2. `onnx_injection` — semantic detection (if `onnx` feature enabled)
-/// 3. `pii_redaction` — sanitizes before the toxicity check sees the text
-/// 4. `toxicity` — slowest, runs last among classifiers
-/// 5. `policy_engine` — user-defined rules, evaluated last
+/// Stages are added in the order specified by `config.pipeline.request_stages`.
+/// Unknown stage IDs are skipped (validation catches them beforehand).
 ///
 /// # Errors
 ///
-/// Returns [`ConfigLoadError::StageBuild`] if a stage's patterns fail to compile,
-/// or if an ONNX stage is enabled without the `onnx` feature.
+/// Returns [`ConfigLoadError::StageBuild`] if a stage's patterns fail to compile.
 pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
     let mut builder = PipelineBuilder::default();
 
-    // 1. Regex injection scanner
-    if config.stages.regex_injection.enabled {
-        let scanner = match &config.stages.regex_injection.custom_rules_path {
-            Some(path) => {
-                let contents = std::fs::read_to_string(path).map_err(|source| {
-                    ConfigLoadError::Io {
-                        path: PathBuf::from(path),
-                        source,
+    for stage_id in &config.pipeline.request_stages {
+        match stage_id.as_str() {
+            "regex_injection" if config.stages.regex_injection.enabled => {
+                let log_only = config.stages.regex_injection.action
+                    == crate::schema::StageAction::LogOnly;
+
+                let scanner = if !config.stages.regex_injection.rules_file.trim().is_empty() {
+                    let path = &config.stages.regex_injection.rules_file;
+                    let mut contents = std::fs::read_to_string(path).map_err(|source| {
+                        ConfigLoadError::Io { path: PathBuf::from(path), source }
+                    })?;
+                    // Append extra_rules to the file content.
+                    for rule in &config.stages.regex_injection.extra_rules {
+                        contents.push('\n');
+                        contents.push_str(rule);
                     }
-                })?;
-                RegexInjectionScanner::from_rule_str(
-                    &contents,
-                    !config.stages.regex_injection.log_only,
+                    RegexInjectionScanner::from_rule_str(&contents, !log_only)
+                        .map_err(|source| ConfigLoadError::StageBuild {
+                            stage: "regex_injection".into(),
+                            source,
+                        })?
+                } else {
+                    let mut bundled = include_str!(
+                        "../../guardrail-classifiers/src/rules/injection.rules"
+                    ).to_string();
+                    for rule in &config.stages.regex_injection.extra_rules {
+                        bundled.push('\n');
+                        bundled.push_str(rule);
+                    }
+                    RegexInjectionScanner::from_rule_str(&bundled, !log_only)
+                        .map_err(|source| ConfigLoadError::StageBuild {
+                            stage: "regex_injection".into(),
+                            source,
+                        })?
+                };
+                builder = builder.stage(scanner);
+            }
+
+            #[cfg(feature = "onnx")]
+            "onnx_injection" if config.stages.onnx_injection.enabled => {
+                let model_path = &config.stages.onnx_injection.model_path;
+                let tokenizer_path = &config.stages.onnx_injection.tokenizer_path;
+                let classifier = guardrail_classifiers::OnnxInjectionClassifier::load(
+                    model_path,
+                    tokenizer_path,
+                    config.stages.onnx_injection.threshold,
                 )
                 .map_err(|source| ConfigLoadError::StageBuild {
-                    stage: "regex_injection".into(),
+                    stage: "onnx_injection".into(),
                     source,
-                })?
+                })?;
+                builder = builder.stage(classifier);
             }
-            None => {
-                if config.stages.regex_injection.log_only {
-                    RegexInjectionScanner::from_rule_str(
-                        include_str!("../../guardrail-classifiers/src/rules/injection.rules"),
-                        false,
-                    )
-                    .map_err(|source| ConfigLoadError::StageBuild {
-                        stage: "regex_injection".into(),
-                        source,
-                    })?
-                } else {
-                    RegexInjectionScanner::default()
+
+            "pii_redactor" => {
+                if let Some(redactor) = build_pii_redactor(config)? {
+                    builder = builder.stage(redactor);
                 }
             }
-        };
-        builder = builder.stage(scanner);
-    }
 
-    // 2. ONNX injection classifier
-    #[cfg(feature = "onnx")]
-    if config.stages.onnx_injection.enabled {
-        let model_path = config
-            .stages
-            .onnx_injection
-            .model_path
-            .as_ref()
-            .expect("validated: model_path present");
-        let tokenizer_path = config
-            .stages
-            .onnx_injection
-            .tokenizer_path
-            .as_ref()
-            .expect("validated: tokenizer_path present");
+            #[cfg(feature = "onnx")]
+            "toxicity" if config.stages.toxicity.enabled => {
+                let model_path = &config.stages.toxicity.model_path;
+                let tokenizer_path = &config.stages.toxicity.tokenizer_path;
+                let classifier = guardrail_classifiers::ToxicityClassifier::load(
+                    model_path,
+                    tokenizer_path,
+                    config.stages.toxicity.threshold,
+                )
+                .map_err(|source| ConfigLoadError::StageBuild {
+                    stage: "toxicity".into(),
+                    source,
+                })?;
+                builder = builder.stage(classifier);
+            }
 
-        let classifier = guardrail_classifiers::OnnxInjectionClassifier::load(
-            model_path,
-            tokenizer_path,
-            config.stages.onnx_injection.threshold,
-        )
-        .map_err(|source| ConfigLoadError::StageBuild {
-            stage: "onnx_injection".into(),
-            source,
-        })?;
-        builder = builder.stage(classifier);
-    }
+            "policy" if !config.policy.rules.is_empty() => {
+                let rules = convert_policy_rules(&config.policy.rules);
+                builder = builder.stage(PolicyEngine::new(rules));
+            }
 
-    // 3. PII redaction
-    if let Some(redactor) = build_pii_redactor(config)? {
-        builder = builder.stage(redactor);
-    }
-
-    // 4. ONNX toxicity classifier
-    #[cfg(feature = "onnx")]
-    if config.stages.toxicity.enabled {
-        let model_path = config
-            .stages
-            .toxicity
-            .model_path
-            .as_ref()
-            .expect("validated: model_path present");
-        let tokenizer_path = config
-            .stages
-            .toxicity
-            .tokenizer_path
-            .as_ref()
-            .expect("validated: tokenizer_path present");
-
-        let classifier = guardrail_classifiers::ToxicityClassifier::load(
-            model_path,
-            tokenizer_path,
-            config.stages.toxicity.threshold,
-        )
-        .map_err(|source| ConfigLoadError::StageBuild {
-            stage: "toxicity".into(),
-            source,
-        })?;
-        builder = builder.stage(classifier);
-    }
-
-    // 5. Policy engine
-    if !config.policy.rules.is_empty() {
-        let rules = config
-            .policy
-            .rules
-            .iter()
-            .map(|r| PolicyRule {
-                name: r.name.clone(),
-                enabled: r.enabled,
-                condition: convert_condition(&r.condition),
-                action: convert_action(r.action),
-                message: r.message.clone(),
-            })
-            .collect();
-        builder = builder.stage(PolicyEngine::new(rules));
+            _ => {} // disabled or unknown stage — skip
+        }
     }
 
     Ok(builder.build())
 }
 
+/// Convert schema `PolicyRuleConfig` entries (using `when`/`then` shape) to
+/// the core `PolicyRule` type.
+fn convert_policy_rules(rules: &[crate::schema::PolicyRuleConfig]) -> Vec<PolicyRule> {
+    rules
+        .iter()
+        .map(|r| {
+            let condition = {
+                let w = &r.when;
+                if w.always {
+                    PolicyCondition::Always
+                } else if !w.content_contains.is_empty() {
+                    PolicyCondition::ContentContains(
+                        w.content_contains.iter().map(|k| k.to_lowercase()).collect(),
+                    )
+                } else if w.system_prompt_absent {
+                    PolicyCondition::SystemPromptAbsent
+                } else if w.token_count_exceeds > 0 {
+                    PolicyCondition::TokenCountExceeds(w.token_count_exceeds)
+                } else {
+                    PolicyCondition::Always
+                }
+            };
+
+            let action = match r.then.action {
+                crate::schema::PolicyAction::Allow => PolicyAction::Allow,
+                crate::schema::PolicyAction::Redact => PolicyAction::Redact,
+                crate::schema::PolicyAction::Block => PolicyAction::Block,
+                crate::schema::PolicyAction::LogOnly => PolicyAction::LogOnly,
+            };
+
+            PolicyRule {
+                name: r.name.clone(),
+                enabled: r.enabled,
+                condition,
+                action,
+                message: r.then.message.clone(),
+            }
+        })
+        .collect()
+}
+
 /// Construct the [`PiiRedactor`] used by the **request**-side
-/// `pii_redaction` stage, if enabled.
+/// `pii_redactor` stage, if enabled.
 ///
-/// Returns `Ok(None)` if `config.stages.pii_redaction.enabled` is `false`.
+/// Returns `Ok(None)` if `config.stages.pii_redactor.enabled` is `false`.
 ///
 /// # Errors
 ///
-/// Returns [`ConfigLoadError::StageBuild`] if the configured entity list is
-/// invalid or the underlying regex patterns fail to compile.
+/// Returns [`ConfigLoadError::StageBuild`] if the entity list is invalid or
+/// the underlying regex patterns fail to compile.
 fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoadError> {
-    if !config.stages.pii_redaction.enabled {
+    if !config.stages.pii_redactor.enabled {
         return Ok(None);
     }
 
-    let entities = PiiEntityList::from_strings(&config.stages.pii_redaction.entities).map_err(
-        |e| ConfigLoadError::StageBuild {
-            stage: "pii_redaction".into(),
-            source: guardrail_core::error::GuardrailError::Config(e),
-        },
-    )?;
+    let entities =
+        PiiEntityList::from_strings(&config.stages.pii_redactor.entities).map_err(|e| {
+            ConfigLoadError::StageBuild {
+                stage: "pii_redactor".into(),
+                source: guardrail_core::error::GuardrailError::Config(e),
+            }
+        })?;
 
-    let redactor = PiiRedactor::new(entities.0, config.stages.pii_redaction.validate_luhn)
+    let redactor = PiiRedactor::new(entities.0, config.stages.pii_redactor.validate_luhn)
         .map_err(|source| ConfigLoadError::StageBuild {
-            stage: "pii_redaction".into(),
+            stage: "pii_redactor".into(),
             source,
         })?;
 
@@ -253,7 +320,7 @@ fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoad
 }
 
 /// Construct the [`PiiRedactor`] used for **response**-side redaction, if
-/// both `stages.pii_redaction.enabled` and `stages.pii_redaction.redact_responses`
+/// both `stages.pii_redactor.enabled` and `stages.pii_redactor.redact_responses`
 /// are `true`.
 ///
 /// This intentionally shares the same entity list, Luhn-validation setting,
@@ -275,10 +342,13 @@ fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoad
 ///
 /// let toml_str = r#"
 /// [server]
-/// listen_addr = "0.0.0.0:8080"
-/// upstream_url = "https://api.openai.com"
+/// host = "0.0.0.0"
+/// port = 8080
 ///
-/// [stages.pii_redaction]
+/// [upstream]
+/// url = "https://api.openai.com"
+///
+/// [stages.pii_redactor]
 /// enabled = true
 /// redact_responses = true
 /// "#;
@@ -288,34 +358,10 @@ fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoad
 /// assert!(redactor.is_some());
 /// ```
 pub fn build_response_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoadError> {
-    if !config.stages.pii_redaction.redact_responses {
+    if !config.stages.pii_redactor.redact_responses {
         return Ok(None);
     }
     build_pii_redactor(config)
-}
-
-fn convert_condition(c: &PolicyConditionConfig) -> PolicyCondition {
-    match c {
-        PolicyConditionConfig::ContentContains { keywords } => {
-            PolicyCondition::ContentContains(
-                keywords.iter().map(|k| k.to_lowercase()).collect(),
-            )
-        }
-        PolicyConditionConfig::SystemPromptAbsent => PolicyCondition::SystemPromptAbsent,
-        PolicyConditionConfig::TokenCountExceeds { limit } => {
-            PolicyCondition::TokenCountExceeds(*limit)
-        }
-        PolicyConditionConfig::Always => PolicyCondition::Always,
-    }
-}
-
-fn convert_action(a: PolicyActionConfig) -> PolicyAction {
-    match a {
-        PolicyActionConfig::Allow => PolicyAction::Allow,
-        PolicyActionConfig::Redact => PolicyAction::Redact,
-        PolicyActionConfig::Block => PolicyAction::Block,
-        PolicyActionConfig::LogOnly => PolicyAction::LogOnly,
-    }
 }
 
 /// A hot-reloadable handle to the current [`Config`] and [`Pipeline`].
@@ -409,8 +455,8 @@ impl ConfigHandle {
     /// Get a snapshot of the response-side PII redactor configuration.
     ///
     /// Returns an `Arc<Option<PiiRedactor>>`: `Arc::new(None)` if response
-    /// redaction is disabled (`stages.pii_redaction.enabled = false` or
-    /// `stages.pii_redaction.redact_responses = false`), or
+    /// redaction is disabled (`stages.pii_redactor.enabled = false` or
+    /// `stages.pii_redactor.redact_responses = false`), or
     /// `Arc::new(Some(redactor))` otherwise. Callers typically do:
     ///
     /// ```rust,no_run
@@ -440,16 +486,20 @@ mod tests {
     }
 
     const MINIMAL: &str = r#"
-        [server]
-        listen_addr = "0.0.0.0:8080"
-        upstream_url = "https://api.openai.com"
-    "#;
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[upstream]
+url = "https://api.openai.com"
+"#;
 
     #[test]
     fn test_load_minimal_config() {
         let f = write_temp_config(MINIMAL);
         let config = load_config(f.path()).unwrap();
-        assert_eq!(config.server.upstream_url, "https://api.openai.com");
+        assert_eq!(config.upstream.url, "https://api.openai.com");
+        assert_eq!(config.server.port, 8080);
     }
 
     #[test]
@@ -467,12 +517,16 @@ mod tests {
 
     #[test]
     fn test_load_invalid_semantics_errors() {
+        // Bad upstream scheme triggers validation failure.
         let f = write_temp_config(
             r#"
-            [server]
-            listen_addr = "not-valid"
-            upstream_url = "https://api.openai.com"
-            "#,
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[upstream]
+url = "ftp://example.com"
+"#,
         );
         let result = load_config(f.path());
         assert!(matches!(result, Err(ConfigLoadError::Validation(_))));
@@ -482,25 +536,31 @@ mod tests {
     fn test_build_pipeline_minimal() {
         let config: Config = toml::from_str(MINIMAL).unwrap();
         let pipeline = build_pipeline(&config).unwrap();
-        // regex_injection + pii_redaction enabled by default
+        // Default request_stages = [regex_injection, onnx_injection, pii_redactor, toxicity, policy]
+        // Only enabled ones run: regex_injection + pii_redactor = 2
         assert_eq!(pipeline.len(), 2);
     }
 
     #[test]
     fn test_build_pipeline_with_policy() {
         let toml_str = r#"
-            [server]
-            listen_addr = "0.0.0.0:8080"
-            upstream_url = "https://api.openai.com"
+[server]
+host = "0.0.0.0"
+port = 8080
 
-            [[policy.rules]]
-            name = "test-rule"
-            action = "block"
-            condition.type = "always"
-        "#;
+[upstream]
+url = "https://api.openai.com"
+
+[[policy.rules]]
+name = "test-rule"
+[policy.rules.when]
+always = true
+[policy.rules.then]
+action = "block"
+"#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let pipeline = build_pipeline(&config).unwrap();
-        // regex_injection + pii_redaction + policy_engine
+        // regex_injection + pii_redactor + policy = 3
         assert_eq!(pipeline.len(), 3);
     }
 
@@ -509,8 +569,6 @@ mod tests {
         let f = write_temp_config(MINIMAL);
         let handle = ConfigHandle::load(f.path()).unwrap();
         assert_eq!(handle.pipeline().len(), 2);
-
-        // Reload with same content should succeed.
         handle.reload().unwrap();
         assert_eq!(handle.pipeline().len(), 2);
     }
@@ -522,35 +580,36 @@ mod tests {
         let snapshot1 = handle.pipeline();
         handle.reload().unwrap();
         let snapshot2 = handle.pipeline();
-
-        // Both snapshots are valid pipelines (length unchanged since config didn't change)
         assert_eq!(snapshot1.len(), snapshot2.len());
     }
 
     #[test]
     fn test_disabled_stages_produce_empty_pipeline() {
         let toml_str = r#"
-            [server]
-            listen_addr = "0.0.0.0:8080"
-            upstream_url = "https://api.openai.com"
+[server]
+host = "0.0.0.0"
+port = 8080
 
-            [stages.regex_injection]
-            enabled = false
+[upstream]
+url = "https://api.openai.com"
 
-            [stages.pii_redaction]
-            enabled = false
-        "#;
+[stages.regex_injection]
+enabled = false
+
+[stages.pii_redactor]
+enabled = false
+"#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let pipeline = build_pipeline(&config).unwrap();
         assert_eq!(pipeline.len(), 0);
     }
 
-    // ── Response-side redaction ───────────────────────────────────────────────
+    // ── Response-side redaction ─────────────────────────────────────────────
 
     #[test]
     fn test_response_redactor_disabled_by_default() {
         let config: Config = toml::from_str(MINIMAL).unwrap();
-        assert!(!config.stages.pii_redaction.redact_responses);
+        assert!(!config.stages.pii_redactor.redact_responses);
         let redactor = build_response_redactor(&config).unwrap();
         assert!(redactor.is_none());
     }
@@ -558,14 +617,17 @@ mod tests {
     #[test]
     fn test_response_redactor_enabled() {
         let toml_str = r#"
-            [server]
-            listen_addr = "0.0.0.0:8080"
-            upstream_url = "https://api.openai.com"
+[server]
+host = "0.0.0.0"
+port = 8080
 
-            [stages.pii_redaction]
-            enabled = true
-            redact_responses = true
-        "#;
+[upstream]
+url = "https://api.openai.com"
+
+[stages.pii_redactor]
+enabled = true
+redact_responses = true
+"#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let redactor = build_response_redactor(&config).unwrap();
         assert!(redactor.is_some());
@@ -573,16 +635,18 @@ mod tests {
 
     #[test]
     fn test_response_redactor_not_built_if_pii_stage_disabled() {
-        // redact_responses = true is meaningless if the PII stage itself is off.
         let toml_str = r#"
-            [server]
-            listen_addr = "0.0.0.0:8080"
-            upstream_url = "https://api.openai.com"
+[server]
+host = "0.0.0.0"
+port = 8080
 
-            [stages.pii_redaction]
-            enabled = false
-            redact_responses = true
-        "#;
+[upstream]
+url = "https://api.openai.com"
+
+[stages.pii_redactor]
+enabled = false
+redact_responses = true
+"#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let redactor = build_response_redactor(&config).unwrap();
         assert!(redactor.is_none());
@@ -595,22 +659,79 @@ mod tests {
         assert!(handle.response_redactor().is_none());
     }
 
+    // ── Policy rule with when/then shape ────────────────────────────────────
+
     #[test]
-    fn test_config_handle_response_redactor_reload() {
+    fn test_policy_rule_when_then_content_contains() {
         let toml_str = r#"
-            [server]
-            listen_addr = "0.0.0.0:8080"
-            upstream_url = "https://api.openai.com"
+[server]
+host = "0.0.0.0"
+port = 8080
 
-            [stages.pii_redaction]
-            enabled = true
-            redact_responses = true
-        "#;
-        let f = write_temp_config(toml_str);
-        let handle = ConfigHandle::load(f.path()).unwrap();
-        assert!(handle.response_redactor().is_some());
+[upstream]
+url = "https://api.openai.com"
 
-        handle.reload().unwrap();
-        assert!(handle.response_redactor().is_some());
+[[policy.rules]]
+name = "block-competitor"
+[policy.rules.when]
+content_contains = ["competitor-x"]
+[policy.rules.then]
+action = "block"
+message = "Not permitted."
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(validate_config(&config).is_empty());
+        let pipeline = build_pipeline(&config).unwrap();
+        // regex + pii + policy
+        assert_eq!(pipeline.len(), 3);
+    }
+
+    // ── Environment variable overlay ────────────────────────────────────────
+
+    #[test]
+    fn test_env_override_upstream_url() {
+        let f = write_temp_config(MINIMAL);
+        std::env::set_var("GUARDRAIL_UPSTREAM", "https://api.anthropic.com");
+        let result = load_config(f.path());
+        std::env::remove_var("GUARDRAIL_UPSTREAM");
+        assert_eq!(result.unwrap().upstream.url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn test_env_override_port() {
+        let f = write_temp_config(MINIMAL);
+        std::env::set_var("GUARDRAIL_PORT", "9999");
+        let result = load_config(f.path());
+        std::env::remove_var("GUARDRAIL_PORT");
+        assert_eq!(result.unwrap().server.port, 9999);
+    }
+
+    #[test]
+    fn test_env_override_log_level() {
+        let f = write_temp_config(MINIMAL);
+        std::env::set_var("GUARDRAIL_LOG_LEVEL", "debug");
+        let result = load_config(f.path());
+        std::env::remove_var("GUARDRAIL_LOG_LEVEL");
+        assert_eq!(result.unwrap().observability.log_level, "debug");
+    }
+
+    #[test]
+    fn test_env_override_empty_string_ignored() {
+        let f = write_temp_config(MINIMAL);
+        std::env::set_var("GUARDRAIL_UPSTREAM", "");
+        let result = load_config(f.path());
+        std::env::remove_var("GUARDRAIL_UPSTREAM");
+        // Empty string must not override
+        assert_eq!(result.unwrap().upstream.url, "https://api.openai.com");
+    }
+
+    #[test]
+    fn test_env_override_invalid_port_ignored() {
+        let f = write_temp_config(MINIMAL);
+        std::env::set_var("GUARDRAIL_PORT", "notaport");
+        let result = load_config(f.path());
+        std::env::remove_var("GUARDRAIL_PORT");
+        // Invalid port string silently ignored; original port unchanged
+        assert_eq!(result.unwrap().server.port, 8080);
     }
 }
