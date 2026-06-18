@@ -25,7 +25,15 @@
 //!
 //! ## Modules
 //!
-//! - [`server`]: the main HTTP server loop and request handler
+//! - [`server`]: the listener lifecycle — bind, accept, serve, shutdown
+//! - [`handler`]: per-request routing and the core proxy flow (auth check →
+//!   parse → run pipeline → forward or block)
+//! - [`auth`]: caller authentication (`[auth]`), as a standalone, pure,
+//!   independently-testable predicate
+//! - [`error`]: HTTP error-response construction and upstream error
+//!   classification, shared by [`handler`]
+//! - [`state`]: internal connection-handler state and [`ServerHandle`] — the
+//!   data every connection handler needs, with no behavior of its own
 //! - [`forward`]: upstream request forwarding (streaming + non-streaming)
 //! - [`translate`]: conversion between raw JSON bodies and [`guardrail_core::GuardrailRequest`]
 //! - [`response`]: output-side PII redaction for non-streaming responses
@@ -33,6 +41,12 @@
 //! - [`metrics`]: Prometheus metrics registry and recording helpers
 //! - [`audit`]: structured audit logging (tracing events + rotating NDJSON file)
 //! - [`audit_log`]: rotating NDJSON file layer for `tracing_subscriber`
+//!
+//! Each module above has one job. This separation exists so that, for
+//! example, the caller-authentication decision can be unit-tested as a pure
+//! function (`auth::is_authorized`) without spinning up a real TCP listener,
+//! while [`server`]'s own tests focus purely on proving the listener
+//! lifecycle works end to end.
 //!
 //! ## Feature flags
 //!
@@ -75,10 +89,14 @@
 
 pub mod audit;
 pub mod audit_log;
+pub mod auth;
+pub mod error;
 pub mod forward;
+pub(crate) mod handler;
 pub mod metrics;
 pub mod response;
 pub mod server;
+pub mod state;
 pub mod telemetry;
 pub mod translate;
 
