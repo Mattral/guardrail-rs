@@ -8,13 +8,18 @@ publish     = false
 [dependencies]
 
 [dev-dependencies]
-guardrail-core        = { path = "../guardrail-core" }
-guardrail-config      = { path = "../guardrail-config" }
-guardrail-classifiers = { path = "../guardrail-classifiers" }
-guardrail-proxy       = { path = "../guardrail-proxy" }
+guardrail-core        = { path = "../guardrail-core", version = "0.1.0" }
+guardrail-config      = { path = "../guardrail-config", version = "0.1.0" }
+guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.0" }
+guardrail-proxy       = { path = "../guardrail-proxy", version = "0.1.0" }
 
 tokio      = { workspace = true }
 reqwest    = { workspace = true }
 serde_json = { workspace = true }
 wiremock   = "0.6"
 tempfile   = "3"
+criterion  = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "pipeline"
+harness = false

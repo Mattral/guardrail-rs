@@ -16,9 +16,9 @@ default = []
 onnx = ["guardrail-config/onnx", "guardrail-classifiers/onnx"]
 
 [dependencies]
-guardrail-core        = { path = "../guardrail-core", features = ["reqwest-errors"] }
-guardrail-config      = { path = "../guardrail-config" }
-guardrail-classifiers = { path = "../guardrail-classifiers" }
+guardrail-core        = { path = "../guardrail-core", version = "0.1.0", features = ["reqwest-errors"] }
+guardrail-config      = { path = "../guardrail-config", version = "0.1.0" }
+guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.0" }
 
 tokio          = { workspace = true }
 hyper          = { workspace = true }
