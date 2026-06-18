@@ -9,7 +9,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-**Schema correctness pass (spec §9 exact alignment)**
+**True size-based audit log rotation**
+- `crates/guardrail-proxy/src/audit_log.rs`: replaced
+  `tracing_appender::rolling::never` (which ignored `max_size_mb` entirely)
+  with a custom `SizeRotatingWriter` — a `Write` implementation that checks
+  the configured size threshold before each write and, on exceeding it,
+  flushes, renames the current file to `<path>.<unix_timestamp>` (with a
+  collision-avoiding numeric suffix), and reopens a fresh file at `path`.
+  Resumes the correct running size on restart against a pre-existing file.
+  The file handle field is `Option<File>` specifically so the old handle
+  can be flushed and dropped via `.take()` *before* the rename syscall —
+  renaming a file while a handle is still open is fine on POSIX but can
+  fail with access-denied on Windows, since `std::fs::File` doesn't
+  request `FILE_SHARE_DELETE` by default. 6 new unit tests covering
+  rotation timing, content preservation across rotation, never rotating an
+  empty file, and the `max_size_mb = 0` edge case.
+
+**`GUARDRAIL_CONFIG` environment variable (spec §14)**
+- `guardrail-cli`'s `--config` flag on all three subcommands (`run`,
+  `validate`, `check`) now falls back to `GUARDRAIL_CONFIG` via clap's `env`
+  feature, then to `guardrail.toml`, matching the spec's documented
+  `GUARDRAIL_CONFIG=examples/minimal.toml cargo run -p guardrail-cli` usage
+  exactly. This had previously only been mentioned as a caveat in a code
+  comment, never implemented.
+
+**Crate-level documentation completeness (spec §17)**
+- All four library crates (`guardrail-core`, `guardrail-classifiers`,
+  `guardrail-config`, `guardrail-proxy`) now have explicit "Further
+  reading" links to the configuration reference, threat model, and
+  changelog in their top-level rustdoc, closing a gap where none of them
+  had this despite otherwise meeting the spec's other three crate-doc
+  requirements.
+- `guardrail-classifiers` and `guardrail-config` gained a working doctest
+  example and (for `guardrail-config`) a feature-flags table, neither of
+  which existed before.
+- `guardrail-proxy` gained `#![deny(missing_docs)]`, matching the other
+  three crates, after a heuristic scan confirmed no undocumented public
+  items would break the build under the new lint.
+
+### Changed
+- `examples/minimal.py` renamed to `examples/python_client.py` to match the
+  spec's literal filename (§14); all cross-references updated.
+- `crates/guardrail-classifiers/examples/custom_stage.rs` moved to
+  `crates/guardrail-cli/examples/custom_stage.rs` to match the spec's
+  directory tree (§14), which lists it alongside `minimal.rs` under
+  `crates/guardrail-cli/examples/`. Costs nothing — `guardrail-cli` already
+  depends on both `guardrail-core` and `guardrail-classifiers` directly.
+
+### Fixed
+- Test-isolation race condition: the new `GUARDRAIL_CONFIG` tests in
+  `cli.rs` were initially written as 5 separate `#[test]` functions each
+  mutating the process-global env var — consolidated into one sequential
+  test, since `cargo test`/`nextest` run different test functions in
+  parallel by default. The same pre-existing pattern (5 separate
+  `#[test]` functions sharing `GUARDRAIL_UPSTREAM`/`GUARDRAIL_PORT` across
+  pairs of tests) was found in `guardrail-config/src/loader.rs` from an
+  earlier session and fixed identically.
+- Stale `examples/README.md` Python/Node.js sections didn't link to the
+  actual runnable `python_client.py`/`node_client.js`/`curl_test.sh`
+  files, only showing inline code snippets — added explicit file pointers
+  to all three.
+
+[Unreleased]: https://github.com/Mattral/guardrail-rs/compare/v0.1.0...HEAD
+- `crates/guardrail-test-suite/benches/pipeline.rs`: `bench_regex_stage`,
+  `bench_full_pipeline_regex_only` (mirrors the spec's example almost
+  verbatim), `bench_full_pipeline_by_size` (512B/4KB/8KB scaling),
+  `bench_full_pipeline_blocked_short_circuit`. Lives in
+  `guardrail-test-suite` rather than a root `benches/` directory since the
+  workspace root is virtual and has no crate to attach a `[[bench]]` target
+  to.
+- `Pipeline::builder()` convenience constructor in `guardrail-core`
+  (equivalent to `PipelineBuilder::default()`), added so the new benchmark
+  and example code can match the spec's example syntax exactly.
+- New CI job `pipeline-latency-gate` in `benchmarks.yml`: hard-fails if any
+  full-pipeline benchmark case exceeds 5ms (5x the 1ms p99 target),
+  separate from the existing soft 150%-regression alert on classifier
+  microbenchmarks.
+- `just bench-pipeline` / `just bench-all` recipes.
+
+**Rust embedding example (spec §14)**
+- `crates/guardrail-cli/examples/minimal.rs`: demonstrates embedding the
+  pipeline directly as a library with zero HTTP/network usage — the Rust
+  counterpart to `examples/minimal.py`/`node_client.js`, which both talk to
+  a *running proxy* over HTTP rather than embedding the library directly.
+
+### Fixed
+
+**crates.io publish workflow — found and fixed two real release-blocking bugs**
+- `release.yml`'s `publish` job claimed "Trusted Publishing" but actually
+  used a long-lived `CARGO_REGISTRY_TOKEN` secret via
+  `cargo publish --no-verify` — the opposite of Trusted Publishing. Fixed to
+  use `rust-lang/crates-io-auth-action@v1` to mint a short-lived
+  OIDC-derived token per run; `id-token: write` permission moved from the
+  workflow level to the `publish` job only (least privilege); removed
+  `--no-verify` since the `verify` job already gates this job via `needs:`.
+- **Every internal `guardrail-* = { path = "..", ... }` dependency across
+  all 5 publishable crates (14 occurrences) was missing the
+  `version = "..."` field crates.io requires for path dependencies.** This
+  would have made the very first `cargo publish` step fail on a real
+  release tag. Added explicit version pins matching the workspace version,
+  plus a new CI job (`version-pin-check`) that fails the build if any pin
+  drifts from `[workspace.package].version` in future version bumps — this
+  cannot be expressed via `version.workspace = true` (that shorthand only
+  applies to a crate's own `[package].version`, not to dependency
+  requirements), so an automated guard replaces what would otherwise be a
+  manual, easy-to-forget sync step.
+- Fixed remaining stale `server.upstream_url`/`server.listen_addr` and
+  `pii_redaction` references in `README.md` and `examples/README.md`.
+
+[Unreleased]: https://github.com/Mattral/guardrail-rs/compare/v0.1.0...HEAD
 - Config schema fully rewritten: `[server] host/port/workers/max_body_size_bytes`
   with `.listen_addr()` helper, `[upstream] url/timeout_secs/connect_timeout`,
   `[auth] require_key/keys`, `[pipeline] request_stages/response_stages/on_error`
