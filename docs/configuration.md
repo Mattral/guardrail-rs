@@ -223,7 +223,7 @@ Always matches. Useful as a final catch-all rule.
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Whether the NDJSON audit log file is enabled. |
 | `path` | string | `"./guardrail-audit.ndjson"` | File path to write audit records to. Parent directory is created automatically. |
-| `max_size_mb` | integer | `100` | Intended size threshold for rotation. **Current limitation:** rotation is not yet size-based (see `crates/guardrail-proxy/src/audit_log.rs`); the file currently grows unbounded at this path. Size-based rotation honoring this field is tracked as follow-up work. |
+| `max_size_mb` | integer | `100` | Size threshold for rotation. When the file would exceed this size, it is renamed to `<path>.<unix_timestamp>` and a fresh file is opened at `path`. Checked before each write, so the file never grows meaningfully past this limit. |
 
 **NDJSON record shape** (see also [`docs/architecture.md`](architecture.md)
 and [`docs/threat-model.md`](threat-model.md)):
