@@ -154,8 +154,8 @@ otlp_endpoint = ""
 # newline-delimited JSON record to `path`, independently of the general
 # application log. Suitable for ingestion by Filebeat, Vector, etc.
 #
-# KNOWN LIMITATION: rotation is not yet size-based; max_size_mb is currently
-# advisory only. See crates/guardrail-proxy/src/audit_log.rs.
+# Rotation: when the file would exceed max_size_mb, it is renamed to
+# <path>.<unix_timestamp> and a fresh file is opened at `path`.
 [observability.audit_log]
 enabled = false
 path = "./guardrail-audit.ndjson"

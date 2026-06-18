@@ -70,19 +70,26 @@ coverage:
 
 # ── Benchmarks ────────────────────────────────────────────────────────────────
 
-# Run all classifier benchmarks.
+# Run all classifier microbenchmarks.
 bench:
     cargo bench -p guardrail-classifiers
 
-# Run a specific benchmark filter.
+# Run the full-pipeline integration benchmark (spec §13 latency gate).
+bench-pipeline:
+    cargo bench -p guardrail-test-suite --bench pipeline
+
+# Run every benchmark in the workspace.
+bench-all: bench bench-pipeline
+
+# Run a specific classifier benchmark filter.
 bench-filter filter:
     cargo bench -p guardrail-classifiers -- {{ filter }}
 
-# Save a benchmark baseline named `before`.
+# Save a benchmark baseline named `before` (classifier benches).
 bench-save:
     cargo bench -p guardrail-classifiers -- --save-baseline before
 
-# Compare against the `before` baseline.
+# Compare against the `before` baseline (classifier benches).
 bench-compare:
     cargo bench -p guardrail-classifiers -- --baseline before
 
@@ -149,17 +156,21 @@ models:
 
 # ── Examples ──────────────────────────────────────────────────────────────────
 
+# Run the minimal embedded-pipeline example (no proxy server, pure library use).
+example-minimal-rs:
+    cargo run --example minimal -p guardrail-cli
+
 # Run the embedded-pipeline Rust example.
 example-embedded:
     cargo run --example embedded_pipeline -p guardrail-classifiers
 
 # Run the custom-stage Rust example.
 example-custom-stage:
-    cargo run --example custom_stage -p guardrail-classifiers
+    cargo run --example custom_stage -p guardrail-cli
 
-# Run the Python minimal example (requires: pip install openai, proxy running).
+# Run the Python client example (requires: pip install openai, proxy running).
 example-python:
-    python3 examples/minimal.py
+    python3 examples/python_client.py
 
 # Run the Node.js client example (requires: npm install openai, proxy running).
 example-node:
