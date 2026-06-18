@@ -85,6 +85,41 @@ the `guardrail-core` dependency budget (§20).
       acceptable risk. Flagged as the recommended first step once a
       toolchain is available.
 
+**Repository hygiene (found by direct user report, not the spec re-read)**
+- [x] Removed a literal directory named `{crates` (with nested
+      literal-brace subdirectory names like
+      `{guardrail-core/src,guardrail-classifiers/src,...}`), a relic from
+      the project's very first scaffolding command — an
+      `mkdir -p {crates/{...},...}` brace-expansion pattern run under a
+      shell that doesn't perform brace expansion, so it created one
+      literal nested path instead of expanding into ~15 real directories.
+      Zero files anywhere in the tree.
+- [x] Removed an orphaned empty `tests/integration/` directory from the
+      same original scaffolding; the real integration tests live at
+      `crates/guardrail-test-suite/tests/proxy_e2e.rs`.
+- [x] Added `.dockerignore` (had never existed) — every `docker build`
+      was tarring up and transmitting the entire repo, including
+      `target/`, to the daemon before the `Dockerfile` got a chance to
+      ignore anything. Verified every exclusion pattern against every
+      `COPY` instruction in the `Dockerfile` to confirm nothing actually
+      needed by the build was excluded.
+- [x] Added `guardrail-audit.ndjson*` / `audit-logs/` to `.gitignore` —
+      the default audit-log path writes to the project root, and its
+      rotated backups would otherwise be one `git add .` away from being
+      committed.
+- [x] **Consolidated `CHANGELOG.md`**: discovered, while doing this
+      cleanup, that the file had accumulated six separate, never-merged
+      `### Added`/`### Changed`/`### Fixed` blocks (and six duplicate
+      `[Unreleased]: ...compare...` link-reference lines) across earlier
+      sessions, including substantial duplicate prose describing the same
+      features twice (PII response redaction, NDJSON audit log, SIGHUP
+      hot-reload, Prometheus metrics, and config-schema changes were each
+      described in two different places). Fully rewritten into one clean
+      `## [Unreleased]` section with each heading appearing exactly once,
+      content deduplicated and organized by spec section, one link
+      reference at the true end of file. Spot-checked topic coverage
+      against the pre-rewrite version to confirm no real content was lost.
+
 ### Known gaps carried into this push (not yet done)
 
 - [x] ~~`tests/fixtures/` directory~~ — **done**: `clean_prompts.json`,
