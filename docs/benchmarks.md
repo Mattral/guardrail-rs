@@ -43,7 +43,7 @@ the baseline trigger a PR comment.
 ## Running benchmarks locally
 
 ```bash
-# Default (CPU-only, no ONNX)
+# Classifier microbenchmarks (CPU-only, no ONNX)
 cargo bench -p guardrail-classifiers
 
 # With ONNX classifiers (requires model files; see docs/onnx-models.md)
@@ -59,7 +59,33 @@ cargo bench -p guardrail-classifiers -- pii_redactor
 cargo bench -p guardrail-classifiers -- --save-baseline before_change
 # ... make changes ...
 cargo bench -p guardrail-classifiers -- --baseline before_change
+
+# Full-pipeline integration benchmark (assembled Pipeline, end to end)
+cargo bench -p guardrail-test-suite --bench pipeline
+
+# Or via just:
+just bench           # classifier microbenchmarks
+just bench-pipeline  # full-pipeline integration benchmark
+just bench-all       # both
 ```
+
+### Why the full-pipeline benchmark lives in `guardrail-test-suite`
+
+The workspace `Cargo.toml` is virtual (no `[package]` section), so a
+root-level `benches/` directory has no crate to attach a `[[bench]]` target
+to. `guardrail-test-suite` already depends on every other crate as a
+dev-dependency specifically for cross-crate integration testing, making it
+the natural home for `benches/pipeline.rs` (an integration-level benchmark)
+as well. Run it with `cargo bench -p guardrail-test-suite --bench pipeline`.
+
+### CI latency gate
+
+`bench_full_pipeline_regex_only` and its sibling cases are checked against
+a **hard 5ms ceiling** in `.github/workflows/benchmarks.yml`
+(`pipeline-latency-gate` job) — 5x the 1ms p99 target, chosen to avoid false
+failures from noisy shared CI runners while still catching real regressions.
+This is a stricter, separate gate from the soft 150%-regression alert that
+tracks classifier microbenchmarks via `benchmark-action/github-action-benchmark`.
 
 Criterion generates HTML reports at:
 
@@ -71,7 +97,10 @@ target/criterion/
 │   ├── 4096B/
 │   └── report/
 │       └── index.html          # open this in a browser
-└── pii_redactor/
+├── pii_redactor/
+│   └── report/
+│       └── index.html
+└── full_pipeline_by_size/
     └── report/
         └── index.html
 ```
@@ -106,6 +135,17 @@ passing run on the same benchmark job must be investigated and either:
 2. Accompanied by a documented explanation of why the regression is
    acceptable (e.g. a new safety check with a negligible real-world impact).
 
-The CI benchmark gate (`alert-threshold = "150%"`) catches catastrophic
-regressions automatically. The 20% investigative threshold is a code-review
-expectation, not an automated gate.
+Two automated CI gates exist, with different strictness:
+
+- **Classifier microbenchmarks** (`bench` job): soft alert at 150% of
+  baseline via `benchmark-action/github-action-benchmark`
+  (`alert-threshold = "150%"`). Comments on the PR but does not fail CI
+  (`fail-on-alert: false`) — catastrophic regressions are visible, but
+  reviewers decide whether to block the merge.
+- **Full-pipeline integration benchmark** (`pipeline-latency-gate` job):
+  hard fail if any case exceeds **5ms** (5x the 1ms p99 target). This gate
+  *does* fail CI — the full pipeline's absolute latency is a stated
+  performance contract of the project, not just a relative trend to watch.
+
+The 20% investigative threshold above is a code-review expectation that sits
+between these two automated gates, not itself an automated check.

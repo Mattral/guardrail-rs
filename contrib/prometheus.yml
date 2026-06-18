@@ -1,7 +1,7 @@
 # Prometheus configuration for the docker-compose example.
 #
 # Scrapes guardrail-rs's /metrics endpoint, which is served on the same
-# address as the proxy itself (server.listen_addr).
+# host:port as the proxy itself (server.host:server.port).
 
 global:
   scrape_interval: 15s
