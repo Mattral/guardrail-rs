@@ -11,7 +11,8 @@ env:
 permissions:
   contents: write
   packages: write
-  id-token: write  # Required for crates.io Trusted Publishing (OIDC).
+  # NOTE: id-token: write for crates.io Trusted Publishing is granted at the
+  # `publish` job level only (least privilege) — see that job below.
 
 jobs:
   # ── Verify the release commit is clean ──────────────────────────────────────
@@ -154,54 +155,77 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Publish to crates.io via Trusted Publishing ───────────────────────────────
+  # ── Publish to crates.io via Trusted Publishing (OIDC) ───────────────────────
+  #
+  # crates.io Trusted Publishing exchanges a short-lived GitHub Actions OIDC
+  # token for a short-lived crates.io API token at publish time — no
+  # long-lived CARGO_REGISTRY_TOKEN secret is stored in the repo. This
+  # requires the crates.io "Trusted Publishing" config for each crate to
+  # list this repository + workflow file as an authorized publisher
+  # (configured once per crate at https://crates.io/crates/<name>/settings).
+  #
+  # If your crates.io organization has not yet enabled Trusted Publishing for
+  # these crate names, fall back to the long-lived-token flow by setting
+  # CARGO_REGISTRY_TOKEN as a repository secret and replacing the
+  # `rust-lang/crates-io-auth-action` step with a no-op — the rest of the
+  # job (cargo publish calls) is unchanged either way.
   publish:
     name: Publish to crates.io
     needs: [build-binaries, docker]
     runs-on: ubuntu-latest
-    environment: crates-io   # GitHub Environment with OIDC permission.
+    environment: crates-io   # GitHub Environment scoping the OIDC trust relationship.
+    permissions:
+      id-token: write        # Required to mint the OIDC token for Trusted Publishing.
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      # Publish in dependency order (leaves before roots).
+      # Exchanges this workflow run's GitHub OIDC token for a short-lived
+      # crates.io API token and exports it as CARGO_REGISTRY_TOKEN for all
+      # subsequent steps in this job.
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      # Publish in dependency order (leaves before roots). Each `cargo
+      # publish` picks up CARGO_REGISTRY_TOKEN from the auth step above via
+      # the job-level environment — no per-step `env:` needed.
       - name: Publish guardrail-core
-        run: cargo publish -p guardrail-core --no-verify
+        run: cargo publish -p guardrail-core
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Wait for guardrail-core to be indexed
         run: sleep 20
 
       - name: Publish guardrail-classifiers
-        run: cargo publish -p guardrail-classifiers --no-verify
+        run: cargo publish -p guardrail-classifiers
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Wait for guardrail-classifiers to be indexed
         run: sleep 20
 
       - name: Publish guardrail-config
-        run: cargo publish -p guardrail-config --no-verify
+        run: cargo publish -p guardrail-config
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Wait for guardrail-config to be indexed
         run: sleep 20
 
       - name: Publish guardrail-proxy
-        run: cargo publish -p guardrail-proxy --no-verify
+        run: cargo publish -p guardrail-proxy
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Wait for guardrail-proxy to be indexed
         run: sleep 20
 
       - name: Publish guardrail-cli
-        run: cargo publish -p guardrail-cli --no-verify
+        run: cargo publish -p guardrail-cli
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # ── Create GitHub Release ─────────────────────────────────────────────────────
   github-release:
