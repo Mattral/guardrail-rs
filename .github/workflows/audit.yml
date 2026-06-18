@@ -1,0 +1,76 @@
+name: Security Audit
+
+on:
+  schedule:
+    # Run every night at 02:00 UTC.
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write     # Allows opening an issue on failure.
+
+jobs:
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        id: audit
+        continue-on-error: true
+        run: cargo audit --json > audit-report.json 2>&1 || true
+
+      - name: Check for vulnerabilities
+        id: check
+        run: |
+          VULN_COUNT=$(python3 -c "
+          import json, sys
+          try:
+            with open('audit-report.json') as f:
+              data = json.load(f)
+            vulns = data.get('vulnerabilities', {}).get('list', [])
+            print(len(vulns))
+          except Exception:
+            print(0)
+          ")
+          echo "vuln_count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Found $VULN_COUNT vulnerabilities"
+          if [ "$VULN_COUNT" -gt 0 ]; then
+            cat audit-report.json | python3 -m json.tool || cat audit-report.json
+          fi
+
+      - name: Open GitHub issue on failure
+        if: steps.check.outputs.vuln_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('audit-report.json', 'utf8');
+            let body = '## 🔒 Security Advisory\n\n';
+            body += '`cargo audit` found vulnerabilities in dependencies.\n\n';
+            body += '```json\n' + report.slice(0, 4000) + '\n```\n\n';
+            body += 'Please update the affected dependencies and close this issue.';
+
+            // Check for an existing open issue before creating a new one.
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['security'],
+              state: 'open',
+            });
+
+            const existing = issues.find(i => i.title.includes('Security Advisory'));
+            if (!existing) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '🔒 Security Advisory: Vulnerable Dependencies',
+                body,
+                labels: ['security', 'dependencies'],
+              });
+            }

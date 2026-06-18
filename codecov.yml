@@ -1,0 +1,20 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 2%       # Allow minor drops without failing the PR check.
+    patch:
+      default:
+        target: 70%         # New code in a PR must be 70% covered.
+
+comment:
+  layout: "reach,diff,flags"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "crates/guardrail-test-suite/**"
+  - "examples/**"
+  - "**/test_helpers.rs"
+  - "**/*_test.rs"

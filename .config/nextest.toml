@@ -1,0 +1,18 @@
+[profile.default]
+# Retry flaky tests once before marking them as failed.
+retries = 1
+# Fail-fast: stop after the first test binary with failures.
+fail-fast = false
+# Test timeout per test.
+test-threads = "num-cpus"
+
+[profile.ci]
+retries = 2
+# On CI, be more conservative about concurrency to avoid I/O contention
+# between tests that spin up real TCP servers.
+test-threads = 4
+# Longer timeout for integration tests that spin up a proxy + upstream mock.
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+[profile.default.junit]
+path = "target/nextest/ci/junit.xml"
