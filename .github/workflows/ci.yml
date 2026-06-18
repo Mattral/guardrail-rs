@@ -164,6 +164,45 @@ jobs:
         with:
           command: check
 
+  # ── Internal dependency version-pin drift check ─────────────────────────────
+  # Internal `guardrail-* = { path = "..", version = ".." }` dependency
+  # requirements (needed for crates.io publishing — see the comment on
+  # [workspace.package].version in the root Cargo.toml) must always match
+  # the current workspace version. This catches the case where the
+  # workspace version was bumped but the per-crate dependency version
+  # strings were not, which would otherwise only surface as a publish-time
+  # failure on tag push.
+  version-pin-check:
+    name: internal dependency version-pin consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify all internal path-dependency versions match the workspace version
+        run: |
+          WORKSPACE_VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "Workspace version: ${WORKSPACE_VERSION}"
+
+          MISMATCHES=0
+          while IFS= read -r line; do
+            FILE="${line%%:*}"
+            CONTENT="${line#*:}"
+            PIN=$(echo "$CONTENT" | grep -oP 'version\s*=\s*"\K[^"]+')
+            if [ "$PIN" != "$WORKSPACE_VERSION" ]; then
+              echo "MISMATCH in $FILE: pinned to '$PIN', workspace is '$WORKSPACE_VERSION'"
+              echo "  $CONTENT"
+              MISMATCHES=$((MISMATCHES + 1))
+            fi
+          done < <(grep -rn 'path = "\.\./guardrail-' crates/*/Cargo.toml)
+
+          if [ "$MISMATCHES" -gt 0 ]; then
+            echo ""
+            echo "FAILED: $MISMATCHES internal dependency version pin(s) are out of date."
+            echo "Update every 'guardrail-* = { path = \"..\", version = \"X.Y.Z\" }' line"
+            echo "under crates/*/Cargo.toml to match [workspace.package].version."
+            exit 1
+          fi
+          echo "All internal dependency version pins match the workspace version."
+
   # ── Security audit ─────────────────────────────────────────────────────────
   audit:
     name: cargo-audit
