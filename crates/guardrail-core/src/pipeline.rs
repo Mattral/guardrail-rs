@@ -62,6 +62,27 @@ impl Pipeline {
         Self { stages }
     }
 
+    /// Start building a pipeline fluently.
+    ///
+    /// Equivalent to [`PipelineBuilder::default()`]; provided as a
+    /// convenience entry point so call sites can write `Pipeline::builder()`
+    /// without importing `PipelineBuilder` directly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_core::Pipeline;
+    /// use guardrail_core::test_helpers::PassthroughStage;
+    ///
+    /// let pipeline = Pipeline::builder()
+    ///     .stage(PassthroughStage)
+    ///     .build();
+    /// assert_eq!(pipeline.len(), 1);
+    /// ```
+    pub fn builder() -> PipelineBuilder {
+        PipelineBuilder::default()
+    }
+
     /// Returns the number of stages in this pipeline.
     pub fn len(&self) -> usize {
         self.stages.len()
