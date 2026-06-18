@@ -687,51 +687,47 @@ message = "Not permitted."
     }
 
     // ── Environment variable overlay ────────────────────────────────────────
+    // All five assertions live in a single test function rather than five
+    // separate `#[test]` functions, because `std::env::set_var`/`remove_var`
+    // mutate process-global state and cargo test/nextest run different test
+    // functions in parallel by default. Two functions touching the same env
+    // var name concurrently (GUARDRAIL_UPSTREAM is used by both the
+    // "set a value" and "empty string is ignored" cases; GUARDRAIL_PORT by
+    // both the "set a value" and "invalid value is ignored" cases) would
+    // otherwise race against each other and produce flaky failures.
 
     #[test]
-    fn test_env_override_upstream_url() {
+    fn test_env_override_behavior() {
         let f = write_temp_config(MINIMAL);
+
+        // 1. GUARDRAIL_UPSTREAM overrides upstream.url.
         std::env::set_var("GUARDRAIL_UPSTREAM", "https://api.anthropic.com");
         let result = load_config(f.path());
         std::env::remove_var("GUARDRAIL_UPSTREAM");
         assert_eq!(result.unwrap().upstream.url, "https://api.anthropic.com");
-    }
 
-    #[test]
-    fn test_env_override_port() {
-        let f = write_temp_config(MINIMAL);
+        // 2. GUARDRAIL_PORT overrides server.port.
         std::env::set_var("GUARDRAIL_PORT", "9999");
         let result = load_config(f.path());
         std::env::remove_var("GUARDRAIL_PORT");
         assert_eq!(result.unwrap().server.port, 9999);
-    }
 
-    #[test]
-    fn test_env_override_log_level() {
-        let f = write_temp_config(MINIMAL);
+        // 3. GUARDRAIL_LOG_LEVEL overrides observability.log_level.
         std::env::set_var("GUARDRAIL_LOG_LEVEL", "debug");
         let result = load_config(f.path());
         std::env::remove_var("GUARDRAIL_LOG_LEVEL");
         assert_eq!(result.unwrap().observability.log_level, "debug");
-    }
 
-    #[test]
-    fn test_env_override_empty_string_ignored() {
-        let f = write_temp_config(MINIMAL);
+        // 4. An empty-string env var must NOT override the TOML value.
         std::env::set_var("GUARDRAIL_UPSTREAM", "");
         let result = load_config(f.path());
         std::env::remove_var("GUARDRAIL_UPSTREAM");
-        // Empty string must not override
         assert_eq!(result.unwrap().upstream.url, "https://api.openai.com");
-    }
 
-    #[test]
-    fn test_env_override_invalid_port_ignored() {
-        let f = write_temp_config(MINIMAL);
+        // 5. An unparseable port value must be silently ignored, not error.
         std::env::set_var("GUARDRAIL_PORT", "notaport");
         let result = load_config(f.path());
         std::env::remove_var("GUARDRAIL_PORT");
-        // Invalid port string silently ignored; original port unchanged
         assert_eq!(result.unwrap().server.port, 8080);
     }
 }
