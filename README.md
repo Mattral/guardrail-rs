@@ -42,7 +42,7 @@ enforcing custom policy rules — all with single-digit-millisecond overhead.
 ```bash
 # 1. Copy and edit the example configuration
 cp guardrail.example.toml guardrail.toml
-# edit guardrail.toml: set server.upstream_url
+# edit guardrail.toml: set [upstream].url
 
 # 2. Validate the configuration
 just validate
@@ -71,8 +71,8 @@ Configuration can be overridden without editing `guardrail.toml`:
 
 | Variable | Overrides |
 |----------|-----------|
-| `GUARDRAIL_UPSTREAM` | `server.upstream_url` |
-| `GUARDRAIL_PORT` | Port component of `server.listen_addr` |
+| `GUARDRAIL_UPSTREAM` | `upstream.url` |
+| `GUARDRAIL_PORT` | `server.port` |
 | `GUARDRAIL_LOG_LEVEL` | `observability.log_level` |
 | `GUARDRAIL_OTLP_ENDPOINT` | `observability.otlp_endpoint` |
 
@@ -91,7 +91,7 @@ pkill -HUP guardrail
 |-------|--------------|---------------------|
 | `regex_injection` | Fast regex scan for jailbreaks, prompt-extraction attempts, delimiter injection | < 50 µs / 8 KB |
 | `onnx_injection` *(optional)* | DeBERTa-based semantic injection detection | < 5 ms / 512 tokens |
-| `pii_redaction` | Detects & redacts emails, phone numbers, credit cards (Luhn-validated), SSNs, IPs, API keys | < 20 µs / 4 KB |
+| `pii_redactor` | Detects & redacts emails, phone numbers, credit cards (Luhn-validated), SSNs, IPs, API keys | < 20 µs / 4 KB |
 | `toxicity` *(optional)* | RoBERTa-based toxicity/harassment detection | < 5 ms / 512 tokens |
 | `policy_engine` | Your custom rules: keyword blocks, token-count limits, required-system-prompt checks | negligible |
 
@@ -119,6 +119,19 @@ reference configuration, and [`docs/`](docs/) for detailed guides:
 - [`docs/policy-rules.md`](docs/policy-rules.md) — writing custom policy rules
 - [`docs/deployment.md`](docs/deployment.md) — Docker, Kubernetes, and bare-metal deployment
 - [`docs/onnx-models.md`](docs/onnx-models.md) — enabling semantic classifiers
+- [`docs/threat-model.md`](docs/threat-model.md) — what guardrail-rs protects against (and what it doesn't)
+- [`docs/stage-api.md`](docs/stage-api.md) — implementing custom pipeline stages
+- [`docs/benchmarks.md`](docs/benchmarks.md) — performance targets and how to run benchmarks
+
+## Examples
+
+See [`examples/README.md`](examples/README.md) for client examples (curl,
+Python, Node.js, Anthropic SDK) against a running proxy. To embed
+guardrail-rs as a library with no HTTP server at all:
+
+```bash
+cargo run --example minimal -p guardrail-cli
+```
 
 ## Project layout
 
