@@ -10,6 +10,20 @@ members = [
 resolver = "2"
 
 [workspace.package]
+# IMPORTANT — version bump checklist: this version is consumed via
+# `version.workspace = true` for each crate's own `[package]`, but Cargo
+# does NOT propagate it into the internal `{ path = "..", version = ".." }`
+# dependency requirements in each crate's `[dependencies]` table (a
+# path+version dependency requires a *literal* version string — Cargo has
+# no `version.workspace = true` shorthand for dependency requirements as of
+# this writing). Bumping this version WITHOUT also updating the matching
+# `version = "X.Y.Z"` string in every internal
+# `guardrail-* = { path = "...", version = "..." }` line (14 occurrences
+# across crates/*/Cargo.toml as of this comment) will cause `cargo publish`
+# to either fail or — worse — succeed while publishing a crate whose
+# manifest requires a version of its sibling that doesn't match what's
+# actually being released. Grep for `version = "0.1.0"` under `crates/` and
+# update every match alongside this line.
 version     = "0.1.0"
 # NOTE: the spec requests edition 2024. We deliberately stay on 2021 here
 # because this environment has no Rust toolchain available to verify the
@@ -63,4 +77,4 @@ bytes = "1"
 futures = "0.3"
 tokio-stream = "0.1"
 arc-swap = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
