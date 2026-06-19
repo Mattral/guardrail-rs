@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   bench:
-    name: criterion benchmarks
+    name: criterion benchmarks (classifiers)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,3 +37,52 @@ jobs:
           comment-on-alert: true
           fail-on-alert: false
           summary-always: true
+
+  # ── Full-pipeline latency gate (spec §13) ───────────────────────────────────
+  # The p99 target is < 1ms for the full pipeline on CPU, regex-only path.
+  # CI hard-fails if any case exceeds 5ms (a 5x safety margin over the target,
+  # to avoid false failures from noisy shared runners while still catching
+  # real regressions). This is a separate, stricter gate from the soft
+  # 150%-regression alert above, which only tracks classifier microbenchmarks.
+  pipeline-latency-gate:
+    name: full-pipeline latency gate (5ms hard limit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run full-pipeline benchmark
+        run: |
+          cargo bench -p guardrail-test-suite --bench pipeline -- --output-format bencher \
+            | tee pipeline-output.txt
+
+      - name: Enforce 5ms ceiling
+        run: |
+          python3 - << 'EOF'
+          import re
+          import sys
+
+          THRESHOLD_NS = 5_000_000  # 5ms in nanoseconds
+          failures = []
+
+          with open("pipeline-output.txt") as f:
+              for line in f:
+                  # bencher format: "test bench_name ... bench: 1234 ns/iter (+/- 56)"
+                  m = re.search(r"^test (\S+).*bench:\s+([\d,]+) ns/iter", line)
+                  if not m:
+                      continue
+                  name, ns_str = m.group(1), m.group(2).replace(",", "")
+                  ns = int(ns_str)
+                  print(f"{name}: {ns} ns ({ns / 1_000_000:.3f} ms)")
+                  if ns > THRESHOLD_NS:
+                      failures.append((name, ns))
+
+          if failures:
+              print("\nFAILED: the following benchmarks exceeded the 5ms ceiling:")
+              for name, ns in failures:
+                  print(f"  {name}: {ns / 1_000_000:.3f} ms")
+              sys.exit(1)
+
+          print("\nAll full-pipeline benchmarks are within the 5ms ceiling.")
+          EOF
