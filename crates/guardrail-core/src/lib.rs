@@ -27,6 +27,17 @@
 //! assert_eq!(decision, Decision::Allow);
 //! # });
 //! ```
+//!
+//! ## Further reading
+//!
+//! - [Configuration reference](https://github.com/Mattral/guardrail-rs/blob/main/docs/configuration.md) —
+//!   the full TOML schema for assembling a [`Pipeline`] via `guardrail-config`.
+//! - [Threat model](https://github.com/Mattral/guardrail-rs/blob/main/docs/threat-model.md) —
+//!   what guardrail-rs protects against and its explicit trust boundaries.
+//! - [Stage API reference](https://github.com/Mattral/guardrail-rs/blob/main/docs/stage-api.md) —
+//!   the contract every [`Stage`] implementation must satisfy.
+//! - [Changelog](https://github.com/Mattral/guardrail-rs/blob/main/CHANGELOG.md) —
+//!   release history and notable changes.
 
 #![deny(missing_docs)]
 #![warn(clippy::all)]
