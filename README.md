@@ -10,8 +10,8 @@ enforcing custom policy rules — all with single-digit-millisecond overhead.
 
 ```text
 ┌──────────┐     ┌──────────────────┐     ┌────────────┐     ┌───────────────┐
-│  Your    │ ──▶│   guardrail-rs   │ ──▶ │  Pipeline  │ ──▶│   OpenAI /    │
-│  App     │     │  (drop-in proxy) │     │  (Stages)  │     │  Anthropic /… │
+│  Your    │ ──▶ │   guardrail-rs    │ ──▶ │  Pipeline   │ ──▶ │   OpenAI /     │
+│  App     │     │  (drop-in proxy)  │     │  (Stages)   │     │  Anthropic /…  │
 └──────────┘     └──────────────────┘     └────────────┘     └───────────────┘
                           │
                           ▼
