@@ -95,3 +95,66 @@ impl Stage for ErrorStage {
         Err(GuardrailError::Internal("simulated stage failure".into()))
     }
 }
+
+/// A stage that always returns `Redact` with a configurable reason and
+/// entity-type list. Useful for testing pipeline-level redaction
+/// aggregation across multiple redacting stages.
+///
+/// # Examples
+///
+/// ```rust
+/// use guardrail_core::{PipelineBuilder, Decision, test_helpers::{clean_request, RedactingStage}};
+///
+/// # tokio_test::block_on(async {
+/// let pipeline = PipelineBuilder::default()
+///     .stage(RedactingStage::new("test reason", vec!["email".into()]))
+///     .build();
+/// let (decision, _req) = pipeline.run(clean_request()).await.unwrap();
+/// match decision {
+///     Decision::Redact { entities, .. } => assert_eq!(entities, vec!["email"]),
+///     other => panic!("expected Redact, got {other:?}"),
+/// }
+/// # });
+/// ```
+pub struct RedactingStage {
+    name: &'static str,
+    reason: String,
+    entities: Vec<String>,
+}
+
+impl RedactingStage {
+    /// Create a redacting stage with a fixed name `"redacting_stage"`.
+    pub fn new(reason: impl Into<String>, entities: Vec<String>) -> Self {
+        Self {
+            name: "redacting_stage",
+            reason: reason.into(),
+            entities,
+        }
+    }
+
+    /// Create a redacting stage with a custom name, useful when composing
+    /// multiple redacting stages in one pipeline (so each is distinguishable
+    /// in logs/observer callbacks).
+    pub fn with_name(name: &'static str, reason: impl Into<String>, entities: Vec<String>) -> Self {
+        Self {
+            name,
+            reason: reason.into(),
+            entities,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Stage for RedactingStage {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    async fn evaluate(&self, req: &GuardrailRequest) -> Result<Decision, GuardrailError> {
+        Ok(Decision::Redact {
+            reason: self.reason.clone(),
+            mutated: req.clone(),
+            entities: self.entities.clone(),
+        })
+    }
+}

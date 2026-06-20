@@ -2,10 +2,13 @@
 
 ## Overview
 
-`guardrail-rs` is a reverse proxy structured as a five-crate Cargo workspace.
-Requests flow through a single in-process **request pipeline** of **stages**
-before being forwarded upstream. For non-streaming responses, an optional
-**response redaction pass** runs before the response is returned to the caller.
+`guardrail-rs` is a reverse proxy structured as a six-crate Cargo workspace
+(five publishable library/binary crates plus `guardrail-test-suite`, an
+internal, unpublished crate for cross-crate integration tests and
+benchmarks). Requests flow through a single in-process **request
+pipeline** of **stages** before being forwarded upstream. For
+non-streaming responses, an optional **response redaction pass** runs
+before the response is returned to the caller.
 
 ```text
                         ┌──────────────────────────────────────────────────┐
@@ -32,8 +35,15 @@ The dependency-free heart of the system. Contains:
   reference through the pipeline; mutated copies are produced by `Redact`
   decisions.
 - [`Decision`][dec] — the three-way outcome of a stage: `Allow`, `Redact`
-  (carries a sanitized request), or `Block` (carries a reason and machine
-  -readable `BlockCode`).
+  (carries a sanitized request, a human-readable `reason`, and a
+  machine-readable `entities: Vec<String>` list of redacted entity types),
+  or `Block` (carries a reason and machine-readable `BlockCode`).
+  `Pipeline::run` aggregates per-stage decisions: it returns `Block`
+  immediately on the first stage that blocks, but if one or more stages
+  redact (and none block), it returns `Redact` as the **final** decision —
+  joining every redacting stage's reason and de-duplicating their entity
+  lists — not `Allow`. Only a run where no stage redacted or blocked
+  returns `Allow`.
 - [`Stage`][stage] — the trait every classifier and the policy engine
   implement. `async fn evaluate(&self, req: &GuardrailRequest) -> Result<Decision, GuardrailError>`.
 - [`Pipeline`][pipeline] / [`PipelineBuilder`][builder] — runs stages in order,
@@ -84,9 +94,35 @@ Concrete `Stage` implementations:
 
 ### `guardrail-proxy`
 
-- [`server`](../crates/guardrail-proxy/src/server.rs) — hyper 1.x + Tokio HTTP
-  server. Routes `/healthz`, `/metrics`, and everything else through
-  `proxy_request`. Tracks `active_connections` gauge around each served connection.
+Decomposed into single-responsibility modules — each one is independently
+testable, and the split keeps any one file from becoming an
+everything-in-one-place dumping ground as the proxy grows:
+
+- [`server`](../crates/guardrail-proxy/src/server.rs) — the listener
+  lifecycle only: bind, accept loop, graceful shutdown via
+  [`ServerHandle`]. Hands every accepted connection to `handler::handle_request`.
+- [`handler`](../crates/guardrail-proxy/src/handler.rs) — per-connection
+  routing (`/healthz`, `/metrics`, everything else) and the core proxy
+  flow (`proxy_request`): authenticate → strip/forward headers → read body
+  with a size limit → parse → run the pipeline → forward upstream or
+  return a block response. `pub(crate)` — this is an internal
+  implementation detail, not part of the crate's public API.
+- [`auth`](../crates/guardrail-proxy/src/auth.rs) — caller authentication
+  (`[auth]`) as a standalone, pure function (`is_authorized`) with no I/O
+  or state beyond what's passed in. Extracted specifically so the
+  authorization *decision* is unit-testable without a real TCP listener;
+  `server`'s own tests cover the end-to-end HTTP behavior on top of it.
+- [`error`](../crates/guardrail-proxy/src/error.rs) — HTTP error-response
+  construction (`error_response`, `error_body_response`,
+  `internal_error_response`), the size-limited body reader
+  (`read_limited_body`), and upstream-error classification
+  (`classify_upstream_error`, used for the `upstream_errors_total` metric
+  label). Grouped together because they're all "how do we describe a
+  failure," reviewable independently of routing/business logic.
+- [`state`](../crates/guardrail-proxy/src/state.rs) — `AppState` (crate-internal:
+  config handle, HTTP client, metrics registry) and the public
+  [`ServerHandle`]. Pure data, no behavior — kept separate so it's obvious
+  at a glance what every connection handler has access to.
 - [`translate`](../crates/guardrail-proxy/src/translate.rs) — bidirectional
   conversion between raw JSON bodies and `GuardrailRequest`. Fields not
   understood by the normalized model (e.g. `temperature`, `tools`) are
@@ -109,11 +145,16 @@ Concrete `Stage` implementations:
 - [`audit`](../crates/guardrail-proxy/src/audit.rs) — structured `tracing`
   events at `target: "guardrail::audit"`. **Never logs raw request content**
   — only metadata (request ID, model, decision, reason, entity types).
-- [`audit_log`](../crates/guardrail-proxy/src/audit_log.rs) — rotating NDJSON
-  file writer. `build_layer` returns a `tracing_subscriber::Layer` filtered to
-  `target = "guardrail::audit"` backed by a
-  `tracing_appender::rolling::RollingFileAppender`. The caller must hold the
-  returned `WorkerGuard` alive for the process lifetime.
+- [`audit_log`](../crates/guardrail-proxy/src/audit_log.rs) — true
+  size-based rotating NDJSON file writer (`SizeRotatingWriter`, a custom
+  `Write` impl — `tracing-appender`'s built-in rolling only supports
+  time-based rotation, not the `max_size_mb` threshold this needs).
+  `build_layer` returns a `tracing_subscriber::Layer` filtered to
+  `target = "guardrail::audit"`. The caller must hold the returned
+  `WorkerGuard` alive for the process lifetime.
+- [`telemetry`](../crates/guardrail-proxy/src/telemetry.rs) —
+  OpenTelemetry OTLP layer and per-request/stage span helpers, gated on
+  `observability.otlp_endpoint` being non-empty.
 
 ### `guardrail-cli`
 

@@ -79,9 +79,6 @@ pub struct AuditRecord {
 impl AuditRecord {
     /// Build an audit record from a request and its final decision.
     ///
-    /// `pii_entities` should be populated from `RedactionRecord`s when the
-    /// decision is `Redact`; pass `&[]` otherwise.
-    ///
     /// # Examples
     ///
     /// ```rust
@@ -89,27 +86,48 @@ impl AuditRecord {
     /// use guardrail_core::{decision::{Decision, BlockCode}, test_helpers::clean_request};
     ///
     /// let req = clean_request();
-    /// let record = AuditRecord::from_decision(&req, &Decision::Allow, &[], 0.05, 120.0);
+    /// let record = AuditRecord::from_decision(&req, &Decision::Allow, 0.05, 120.0);
     /// assert_eq!(record.decision, "allow");
     /// assert!(record.code.is_none());
+    /// ```
+    ///
+    /// PII entity types are read directly from `Decision::Redact`'s own
+    /// `entities` field — there is no separate parameter to thread through
+    /// (and therefore no way to pass a list that doesn't match the actual
+    /// decision, which was a real bug in an earlier version of this API).
+    ///
+    /// ```rust
+    /// use guardrail_proxy::audit::AuditRecord;
+    /// use guardrail_core::{decision::Decision, test_helpers::clean_request};
+    ///
+    /// let req = clean_request();
+    /// let decision = Decision::Redact {
+    ///     reason: "PII redacted: Email".into(),
+    ///     mutated: req.clone(),
+    ///     entities: vec!["email".to_string()],
+    /// };
+    /// let record = AuditRecord::from_decision(&req, &decision, 0.02, 250.0);
+    /// assert_eq!(record.pii_entities_found, vec!["email"]);
     /// ```
     pub fn from_decision(
         req: &GuardrailRequest,
         decision: &Decision,
-        pii_entities: &[String],
         latency_pipeline_ms: f64,
         latency_total_ms: f64,
     ) -> Self {
         let now = chrono_timestamp();
 
-        let (decision_name, stage, reason, code) = match decision {
-            Decision::Allow => ("allow", None, None, None),
-            Decision::Redact { reason, .. } => ("redact", None, Some(reason.clone()), None),
+        let (decision_name, stage, reason, code, pii_entities) = match decision {
+            Decision::Allow => ("allow", None, None, None, Vec::new()),
+            Decision::Redact { reason, entities, .. } => {
+                ("redact", None, Some(reason.clone()), None, entities.clone())
+            }
             Decision::Block { reason, code } => (
                 "block",
                 None, // stage name is best-effort from caller context
                 Some(reason.clone()),
                 Some(block_code_str(code)),
+                Vec::new(),
             ),
         };
 
@@ -124,7 +142,7 @@ impl AuditRecord {
             model: req.model.clone(),
             provider: format!("{:?}", req.provider).to_lowercase(),
             message_count: req.messages.len(),
-            pii_entities_found: pii_entities.to_vec(),
+            pii_entities_found: pii_entities,
             latency_pipeline_ms,
             latency_total_ms,
         }
@@ -143,7 +161,6 @@ impl AuditRecord {
     /// let record = AuditRecord::from_decision(
     ///     &req,
     ///     &Decision::Block { reason: "test".into(), code: BlockCode::PromptInjection },
-    ///     &[],
     ///     0.8,
     ///     312.0,
     /// )
@@ -289,7 +306,7 @@ mod tests {
     #[test]
     fn test_audit_record_allow() {
         let req = clean_request();
-        let record = AuditRecord::from_decision(&req, &Decision::Allow, &[], 0.05, 120.0);
+        let record = AuditRecord::from_decision(&req, &Decision::Allow, 0.05, 120.0);
         assert_eq!(record.decision, "allow");
         assert!(record.code.is_none());
         assert!(record.reason.is_none());
@@ -304,7 +321,7 @@ mod tests {
             reason: "Prompt injection detected.".into(),
             code: BlockCode::PromptInjection,
         };
-        let record = AuditRecord::from_decision(&req, &decision, &[], 0.8, 0.9)
+        let record = AuditRecord::from_decision(&req, &decision, 0.8, 0.9)
             .with_score(0.97)
             .with_stage("onnx_injection");
 
@@ -317,18 +334,17 @@ mod tests {
 
     #[test]
     fn test_audit_record_redact_with_pii() {
+        // Entities now come directly from Decision::Redact's own field —
+        // no separate parameter to keep in sync, closing the gap where a
+        // caller could previously pass an entity list that didn't match
+        // the decision it was supposedly describing.
         let req = clean_request();
         let decision = Decision::Redact {
             reason: "PII redacted: Email".into(),
             mutated: req.clone(),
+            entities: vec!["email".to_string(), "phone".to_string()],
         };
-        let record = AuditRecord::from_decision(
-            &req,
-            &decision,
-            &["email".to_string(), "phone".to_string()],
-            0.02,
-            250.0,
-        );
+        let record = AuditRecord::from_decision(&req, &decision, 0.02, 250.0);
 
         assert_eq!(record.decision, "redact");
         assert_eq!(record.pii_entities_found, vec!["email", "phone"]);
@@ -336,9 +352,26 @@ mod tests {
     }
 
     #[test]
+    fn test_audit_record_redact_entities_empty_when_stage_provides_none() {
+        // A custom stage that redacts without populating `entities` (e.g.
+        // a free-form policy match) must still produce a valid record with
+        // an empty entity list, not panic or default to something wrong.
+        let req = clean_request();
+        let decision = Decision::Redact {
+            reason: "custom redaction".into(),
+            mutated: req.clone(),
+            entities: Vec::new(),
+        };
+        let record = AuditRecord::from_decision(&req, &decision, 0.01, 10.0);
+
+        assert_eq!(record.decision, "redact");
+        assert!(record.pii_entities_found.is_empty());
+    }
+
+    #[test]
     fn test_audit_record_serializes_to_correct_json_shape() {
         let req = clean_request();
-        let record = AuditRecord::from_decision(&req, &Decision::Allow, &[], 0.05, 120.0);
+        let record = AuditRecord::from_decision(&req, &Decision::Allow, 0.05, 120.0);
         let json: serde_json::Value = serde_json::to_value(&record).unwrap();
 
         // Required fields per spec §10
@@ -369,7 +402,7 @@ mod tests {
     #[test]
     fn test_emit_does_not_panic() {
         let req = clean_request();
-        let record = AuditRecord::from_decision(&req, &Decision::Allow, &[], 0.0, 0.0);
+        let record = AuditRecord::from_decision(&req, &Decision::Allow, 0.0, 0.0);
         record.emit(); // must not panic even without a subscriber
     }
 

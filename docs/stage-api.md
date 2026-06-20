@@ -27,7 +27,7 @@ pub trait Stage: Send + Sync + 'static {
 | Variant | Meaning | Effect on pipeline |
 |---------|---------|-------------------|
 | `Decision::Allow` | Request is clean | Pipeline continues to next stage |
-| `Decision::Redact { reason, mutated }` | PII or sensitive data replaced | `mutated` replaces the request for all subsequent stages |
+| `Decision::Redact { reason, mutated, entities }` | PII or sensitive data replaced | `mutated` replaces the request for all subsequent stages; `entities` is a machine-readable list of redacted entity-type names (e.g. `["email", "phone"]`) for the audit trail |
 | `Decision::Block { reason, code }` | Request must be stopped | Pipeline short-circuits; 403 returned immediately |
 
 ### Block codes
@@ -69,6 +69,14 @@ executor — blocking it will starve all other requests.
 If a stage returns `Redact`, the `mutated` request it returns must produce
 the same `Redact` decision if passed through the stage again (idempotency).
 This is required for the audit log to accurately describe what was changed.
+
+### 6. `entities` is best-effort, not mandatory
+A redacting stage with no typed taxonomy to report against (e.g. a custom
+stage redacting based on a free-form policy match rather than a known PII
+entity type) may return `entities: Vec::new()`. The pipeline aggregates
+`entities` from every redacting stage that ran, de-duplicating across
+stages — an empty `Vec` from one stage simply contributes nothing to that
+union, it never causes an error.
 
 ## Minimal example
 

@@ -137,9 +137,10 @@ async fn check(text: String, config_path: std::path::PathBuf) -> anyhow::Result<
         guardrail_core::decision::Decision::Allow => serde_json::json!({
             "decision": "allow",
         }),
-        guardrail_core::decision::Decision::Redact { reason, mutated } => serde_json::json!({
+        guardrail_core::decision::Decision::Redact { reason, mutated, entities } => serde_json::json!({
             "decision": "redact",
             "reason": reason,
+            "entities": entities,
             "redacted_text": mutated.user_text(),
         }),
         guardrail_core::decision::Decision::Block { reason, code } => serde_json::json!({
