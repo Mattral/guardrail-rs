@@ -97,6 +97,58 @@ summary:
 - Add a corresponding section to `StagesConfig` in
   `guardrail-config/src/schema.rs`, with validation in `validate.rs`.
 
+## Releasing
+
+Releases are tag-triggered: pushing a `v*.*.*` tag runs the full pipeline
+in `.github/workflows/release.yml` — verify → build cross-platform
+binaries → build/push the Docker image → publish all 5 crates to
+crates.io → create the GitHub Release. See that file's top-of-file comment
+for the exact trigger gating (tag pushes get the full pipeline; pushes/PRs
+to `main` only run `verify` and the `publish-dry-run` validation job).
+
+### One-time setup: crates.io Trusted Publishing
+
+Before the first tagged release, each of the 5 publishable crates must be
+individually registered for [crates.io Trusted Publishing](https://crates.io/docs/trusted-publishing):
+
+1. For each crate name (`guardrail-core`, `guardrail-classifiers`,
+   `guardrail-config`, `guardrail-proxy`, `guardrail-cli`), go to
+   `https://crates.io/crates/<name>/settings` and add a Trusted Publisher
+   entry pointing at this repository and the
+   `.github/workflows/release.yml` workflow file. **This is per-crate —
+   there is no single repo-level toggle.**
+2. **Bootstrap caveat:** crates.io requires a crate name to not yet exist
+   on the registry before you can configure Trusted Publishing for it
+   through the UI. If any of these 5 names haven't been published before,
+   that first publish has to go out via the legacy `cargo login` +
+   long-lived API-token flow, once, per crate — after that one-time
+   bootstrap, Trusted Publishing takes over for every subsequent release
+   and no token needs to be stored in the repo.
+3. Publish in dependency order, since each crate's `Cargo.toml` declares a
+   `version` requirement on its workspace siblings that the registry must
+   be able to resolve: `guardrail-core` → `guardrail-classifiers` →
+   `guardrail-config` → `guardrail-proxy` → `guardrail-cli`. The `publish`
+   job in `release.yml` already does this in order, with a short wait
+   between each step for the registry to finish indexing.
+4. Before trusting a real tagged release, check the `publish-dry-run` job's
+   results on `main` — note it's expected to fail for every crate except
+   `guardrail-core` until step 2's bootstrap publish has happened for each
+   crate's siblings; see the job's comments in `release.yml` for why.
+
+### Version bumps
+
+`[workspace.package].version` in the root `Cargo.toml` is the single
+source of truth for each crate's own version, but — important — it does
+**not** propagate into the internal `guardrail-* = { path = "..",
+version = ".." }` dependency requirements inside each crate's own
+`Cargo.toml` (Cargo has no `version.workspace = true` shorthand for
+dependency requirements, only for a package's own version). After bumping
+`[workspace.package].version`, also update every
+`guardrail-* = { path = "..", version = "X.Y.Z" }` line under `crates/*/Cargo.toml`
+to match — a CI job (`version-pin-check` in `ci.yml`) fails the build if
+these drift out of sync, so this isn't easy to forget silently, but it is
+still a manual two-step process rather than one.
+
 ## Reporting security issues
 
 Please do **not** open a public GitHub issue for security vulnerabilities.
