@@ -218,14 +218,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GitHub issue creation on findings.
 
 ### Changed
+
+**`guardrail-proxy`'s `server.rs` decomposed from a 1135-line monolith into 5 single-responsibility modules**
+- The file had accreted listener lifecycle, request routing, auth
+  enforcement, response building, and error mapping into one undifferentiated
+  module, with a ~535-line test block bundled at the bottom. Split by
+  responsibility, following the layered-service pattern common in
+  production Rust HTTP services:
+  - `state.rs` — `AppState` and `ServerHandle`: pure data, no behavior.
+  - `auth.rs` — `is_authorized(&AuthConfig, path, &HeaderMap) -> bool`,
+    extracted as a pure function with **no I/O dependency**, specifically
+    so the authorization decision is unit-testable without spinning up a
+    real TCP listener. Previously this logic only had HTTP-round-trip
+    test coverage (7 tests, each starting a real server); now it also has
+    9 fast pure-function unit tests covering every branch directly, with
+    the HTTP-level tests kept as genuine end-to-end coverage on top.
+  - `error.rs` — HTTP error-response construction, the size-limited body
+    reader, and upstream-error classification, grouped as "how do we
+    describe a failure."
+  - `handler.rs` — per-connection routing and the core proxy flow
+    (`proxy_request`, `forward_to_upstream`, `maybe_redact_response`).
+    Marked `pub(crate)` since it's an internal implementation detail, not
+    part of the crate's public API; none of its functions are reachable
+    from outside the crate.
+  - **Public API surface change:** `auth::is_authorized`,
+    `error::error_response`, `error::error_body_response`,
+    `error::internal_error_response`, and `error::classify_upstream_error`
+    are now `pub` — previously these were private to the old monolithic
+    `server.rs` and unreachable outside the crate. This is a deliberate
+    choice, not an accident of the refactor: they're well-documented,
+    independently tested, reusable primitives for anyone embedding
+    `guardrail-proxy` to build custom middleware on top of, matching how
+    `tower`/`axum`/`hyper` expose composable pieces rather than one opaque
+    entry point.
+  - `server.rs` — shrunk to just the listener lifecycle (`run_server`,
+    the accept loop, graceful shutdown), at 490 lines including its own
+    integration tests (down from 1135 lines covering everything).
+  - Tests were redistributed to live with the code they test (idiomatic
+    Rust convention) rather than centralized in one block: pure-function
+    unit tests moved into `auth.rs`/`error.rs`/`handler.rs` alongside
+    what they test; HTTP-level integration tests (12 of them, each
+    spinning up a real server via `run_server`) stayed in `server.rs`,
+    since that module's only remaining job is exactly "stand up a real
+    listener and serve requests" — these tests prove precisely that,
+    end to end.
+  - No file in the crate now exceeds ~520 lines (previously one file
+    alone was 1135). `lib.rs`'s module-level docs rewritten to explain
+    why each module exists and what it owns.
+  - Found and fixed a duplicated doc comment on `classify_upstream_error`
+    (the same two-line `///` block appeared twice in a row) while reading
+    the file end to end for this split.
+- `docs/architecture.md`'s `guardrail-proxy` module list rewritten to
+  match the new structure; also fixed a stale "five-crate workspace"
+  count (it's six, including the unpublished `guardrail-test-suite`) and
+  a stale `audit_log` description that still said
+  `tracing_appender::rolling::RollingFileAppender` (time-based) instead
+  of the custom size-based `SizeRotatingWriter` that replaced it earlier
+  this session.
+- `docs/stage-api.md`'s `Decision::Redact` table entry and contract list
+  updated for the `entities: Vec<String>` field; added a 6th contract
+  point clarifying it's best-effort (an empty `Vec` from a stage with no
+  typed taxonomy to report is fine, not an error).
+
+**Other changes**
 - `[stages.pii_redaction]` renamed to `[stages.pii_redactor]`; the old
   name is still accepted via `#[serde(alias = "pii_redaction")]` for
   backward-compatible TOML files.
 - `observability.json_logs` (bool) replaced by `observability.log_format`
   (`"pretty"` | `"json"`).
-- `AuditRecord::from_decision` signature now takes
-  `pii_entities: &[String]`, `latency_pipeline_ms: f64`,
-  `latency_total_ms: f64`.
+- `AuditRecord::from_decision` signature simplified to 4 arguments
+  (`req, decision, latency_pipeline_ms, latency_total_ms`) — the PII
+  entity list is read directly from `Decision::Redact`'s own `entities`
+  field rather than being threaded through as a separate parameter (see
+  "Critical fix" below for why).
 - `forward.rs`'s `forward_request`/`read_body` use
   `.map_err(GuardrailError::from)` instead of manual string formatting.
 - `PiiEntityType` and `RedactionRecord` now derive `serde::Serialize`
@@ -241,6 +306,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directly.
 
 ### Fixed
+
+**`Pipeline::run` now correctly returns `Decision::Redact` (resolves a tension between spec §6 and §10)**
+- `Pipeline::run_with_observer` previously always collapsed a successful
+  redaction down to `Decision::Allow` by the time it returned to the
+  caller — even when a stage correctly returned `Decision::Redact`
+  internally. The redacted (`mutated`) request *did* flow through to
+  subsequent stages correctly; only the final decision object reaching
+  the caller was wrong.
+- **Note:** this matches the spec's own §6 illustrative `Pipeline::run`
+  code sample exactly (its loop also unconditionally returns
+  `Ok((Decision::Allow, req))` after applying any `Redact`'s `mutated`
+  request). This change is therefore a deliberate divergence from that
+  literal code sample, made because §10's audit-log example includes a
+  `pii_entities_found` field, and the OTel trace spec calls for a
+  per-stage `entities_found` attribute — both hard to read as meaningful
+  if `Decision::Redact` can never reach the code that populates them. See
+  `.github/NEXT_PUSH_ISSUE.md` for the full reasoning and an explicit note
+  on how to revert this specific change if that reasoning is wrong.
+- Fixed by having `run_with_observer` accumulate every redacting stage's
+  reason and entity list across the loop and return `Decision::Redact`
+  (joining reasons with `"; "`, de-duplicating entities) as the final
+  decision whenever at least one stage redacted, rather than
+  unconditionally falling through to `Decision::Allow`.
+- `Decision::Redact` gained a new `entities: Vec<String>` field — mirroring
+  how `Block` already pairs a human-readable `reason` with a
+  machine-readable `code` (this part is a clean additive extension, not a
+  divergence) — since the structured PII entity-type list was being
+  computed correctly inside `PiiRedactor::evaluate` but then discarded,
+  never reaching the audit trail. Propagated through all 9 files across
+  the workspace that construct or destructure `Decision::Redact`.
+- `AuditRecord::from_decision`'s signature simplified from 5 args to 4:
+  the PII entity list is now read directly from `Decision::Redact`'s own
+  `entities` field instead of being threaded through as a separate
+  parameter that the caller had to remember to extract correctly — closing
+  the exact class of bug that caused this in the first place (`server.rs`
+  briefly had a `let pii_entities: Vec<String> = Vec::new(); // populated
+  below` that, true to the comment's irony, was never actually populated).
+- Added `test_helpers::RedactingStage` and 6 new tests in
+  `guardrail-core/src/pipeline.rs` covering: a single redacting stage
+  returning `Redact` (not `Allow`); multiple redacting stages accumulating
+  reasons and entities; entity de-duplication across stages; redact-then-block
+  precedence (block always wins, since it's the stronger guarantee); and
+  that the mutated request correctly flows to and through subsequent
+  stages. `Pipeline::run`'s rustdoc gained a worked doctest demonstrating
+  the fixed behavior and explicitly noting the divergence from the §6
+  code sample.
 
 **crates.io publish workflow — two real release-blocking bugs found and fixed**
 - `release.yml`'s `publish` job claimed "Trusted Publishing" but actually
