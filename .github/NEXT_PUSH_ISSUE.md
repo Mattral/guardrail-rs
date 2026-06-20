@@ -363,7 +363,78 @@ build.
 
 ### Suggested next push
 
-1. `UpstreamClient`/`ProxyServer` named-struct refactor for closer spec §8
+**Two items below are confirmed decisions with owner sign-off (2026-06-21,
+from Min), not open questions — listed first since they're settled and
+actionable, unlike the rest of this list.**
+
+1. **[CONFIRMED] Public API surface widening in `guardrail-proxy` —
+   treat as a load-bearing semver commitment.** `auth::is_authorized`,
+   `error::error_response`, `error::error_body_response`,
+   `error::internal_error_response`, and `error::classify_upstream_error`
+   are now `pub` (previously private to the old monolithic `server.rs`,
+   unreachable outside the crate). The project owner has explicitly
+   signed off on this as the intended design — these are well-documented,
+   independently tested, reusable primitives for anyone embedding
+   `guardrail-proxy`, in the spirit of how `tower`/`axum`/`hyper` expose
+   composable pieces rather than one opaque entry point. **Any future
+   change to these five signatures is a breaking change requiring a major
+   version bump, the same as any other stable public item in this crate.**
+   If a future decision reverses this (these five become `pub(crate)`
+   again), that reversal must happen **before** any 1.0 release — once
+   1.0 ships, removing `pub` from an item is itself a breaking change, so
+   "make it private later" stops being free after that point. `handler`
+   itself correctly stayed `pub(crate)` throughout (none of its functions
+   are reachable externally, by design). Still worth running
+   `cargo public-api diff` (or equivalent) once a toolchain exists, purely
+   as a mechanical completeness check against manual review.
+
+2. **[CONFIRMED, ACTION REQUIRED FROM REPO OWNER] crates.io Trusted
+   Publishing setup — outside what an agent in this sandbox can do.**
+   Each of the 5 publishable crates (`guardrail-core`,
+   `guardrail-classifiers`, `guardrail-config`, `guardrail-proxy`,
+   `guardrail-cli`) must be **individually** registered for Trusted
+   Publishing in its own crates.io package settings — this links the
+   package to this GitHub repository plus the specific workflow file
+   (`.github/workflows/release.yml`) authorized to mint OIDC tokens on
+   its behalf. Registration is per-crate, not once for the whole repo.
+   The workflow already calls `rust-lang/crates-io-auth-action@v1`
+   correctly, but that call will fail at runtime until this registration
+   exists for every crate.
+   - **Bootstrap caveat:** crates.io's Trusted Publishing UI, for a
+     brand-new crate name that has never been published before, requires
+     the crate to not yet exist on the registry at setup time. If any of
+     these 5 names need a first-ever manual publish to "claim" them, that
+     one-time bootstrap publish needs the legacy `cargo login` +
+     long-lived API-token flow once — after that, Trusted Publishing
+     takes over for every subsequent release.
+   - **Validation step before trusting a real release:** a `publish-dry-run`
+     CI job has been added to `.github/workflows/release.yml`, running on
+     every push/PR to `main` (not just tagged releases) via
+     `cargo publish -p <crate> --dry-run` for all 5 crates. **Important:**
+     this job is expected to fail for every crate except `guardrail-core`
+     until `guardrail-core` (and each crate's other unpublished siblings)
+     has actually been published at least once — `cargo publish --dry-run`
+     resolves path-dependencies via their `version` requirement against
+     the live registry, the same way a real publish does, so it cannot
+     succeed for a crate whose sibling dependencies don't exist on
+     crates.io yet. The job is marked `continue-on-error: true` for
+     exactly this reason; treat a passing `guardrail-core` dry-run plus
+     failing dry-runs for the other 4 as the *expected, healthy* signal
+     before the first release, not as something to debug. After the first
+     real release, all 5 should pass and a failure becomes meaningful again.
+   - This is implemented as a matrix job (parallel, `fail-fast: false`) so
+     every crate's dry-run result is visible in one CI run rather than
+     stopping at the first failure — useful for confirming the *expected*
+     failure pattern above (only `guardrail-core` passing) actually
+     matches reality, rather than masking a real, unrelated manifest bug
+     in one of the other 4 crates behind the "expected to fail" assumption.
+
+---
+
+**Everything below this line is still open / unconfirmed — normal
+priority-ordered follow-up work, not owner-confirmed decisions.**
+
+3. `UpstreamClient`/`ProxyServer` named-struct refactor for closer spec §8
    *literal naming* alignment — note this push's `server.rs` decomposition
    (`state`/`auth`/`error`/`handler`/`server`) already delivers the
    underlying separation-of-concerns spec §8 is really asking for, just
@@ -373,7 +444,7 @@ build.
    or is just nominal alignment — the current names (`handler`, `auth`,
    `error`, `state`) arguably read more clearly for a Rust audience than
    `ProxyServer` would.
-2. Watch `guardrail-config/src/loader.rs` (733 lines) and
+4. Watch `guardrail-config/src/loader.rs` (733 lines) and
    `guardrail-config/src/schema.rs` (665 lines) — not large enough to
    force a split today, but if either keeps growing, the same
    single-responsibility decomposition applied to `guardrail-proxy` this
@@ -381,43 +452,29 @@ build.
    pipeline-building responsibilities into separate files) would pay off
    the same way. Not urgent; flagging so it doesn't sneak past 1000+ lines
    unnoticed the way `server.rs` did.
-3. First `cargo check --workspace --all-features` pass on real hardware;
-   fix whatever it finds. This is the single highest-priority item — the
-   codebase has had six rounds of manual-review-only changes and needs a
-   real compiler pass before further feature work. In particular, verify:
+5. First `cargo check --workspace --all-features` pass on real hardware;
+   fix whatever it finds. This is the single highest-priority *technical*
+   item — the codebase has had six rounds of manual-review-only changes
+   and needs a real compiler pass before further feature work. In
+   particular, verify:
    (a) the `reqwest-errors` feature compiles cleanly both on and off for
-   `guardrail-core`, (b) `rust-lang/crates-io-auth-action@v1` is the
-   correct current action name/version (written from documented behavior,
-   untested against a live OIDC exchange), (c) `Pipeline::builder()`'s
-   doctest and both `examples/minimal.rs` and the new
-   `crates/guardrail-cli/examples/custom_stage.rs` actually run, (d) the
-   `SizeRotatingWriter` in `audit_log.rs` — the rename-while-open risk on
-   Windows was mitigated by making the file handle an `Option<File>` and
-   explicitly `.take()`-ing (flush + drop) it before `std::fs::rename`
-   runs, but this is reasoned from documented Windows file-locking
-   semantics, not verified against a real Windows filesystem; the existing
-   `ci.yml` test matrix already includes `windows-latest`, so check that
-   job specifically once a toolchain is available, (e) the new
-   `crates/guardrail-proxy/src/{state,auth,error,handler}.rs` module
-   split — note this **did** widen the public API surface, checked and
-   confirmed deliberately, not accidentally: `auth::is_authorized`,
-   `error::error_response`, `error::error_body_response`,
-   `error::internal_error_response`, and `error::classify_upstream_error`
-   are now `pub` (previously private to the old monolithic `server.rs`,
-   unreachable outside the crate). This was a considered choice — these
-   are well-documented, independently tested, genuinely reusable
-   primitives for anyone embedding `guardrail-proxy` and building custom
-   middleware on top of it, in the spirit of how `tower`/`axum`/`hyper`
-   expose composable pieces rather than one opaque entry point — but it's
-   flagged here so it's reviewed as an intentional API decision before any
-   1.0 release, not rubber-stamped as "just a refactor." `handler` itself
-   stayed `pub(crate)` (none of its functions are reachable externally,
-   by design — `proxy_request`/`forward_to_upstream`/`maybe_redact_response`
-   etc. are all private even within that module). Worth running
-   `cargo public-api diff` (or equivalent) once a toolchain exists to get
-   a complete, mechanical list of every surface change, not just the ones
-   caught by manual review.
-3. Re-verify the rest of spec §16's publication checklist items not yet
+   `guardrail-core`,
+   (b) `rust-lang/crates-io-auth-action@v1` is the correct current action
+   name/version (written from documented behavior, untested against a
+   live OIDC exchange — this becomes directly testable once item 2 above
+   is done),
+   (c) `Pipeline::builder()`'s doctest and both `examples/minimal.rs` and
+   `crates/guardrail-cli/examples/custom_stage.rs` actually run,
+   (d) the `SizeRotatingWriter` in `audit_log.rs` — the rename-while-open
+   risk on Windows was mitigated by making the file handle an
+   `Option<File>` and explicitly `.take()`-ing (flush + drop) it before
+   `std::fs::rename` runs, but this is reasoned from documented Windows
+   file-locking semantics, not verified against a real Windows
+   filesystem; the existing `ci.yml` test matrix already includes
+   `windows-latest`, so check that job specifically once a toolchain is
+   available.
+6. Re-verify the rest of spec §16's publication checklist items not yet
    explicitly addressed: `cargo doc --all-features` building without
-   warnings (unverified, no toolchain), `cargo publish --dry-run` succeeding
-   for the first release (unverified).
+   warnings (unverified, no toolchain), `cargo publish --dry-run`
+   succeeding for the first release (now directly actionable as part of
+   item 2 above).
