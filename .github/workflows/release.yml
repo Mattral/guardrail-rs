@@ -1,9 +1,27 @@
 name: Release
+#
+# Two distinct trigger modes, gated separately within this file:
+#
+# 1. Tag push (v*.*.*): the full release pipeline — verify → build
+#    cross-platform binaries → build/push Docker image → publish to
+#    crates.io → create the GitHub Release. Every job from `build-binaries`
+#    onward is gated with `if: startsWith(github.ref, 'refs/tags/v')`.
+#
+# 2. Push/PR to main: only `verify` and `publish-dry-run` run. This gives
+#    fast, repeated feedback that the workspace would actually be
+#    publishable (catching a missing `version` on a path dependency, a bad
+#    manifest field, etc.) on every change, rather than discovering a
+#    publish-blocking problem for the first time on a real tagged release.
 
 on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,10 +49,62 @@ jobs:
       - run: cargo nextest run --workspace
       - run: cargo test --workspace --doc
 
+  # ── Validate the publish pipeline without actually publishing ───────────────
+  #
+  # Runs on every push/PR to main (not just tagged releases) so manifest
+  # drift — a missing `version` on an internal path dependency, a bad
+  # `description`/`license`/`readme` field — is caught immediately for
+  # crates with no unpublished-sibling dependencies, rather than discovered
+  # for the first time on a real tagged release.
+  #
+  # IMPORTANT CAVEAT, unverified against a real `cargo publish --dry-run`
+  # run (no toolchain was available to test this claim before committing
+  # it): `cargo publish --dry-run` packages a crate by stripping its `path`
+  # dependency keys and resolving the remainder via `version` requirements
+  # against the registry, the same way a real publish does. For
+  # `guardrail-classifiers`/`guardrail-config`/`guardrail-proxy`/
+  # `guardrail-cli` — every crate here other than `guardrail-core` — that
+  # means this dry-run job will almost certainly FAIL until `guardrail-core`
+  # (and each crate's other unpublished siblings) have actually been
+  # published at least once. If that's what happens here, it is an expected
+  # failure mode for a not-yet-published workspace, not evidence the
+  # manifests themselves are broken — re-run this job (or just trust the
+  # real `publish` job's own per-crate dependency-order waits) once the
+  # first real release has gone out and every crate exists on the registry.
+  # `guardrail-core` itself has no such sibling dependency and should be a
+  # meaningful, trustworthy signal from the very first run.
+  publish-dry-run:
+    name: dry-run publish (${{ matrix.crate }})
+    needs: verify
+    runs-on: ubuntu-latest
+    continue-on-error: true  # see caveat above — expected to fail pre-first-release for non-core crates
+    strategy:
+      fail-fast: false
+      matrix:
+        # Listed in dependency order for readability / easy comparison with
+        # the real `publish` job below — order has no effect on this job's
+        # own correctness, only on how easy the two are to keep in sync.
+        crate:
+          - guardrail-core
+          - guardrail-classifiers
+          - guardrail-config
+          - guardrail-proxy
+          - guardrail-cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish --dry-run
+        run: cargo publish -p ${{ matrix.crate }} --dry-run
+
   # ── Build cross-platform binaries ────────────────────────────────────────────
+  # Tag-pushes only: this job builds real release artifacts and is expensive
+  # across 5 OS/arch targets, so it must not run on every push/PR to main —
+  # that's what `publish-dry-run` above is for.
   build-binaries:
     name: build (${{ matrix.target }})
     needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -118,9 +188,11 @@ jobs:
           path: dist/*
 
   # ── Build & push multi-arch Docker image ─────────────────────────────────────
+  # Tag-pushes only — see note on build-binaries above.
   docker:
     name: Docker image
     needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -172,6 +244,7 @@ jobs:
   publish:
     name: Publish to crates.io
     needs: [build-binaries, docker]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: crates-io   # GitHub Environment scoping the OIDC trust relationship.
     permissions:
@@ -231,6 +304,7 @@ jobs:
   github-release:
     name: GitHub Release
     needs: [build-binaries, docker, publish]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
