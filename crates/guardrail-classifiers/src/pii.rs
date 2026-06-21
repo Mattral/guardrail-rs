@@ -392,7 +392,11 @@ impl Stage for PiiRedactor {
                     "PII redacted from request"
                 );
 
-                Ok(Decision::Redact { reason, mutated })
+                Ok(Decision::Redact {
+                    reason,
+                    mutated,
+                    entities: entity_summary,
+                })
             }
         }
     }

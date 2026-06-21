@@ -320,7 +320,7 @@ mod tests {
 
         tracing::subscriber::with_default(subscriber, || {
             let req = clean_request();
-            AuditRecord::from_decision(&req, &Decision::Allow, &[], 0.05, 120.0).emit();
+            AuditRecord::from_decision(&req, &Decision::Allow, 0.05, 120.0).emit();
             tracing::info!(target: "unrelated::module", "should not appear");
         });
 

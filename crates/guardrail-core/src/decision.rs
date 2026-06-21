@@ -16,6 +16,13 @@ pub enum Decision {
         reason: String,
         /// The sanitized request to pass to subsequent stages.
         mutated: GuardrailRequest,
+        /// Machine-readable list of entity-type names that were redacted
+        /// (e.g. `["email", "phone"]`), for structured logging and the
+        /// audit trail. Mirrors how [`Decision::Block`] pairs a
+        /// human-readable `reason` with a machine-readable `code`. Empty
+        /// for stages that redact without a typed entity taxonomy (e.g. a
+        /// custom stage that redacts based on a free-form policy match).
+        entities: Vec<String>,
     },
     /// Request must be blocked; do not forward to the upstream.
     Block {

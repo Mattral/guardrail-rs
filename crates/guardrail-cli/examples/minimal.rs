@@ -96,8 +96,9 @@ async fn main() {
                 println!("  decision: allow");
                 println!("  forwarded text: {:?}", final_request.user_text());
             }
-            Decision::Redact { reason, mutated } => {
+            Decision::Redact { reason, mutated, entities } => {
                 println!("  decision: redact ({reason})");
+                println!("  entities: {entities:?}");
                 println!("  forwarded text: {:?}", mutated.user_text());
             }
             Decision::Block { reason, code } => {
