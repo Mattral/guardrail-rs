@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**`publish-dry-run` CI job — continuous publish validation ahead of crates.io Trusted Publishing setup**
+- `.github/workflows/release.yml` now runs `cargo publish -p <crate> --dry-run`
+  for all 5 publishable crates on every push/PR to `main`, in addition to
+  the existing tag-triggered release pipeline. Gives fast, repeated
+  feedback that the workspace would actually be publishable, instead of
+  discovering a manifest problem for the first time on a real tagged
+  release.
+- The rest of the release pipeline (`build-binaries`, `docker`, `publish`,
+  `github-release`) is now explicitly gated to tag pushes only via
+  `if: startsWith(github.ref, 'refs/tags/v')`, since the workflow's
+  trigger was widened to include `main` pushes and PRs for the new
+  dry-run job — without this gating, every commit to `main` would have
+  also tried to build cross-platform release binaries and push a Docker
+  image, which is wrong.
+- **Known, expected limitation, documented in the job's own comments and
+  in `.github/NEXT_PUSH_ISSUE.md`:** `cargo publish --dry-run` resolves
+  path-dependencies via their `version` requirement against the live
+  registry, the same way a real publish does — so this job is expected to
+  fail for every crate except `guardrail-core` until `guardrail-core` (and
+  each crate's other unpublished siblings) has actually been published at
+  least once. Marked `continue-on-error: true` for exactly this reason.
+  After the first real release, all 5 should pass.
+
 **Caller authentication (`[auth]`) — enforced at runtime (spec §8/§9)**
 - `server.rs` checks `X-Guardrail-Key` against `config.auth.keys` before
   reading the request body (fail fast). `/healthz` and `/metrics` are
@@ -241,16 +264,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Marked `pub(crate)` since it's an internal implementation detail, not
     part of the crate's public API; none of its functions are reachable
     from outside the crate.
-  - **Public API surface change:** `auth::is_authorized`,
-    `error::error_response`, `error::error_body_response`,
-    `error::internal_error_response`, and `error::classify_upstream_error`
-    are now `pub` — previously these were private to the old monolithic
-    `server.rs` and unreachable outside the crate. This is a deliberate
-    choice, not an accident of the refactor: they're well-documented,
-    independently tested, reusable primitives for anyone embedding
-    `guardrail-proxy` to build custom middleware on top of, matching how
-    `tower`/`axum`/`hyper` expose composable pieces rather than one opaque
-    entry point.
+  - **Public API surface change — confirmed semver commitment:**
+    `auth::is_authorized`, `error::error_response`,
+    `error::error_body_response`, `error::internal_error_response`, and
+    `error::classify_upstream_error` are now `pub` — previously these
+    were private to the old monolithic `server.rs` and unreachable
+    outside the crate. This was a deliberate choice, not an accident of
+    the refactor, and has been explicitly confirmed (not just proposed)
+    as the intended design: these are well-documented, independently
+    tested, reusable primitives for anyone embedding `guardrail-proxy` to
+    build custom middleware on top of, matching how `tower`/`axum`/`hyper`
+    expose composable pieces rather than one opaque entry point. Treat
+    this as load-bearing for semver going forward — any future change to
+    these five signatures is a breaking change requiring a major version
+    bump, the same as any other stable public API in this crate.
   - `server.rs` — shrunk to just the listener lifecycle (`run_server`,
     the accept loop, graceful shutdown), at 490 lines including its own
     integration tests (down from 1135 lines covering everything).
