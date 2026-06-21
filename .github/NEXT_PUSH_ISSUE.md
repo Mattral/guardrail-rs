@@ -1,5 +1,28 @@
 ## Schema correctness pass: align config, errors, and tests with spec §9/§11
 
+> **⚠️ Notable fix in this push:** `Pipeline::run` previously could never
+> actually return `Decision::Redact` to its caller — every successful
+> redaction was collapsed to `Decision::Allow` by the time the pipeline
+> returned, which (under the spec's own §6 code sample) made the audit
+> log's redact case, the `redacted_total` metric, and `guardrail check`'s
+> redact output all dead code. **This matches the spec's own illustrative
+> `Pipeline::run` example exactly** — so this is flagged as resolving a
+> tension between §6's simplified code sample and §10's audit-log
+> requirements, not as an unambiguous spec bug. See "Critical fix" below
+> for the full reasoning and an explicit note on how to revert if that
+> reasoning turns out to be wrong.
+
+> **🏗️ Also in this push:** `guardrail-proxy/src/server.rs` (1135 lines,
+> mixing listener lifecycle, request routing, auth, response building, and
+> error mapping into one file) was decomposed into 5 single-responsibility
+> modules (`state`, `auth`, `error`, `handler`, `server`), following the
+> layered-service pattern used by production Rust HTTP services. No file
+> in the crate now exceeds ~520 lines. The auth-check logic in particular
+> went from only having HTTP-round-trip test coverage to also having fast,
+> dependency-free unit tests on the underlying decision function. See
+> "Repository hygiene" / the `### Changed` section in `CHANGELOG.md` for
+> the full breakdown.
+
 ### Summary
 
 This push performs a full rewrite of the TOML configuration schema to match
@@ -10,6 +33,85 @@ per-stage `action`, `pii_redactor.replacements`, `observability.audit_log.path`
 rename through every downstream crate. It also closes the
 `GuardrailError::Upstream` type-mismatch gap from spec §11 without violating
 the `guardrail-core` dependency budget (§20).
+
+### Critical fix: `Decision::Redact` was unreachable from `Pipeline::run` — resolving a tension between spec §6 and spec §10
+
+**Severity: high.** This is a functional correctness fix in the core
+request-handling path, not a tooling/deployment issue like the rest of
+this document. Found during a line-by-line re-read of `server.rs` end to
+end (specifically: a comment that said `// populated below` next to a
+`Vec::new()` that nothing ever populated — pulling that thread led to the
+root cause one layer down in `guardrail-core`).
+
+**Important nuance, checked directly against the spec before "fixing"
+anything:** the spec's own §6 reference implementation of `Pipeline::run`
+(the illustrative code sample, not necessarily meant to be copied
+verbatim) has the identical shape — its loop applies a `Redact`'s
+`mutated` request and continues, then **unconditionally** returns
+`Ok((Decision::Allow, req))` after the loop, with no path back to
+`Decision::Redact` at all. So this isn't a typo or oversight unique to
+this implementation; the question is whether that §6 code sample is
+authoritative, or whether it's a simplified teaching example that
+undersells what §10 actually requires.
+
+**Why I concluded §10 wins:** §10's own audit-log JSON example includes a
+field literally named `pii_entities_found`, and the OTel trace spec
+explicitly calls for a per-stage `entities_found` attribute on the
+`guardrail.stage.pii_redactor` span. A field named `pii_entities_found`
+that can — by construction, under the §6 code sample — *never be
+non-empty for any record whose `decision` field made it out of
+`Pipeline::run`* is hard to read as intentional; the far more natural
+reading is that §10 expects redaction outcomes to be observable in the
+audit trail, and the §6 code sample is just simplified illustrative code
+that didn't carry that requirement through. I'm flagging this reasoning
+explicitly rather than silently diverging from a literal spec code
+sample, since "the spec's example code does X" is normally a strong
+signal I'd defer to.
+
+**The fix:**
+1. `Decision::Redact` gained a new `entities: Vec<String>` field (mirroring
+   `Block`'s `reason`+`code` pairing — this part is a clean, additive
+   extension of the spec's `Decision` enum, not a contradiction of it),
+   since `PiiRedactor` was already computing a structured entity-type list
+   internally and discarding it before it could reach the audit log.
+2. `Pipeline::run_with_observer` now accumulates every redacting stage's
+   `reason` (joined with `"; "`) and `entities` (de-duplicated union)
+   across the whole loop, and returns `Decision::Redact` — not `Allow` —
+   as the final decision whenever at least one stage redacted. This is
+   the one place this implementation deliberately diverges from §6's
+   literal code sample, in favor of what §10 appears to require.
+3. Propagated the new `entities` field through all 9 files in the
+   workspace that construct or destructure `Decision::Redact` (verified
+   via exhaustive `grep -rn "Decision::Redact {"` / `"Redact {"` across
+   every `.rs` file, not just the ones touched directly).
+4. `AuditRecord::from_decision` simplified from a 5-argument to a
+   4-argument function: it now reads `entities` directly off the
+   `Decision::Redact` it's given instead of taking a separately-threaded
+   `pii_entities: &[String]` parameter — the exact pattern that let the
+   original `server.rs` bug exist (a parameter that's trivially easy to
+   forget to populate, vs. data that lives on the type itself and can't
+   be forgotten).
+5. Added `test_helpers::RedactingStage` (configurable reason/entities, with
+   a `with_name` variant for composing multiple redacting stages
+   distinguishably) and 6 new tests in `pipeline.rs`: single redacting
+   stage returns `Redact` not `Allow`; multiple stages accumulate reasons
+   and entities; duplicate entities across stages are de-duplicated;
+   redact-then-block returns `Block` (blocking always wins — it's the
+   stronger guarantee, matching §6's stated short-circuit-on-Block
+   behavior); the mutated request correctly flows through to later
+   stages. `Pipeline::run`'s rustdoc gained a full worked doctest
+   exercising the fixed behavior and explicitly documenting it as a
+   deliberate divergence from the simplified §6 code sample.
+
+**If this reasoning is wrong** (i.e. if `Decision::Redact` reaching the
+caller was never intended, and `pii_entities_found` is meant to be sourced
+some other way — e.g. purely from per-stage OTel span attributes rather
+than the final aggregated `Decision`) — this is a one-line revert in
+`pipeline.rs` back to the unconditional `Ok((Decision::Allow, req))`, with
+the `entities` field on `Decision::Redact` and all its plumbing left in
+place as harmless, unused-by-the-final-decision metadata. Flagging this
+explicitly so a human reviewer can make the final call with full context
+rather than this decision being buried in a diff.
 
 ### Changes
 
@@ -262,12 +364,26 @@ build.
 ### Suggested next push
 
 1. `UpstreamClient`/`ProxyServer` named-struct refactor for closer spec §8
-   alignment (cosmetic/organizational — current code is correct, just
-   structured differently). This is now the only remaining functional gap
-   against the spec that hasn't been closed.
-2. First `cargo check --workspace --all-features` pass on real hardware;
+   *literal naming* alignment — note this push's `server.rs` decomposition
+   (`state`/`auth`/`error`/`handler`/`server`) already delivers the
+   underlying separation-of-concerns spec §8 is really asking for, just
+   under different module/type names than the spec's literal
+   `UpstreamClient`/`ProxyServer`. Worth a judgment call on whether
+   renaming to match the spec's exact nouns adds real value at this point
+   or is just nominal alignment — the current names (`handler`, `auth`,
+   `error`, `state`) arguably read more clearly for a Rust audience than
+   `ProxyServer` would.
+2. Watch `guardrail-config/src/loader.rs` (733 lines) and
+   `guardrail-config/src/schema.rs` (665 lines) — not large enough to
+   force a split today, but if either keeps growing, the same
+   single-responsibility decomposition applied to `guardrail-proxy` this
+   push (e.g. splitting `loader.rs`'s TOML-loading, env-var-overlay, and
+   pipeline-building responsibilities into separate files) would pay off
+   the same way. Not urgent; flagging so it doesn't sneak past 1000+ lines
+   unnoticed the way `server.rs` did.
+3. First `cargo check --workspace --all-features` pass on real hardware;
    fix whatever it finds. This is the single highest-priority item — the
-   codebase has had five rounds of manual-review-only changes and needs a
+   codebase has had six rounds of manual-review-only changes and needs a
    real compiler pass before further feature work. In particular, verify:
    (a) the `reqwest-errors` feature compiles cleanly both on and off for
    `guardrail-core`, (b) `rust-lang/crates-io-auth-action@v1` is the
@@ -281,7 +397,26 @@ build.
    runs, but this is reasoned from documented Windows file-locking
    semantics, not verified against a real Windows filesystem; the existing
    `ci.yml` test matrix already includes `windows-latest`, so check that
-   job specifically once a toolchain is available.
+   job specifically once a toolchain is available, (e) the new
+   `crates/guardrail-proxy/src/{state,auth,error,handler}.rs` module
+   split — note this **did** widen the public API surface, checked and
+   confirmed deliberately, not accidentally: `auth::is_authorized`,
+   `error::error_response`, `error::error_body_response`,
+   `error::internal_error_response`, and `error::classify_upstream_error`
+   are now `pub` (previously private to the old monolithic `server.rs`,
+   unreachable outside the crate). This was a considered choice — these
+   are well-documented, independently tested, genuinely reusable
+   primitives for anyone embedding `guardrail-proxy` and building custom
+   middleware on top of it, in the spirit of how `tower`/`axum`/`hyper`
+   expose composable pieces rather than one opaque entry point — but it's
+   flagged here so it's reviewed as an intentional API decision before any
+   1.0 release, not rubber-stamped as "just a refactor." `handler` itself
+   stayed `pub(crate)` (none of its functions are reachable externally,
+   by design — `proxy_request`/`forward_to_upstream`/`maybe_redact_response`
+   etc. are all private even within that module). Worth running
+   `cargo public-api diff` (or equivalent) once a toolchain exists to get
+   a complete, mechanical list of every surface change, not just the ones
+   caught by manual review.
 3. Re-verify the rest of spec §16's publication checklist items not yet
    explicitly addressed: `cargo doc --all-features` building without
    warnings (unverified, no toolchain), `cargo publish --dry-run` succeeding
