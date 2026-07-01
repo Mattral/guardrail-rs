@@ -31,7 +31,7 @@ tracing        = { workspace = true }
 tokio          = { workspace = true }
 
 # Optional ONNX deps (behind feature flag)
-ort         = { version = "2", optional = true }
+ort         = { version = "2.0.0-rc.12", optional = true }
 tokenizers  = { version = "0.19", optional = true }
 ndarray     = { version = "0.15", optional = true }
 
