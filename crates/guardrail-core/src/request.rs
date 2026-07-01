@@ -8,7 +8,7 @@ use uuid::Uuid;
 ///
 /// Constructed from a raw HTTP body regardless of provider (OpenAI, Anthropic, etc.).
 /// This is the primary type passed through every pipeline stage.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GuardrailRequest {
     /// Unique ID for this request, generated at ingress.
     pub id: Uuid,
@@ -77,7 +77,7 @@ impl GuardrailRequest {
 }
 
 /// A single message in the conversation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
     /// The role of the message author.
     pub role: Role,
@@ -86,7 +86,7 @@ pub struct ChatMessage {
 }
 
 /// The content of a message — either plain text or a list of content parts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum MessageContent {
     /// Plain text content (most common).
@@ -116,7 +116,7 @@ impl MessageContent {
 }
 
 /// A single content part in a multi-part message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
     /// Plain text part.
@@ -132,7 +132,7 @@ pub enum ContentPart {
 }
 
 /// An image referenced by URL.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImageUrl {
     /// The URL of the image.
     pub url: String,
