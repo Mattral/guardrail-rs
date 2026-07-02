@@ -32,6 +32,7 @@ use guardrail_core::{
     request::GuardrailRequest,
 };
 use serde::Serialize;
+use chrono::{Datelike, Timelike};
 
 /// A structured audit record for a single pipeline decision.
 ///
@@ -242,20 +243,17 @@ fn chrono_timestamp() -> String {
 /// Minimal, allocation-free conversion of UNIX seconds to calendar fields
 /// (Gregorian calendar, UTC). Handles dates from 1970 to ~2200 correctly.
 fn unix_secs_to_datetime(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
-    let sec  = secs % 60;
-    let mins = secs / 60;
-    let min  = mins % 60;
-    let hrs  = mins / 60;
-    let hour = hrs % 24;
-    let days = hrs / 24;
-
-    // Days since 1970-01-01
-    let year = days_to_year(days);
-    let leap = is_leap(year);
-    let day_of_year = days - year_start_day(year);
-    let (month, day) = day_of_year_to_month_day(day_of_year, leap);
-
-    (year, month, day, hour, min, sec)
+    // Use `chrono` for correctness and clarity in date conversion.
+    let ndt = chrono::NaiveDateTime::from_timestamp_opt(secs as i64, 0)
+        .unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp(0, 0));
+    (
+        ndt.date().year() as u64,
+        ndt.date().month() as u64,
+        ndt.date().day() as u64,
+        ndt.time().hour() as u64,
+        ndt.time().minute() as u64,
+        ndt.time().second() as u64,
+    )
 }
 
 fn is_leap(y: u64) -> bool {
@@ -414,11 +412,11 @@ mod tests {
 
     #[test]
     fn test_unix_secs_known_date() {
-        // 2026-06-13T00:00:00Z = 1_781_136_000
+        // 2026-06-11T00:00:00Z = 1_781_136_000
         let (y, mo, d, h, mi, s) = unix_secs_to_datetime(1_781_136_000);
         assert_eq!(y, 2026);
         assert_eq!(mo, 6);
-        assert_eq!(d, 13);
+        assert_eq!(d, 11);
         assert_eq!((h, mi, s), (0, 0, 0));
     }
 }

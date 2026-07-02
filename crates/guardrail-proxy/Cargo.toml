@@ -48,3 +48,4 @@ tokio-stream = { workspace = true }
 wiremock     = "0.6"
 tempfile     = "3"
 tokio-test   = "0.4"
+chrono = { version = "0.4", features = ["alloc"] }
