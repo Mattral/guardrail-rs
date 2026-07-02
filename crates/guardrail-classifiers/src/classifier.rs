@@ -295,7 +295,7 @@ fn run_onnx_binary_classification(
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
 ) -> Result<ClassifierScore, GuardrailError> {
-    use ort::inputs;
+    // inputs macro is referenced fully-qualified as `ort::inputs!` below.
 
     let encoding = tokenizer
         .encode(text, true)
@@ -322,7 +322,7 @@ fn run_onnx_binary_classification(
         })
         .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
-    let (shape, data) = outputs[0]
+    let (_shape, data) = outputs[0]
         .try_extract_tensor::<f32>()
         .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 

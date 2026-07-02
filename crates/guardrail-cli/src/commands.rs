@@ -226,24 +226,18 @@ fn init_tracing(
     };
 
     // Layer 3: OTel OTLP (fatal if endpoint set but broken).
-    let (otel_layer, provider) = {
-        match guardrail_proxy::telemetry::build_otel_layer(observability) {
-            Ok(Some(p)) => {
-                tracing::debug!(endpoint = %observability.otlp_endpoint, "OTel OTLP tracing enabled");
-                // Do not attach OpenTelemetry layer here to avoid complex layer
-                // type constraints; keep provider for graceful shutdown instead.
-                (None, Some(p))
-            }
-            Ok(None) => (None, None),
-            Err(e) => return Err(anyhow::anyhow!("OpenTelemetry init failed: {e}")),
+    let provider = match guardrail_proxy::telemetry::build_otel_layer(observability) {
+        Ok(Some(p)) => {
+            tracing::debug!(endpoint = %observability.otlp_endpoint, "OTel OTLP tracing enabled");
+            Some(p)
         }
+        Ok(None) => None,
+        Err(e) => return Err(anyhow::anyhow!("OpenTelemetry init failed: {e}")),
     };
 
-    match (audit_layer, otel_layer) {
-        (None, None) => tracing_subscriber::registry().with(fmt_layer).init(),
-        (Some(a), None) => tracing_subscriber::registry().with(fmt_layer).with(a).init(),
-        (None, Some(o)) => tracing_subscriber::registry().with(fmt_layer).with(o).init(),
-        (Some(a), Some(o)) => tracing_subscriber::registry().with(fmt_layer).with(a).with(o).init(),
+    match audit_layer {
+        None => tracing_subscriber::registry().with(fmt_layer).init(),
+        Some(a) => tracing_subscriber::registry().with(fmt_layer).with(a).init(),
     }
 
     Ok((guard, provider))
