@@ -267,6 +267,7 @@ mod tests {
     use crate::audit::AuditRecord;
     use guardrail_core::{decision::Decision, test_helpers::clean_request};
     use tracing_subscriber::prelude::*;
+    use tracing_subscriber::filter::filter_fn;
 
     fn temp_config() -> (tempfile::TempDir, AuditLogConfig) {
         let dir = tempfile::tempdir().unwrap();
@@ -278,13 +279,13 @@ mod tests {
     #[test]
     fn test_disabled_returns_none() {
         let config = AuditLogConfig { enabled: false, path: "/tmp/x.ndjson".into(), max_size_mb: 100 };
-        assert!(build_layer::<tracing_subscriber::Registry>(&config).unwrap().is_none());
+        assert!(build_layer(&config).unwrap().is_none());
     }
 
     #[test]
     fn test_builds_with_valid_config() {
         let (_dir, config) = temp_config();
-        assert!(build_layer::<tracing_subscriber::Registry>(&config).unwrap().is_some());
+        assert!(build_layer(&config).unwrap().is_some());
     }
 
     #[test]
@@ -293,7 +294,7 @@ mod tests {
         let path = tmp.path().join("sub").join("dir").join("audit.ndjson")
             .to_string_lossy().into_owned();
         let config = AuditLogConfig { enabled: true, path, max_size_mb: 100 };
-        assert!(build_layer::<tracing_subscriber::Registry>(&config).is_ok());
+        assert!(build_layer(&config).is_ok());
     }
 
     #[test]
@@ -301,8 +302,13 @@ mod tests {
         let (_dir, config) = temp_config();
         let path = config.path.clone();
 
-        let (layer, _guard) = build_layer::<tracing_subscriber::Registry>(&config)
+        let (non_blocking, _guard) = build_layer(&config)
             .unwrap().unwrap();
+        let layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(non_blocking)
+            .with_filter(filter_fn(|meta| meta.target().starts_with(AUDIT_TARGET)));
+
         let subscriber = tracing_subscriber::registry().with(layer);
 
         tracing::subscriber::with_default(subscriber, || {
