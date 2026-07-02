@@ -71,9 +71,8 @@ pub enum OtelError {
 /// use tracing_subscriber::prelude::*;
 ///
 /// let obs = ObservabilityConfig::default();
-/// if let Some((layer, provider)) = telemetry::build_otel_layer::<tracing_subscriber::Registry>(&obs).unwrap() {
-///     tracing_subscriber::registry().with(layer).init();
-///     // on shutdown:
+/// if let Some(provider) = telemetry::build_otel_layer(&obs).unwrap() {
+///     // add your tracing subscriber layer here if desired
 ///     telemetry::shutdown_tracer_provider(provider);
 /// }
 /// ```
