@@ -208,7 +208,7 @@ impl Classifier for RegexBackend {
 #[cfg(feature = "onnx")]
 pub struct OnnxCpuBackend {
     /// Thread-safe ONNX Runtime session.
-    pub session: std::sync::Arc<ort::session::Session>,
+    pub session: std::sync::Arc<std::sync::Mutex<ort::session::Session>>,
     /// HuggingFace tokenizer for pre-processing text inputs.
     pub tokenizer: std::sync::Arc<tokenizers::Tokenizer>,
 }
@@ -231,7 +231,8 @@ impl Classifier for OnnxCpuBackend {
         let tokenizer = self.tokenizer.clone();
 
         tokio::task::spawn_blocking(move || {
-            run_onnx_binary_classification(&session, &tokenizer, &input)
+            let mut s = session.lock().expect("session mutex poisoned");
+            run_onnx_binary_classification(&mut *s, &tokenizer, &input)
         })
         .await
         .map_err(|e| GuardrailError::Internal(e.to_string()))?
@@ -251,7 +252,7 @@ impl Classifier for OnnxCpuBackend {
 #[cfg(feature = "onnx-cuda")]
 pub struct OnnxCudaBackend {
     /// Thread-safe ONNX Runtime session configured for CUDA.
-    pub session: std::sync::Arc<ort::session::Session>,
+    pub session: std::sync::Arc<std::sync::Mutex<ort::session::Session>>,
     /// HuggingFace tokenizer.
     pub tokenizer: std::sync::Arc<tokenizers::Tokenizer>,
 }
@@ -274,7 +275,8 @@ impl Classifier for OnnxCudaBackend {
         let tokenizer = self.tokenizer.clone();
 
         tokio::task::spawn_blocking(move || {
-            run_onnx_binary_classification(&session, &tokenizer, &input)
+            let mut s = session.lock().expect("session mutex poisoned");
+            run_onnx_binary_classification(&mut *s, &tokenizer, &input)
         })
         .await
         .map_err(|e| GuardrailError::Internal(e.to_string()))?
@@ -289,7 +291,7 @@ impl Classifier for OnnxCudaBackend {
 /// Returns a [`ClassifierScore`] with the positive-class probability.
 #[cfg(feature = "onnx")]
 fn run_onnx_binary_classification(
-    session: &ort::session::Session,
+    session: &mut ort::session::Session,
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
 ) -> Result<ClassifierScore, GuardrailError> {
@@ -307,10 +309,6 @@ fn run_onnx_binary_classification(
         .collect();
 
     let len = ids.len();
-    let ids_arr = ndarray::Array2::from_shape_vec((1, len), ids)
-        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-    let mask_arr = ndarray::Array2::from_shape_vec((1, len), mask)
-        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
     let ids_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], ids))
         .map_err(|e| GuardrailError::Internal(e.to_string()))?;

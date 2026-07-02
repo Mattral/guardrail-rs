@@ -33,9 +33,10 @@
 
 use guardrail_config::ObservabilityConfig;
 use opentelemetry::trace::TracerProvider;
-use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
+use opentelemetry_otlp::WithExportConfig;
 
 /// Name used for all guardrail-rs spans in the trace backend.
 pub const TRACER_NAME: &str = "guardrail-rs";
@@ -100,7 +101,7 @@ where
         .map_err(|e| OtelError::ExporterBuild(e.to_string()))?;
 
     let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter)
+        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
         .build();
 
     let tracer = provider.tracer(TRACER_NAME);
