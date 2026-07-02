@@ -208,7 +208,7 @@ impl Classifier for RegexBackend {
 #[cfg(feature = "onnx")]
 pub struct OnnxCpuBackend {
     /// Thread-safe ONNX Runtime session.
-    pub session: std::sync::Arc<ort::Session>,
+    pub session: std::sync::Arc<ort::session::Session>,
     /// HuggingFace tokenizer for pre-processing text inputs.
     pub tokenizer: std::sync::Arc<tokenizers::Tokenizer>,
 }
@@ -251,7 +251,7 @@ impl Classifier for OnnxCpuBackend {
 #[cfg(feature = "onnx-cuda")]
 pub struct OnnxCudaBackend {
     /// Thread-safe ONNX Runtime session configured for CUDA.
-    pub session: std::sync::Arc<ort::Session>,
+    pub session: std::sync::Arc<ort::session::Session>,
     /// HuggingFace tokenizer.
     pub tokenizer: std::sync::Arc<tokenizers::Tokenizer>,
 }
@@ -289,7 +289,7 @@ impl Classifier for OnnxCudaBackend {
 /// Returns a [`ClassifierScore`] with the positive-class probability.
 #[cfg(feature = "onnx")]
 fn run_onnx_binary_classification(
-    session: &ort::Session,
+    session: &ort::session::Session,
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
 ) -> Result<ClassifierScore, GuardrailError> {
@@ -312,21 +312,25 @@ fn run_onnx_binary_classification(
     let mask_arr = ndarray::Array2::from_shape_vec((1, len), mask)
         .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
-    let outputs = session
-        .run(inputs![
-            "input_ids"      => ids_arr.view(),
-            "attention_mask" => mask_arr.view()
-        ]?)
+    let ids_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], ids))
+        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
+    let mask_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], mask))
         .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
-    let logits = outputs[0]
+    let outputs = session
+        .run(ort::inputs! {
+            "input_ids" => ids_tensor,
+            "attention_mask" => mask_tensor
+        })
+        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
+
+    let (shape, data) = outputs[0]
         .try_extract_tensor::<f32>()
         .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-    let logits = logits.view();
 
     // Softmax over 2 classes: index 0 = safe, index 1 = positive (injection/toxic)
-    let exp0 = logits[[0, 0]].exp();
-    let exp1 = logits[[0, 1]].exp();
+    let exp0 = data[0].exp();
+    let exp1 = data[1].exp();
     let positive_score = exp1 / (exp0 + exp1);
 
     let label = if positive_score >= 0.5 { "positive" } else { "safe" }.to_string();
