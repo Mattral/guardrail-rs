@@ -187,9 +187,7 @@ impl Write for SizeRotatingWriter {
         // Rotate first if this write would push us over the threshold and
         // we've already written at least one byte (never rotate an empty
         // file just because a single record is itself huge).
-        if state.current_size > 0
-            && state.current_size + buf.len() as u64 > state.max_size_bytes
-        {
+        if state.current_size > 0 && state.current_size + buf.len() as u64 > state.max_size_bytes {
             state.rotate()?;
         }
 
@@ -259,19 +257,31 @@ mod tests {
     use super::*;
     use crate::audit::AuditRecord;
     use guardrail_core::{decision::Decision, test_helpers::clean_request};
-    use tracing_subscriber::prelude::*;
     use tracing_subscriber::filter::filter_fn;
+    use tracing_subscriber::prelude::*;
 
     fn temp_config() -> (tempfile::TempDir, AuditLogConfig) {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("audit-test.ndjson").to_string_lossy().into_owned();
-        let config = AuditLogConfig { enabled: true, path, max_size_mb: 100 };
+        let path = dir
+            .path()
+            .join("audit-test.ndjson")
+            .to_string_lossy()
+            .into_owned();
+        let config = AuditLogConfig {
+            enabled: true,
+            path,
+            max_size_mb: 100,
+        };
         (dir, config)
     }
 
     #[test]
     fn test_disabled_returns_none() {
-        let config = AuditLogConfig { enabled: false, path: "/tmp/x.ndjson".into(), max_size_mb: 100 };
+        let config = AuditLogConfig {
+            enabled: false,
+            path: "/tmp/x.ndjson".into(),
+            max_size_mb: 100,
+        };
         assert!(build_layer(&config).unwrap().is_none());
     }
 
@@ -284,9 +294,18 @@ mod tests {
     #[test]
     fn test_creates_parent_directory() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("sub").join("dir").join("audit.ndjson")
-            .to_string_lossy().into_owned();
-        let config = AuditLogConfig { enabled: true, path, max_size_mb: 100 };
+        let path = tmp
+            .path()
+            .join("sub")
+            .join("dir")
+            .join("audit.ndjson")
+            .to_string_lossy()
+            .into_owned();
+        let config = AuditLogConfig {
+            enabled: true,
+            path,
+            max_size_mb: 100,
+        };
         assert!(build_layer(&config).is_ok());
     }
 
@@ -295,8 +314,7 @@ mod tests {
         let (_dir, config) = temp_config();
         let path = config.path.clone();
 
-        let (non_blocking, _guard) = build_layer(&config)
-            .unwrap().unwrap();
+        let (non_blocking, _guard) = build_layer(&config).unwrap().unwrap();
         let layer = tracing_subscriber::fmt::layer()
             .json()
             .with_writer(non_blocking)
@@ -343,7 +361,11 @@ mod tests {
         writer.flush().unwrap();
 
         let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
-        assert_eq!(entries.len(), 1, "expected exactly one file, found: {entries:?}");
+        assert_eq!(
+            entries.len(),
+            1,
+            "expected exactly one file, found: {entries:?}"
+        );
 
         let contents = std::fs::read_to_string(&path).unwrap();
         assert_eq!(contents, "a short line\n");
@@ -365,10 +387,16 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
 
-        assert_eq!(entries.len(), 2, "expected original + 1 rotated file, found: {entries:?}");
+        assert_eq!(
+            entries.len(),
+            2,
+            "expected original + 1 rotated file, found: {entries:?}"
+        );
         assert!(entries.iter().any(|n| n == "audit.ndjson"));
         assert!(
-            entries.iter().any(|n| n.starts_with("audit.") && n != "audit.ndjson"),
+            entries
+                .iter()
+                .any(|n| n.starts_with("audit.") && n != "audit.ndjson"),
             "expected a rotated backup file, found: {entries:?}"
         );
 
@@ -391,7 +419,10 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().path())
             .find(|p| {
-                p.file_name().unwrap().to_string_lossy().starts_with("audit.")
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("audit.")
                     && p.file_name().unwrap() != "audit.ndjson"
             })
             .expect("expected a rotated backup file");
@@ -409,11 +440,17 @@ mod tests {
         let path = dir.path().join("audit.ndjson");
 
         let mut writer = SizeRotatingWriter::open(&path, 5).unwrap();
-        writer.write_all(b"this single line is longer than 5 bytes\n").unwrap();
+        writer
+            .write_all(b"this single line is longer than 5 bytes\n")
+            .unwrap();
         writer.flush().unwrap();
 
         let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
-        assert_eq!(entries.len(), 1, "must not rotate an empty file: {entries:?}");
+        assert_eq!(
+            entries.len(),
+            1,
+            "must not rotate an empty file: {entries:?}"
+        );
     }
 
     #[test]

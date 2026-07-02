@@ -32,8 +32,8 @@
 //! emitted regardless of this setting.
 
 use guardrail_config::ObservabilityConfig;
-use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
 
 /// Name used for all guardrail-rs spans in the trace backend.
 pub const TRACER_NAME: &str = "guardrail-rs";
@@ -76,8 +76,9 @@ pub enum OtelError {
 ///     telemetry::shutdown_tracer_provider(provider);
 /// }
 /// ```
-pub fn build_otel_layer(config: &ObservabilityConfig) -> Result<Option<SdkTracerProvider>, OtelError>
-{
+pub fn build_otel_layer(
+    config: &ObservabilityConfig,
+) -> Result<Option<SdkTracerProvider>, OtelError> {
     let endpoint = config.otlp_endpoint.trim();
     if endpoint.is_empty() {
         return Ok(None);

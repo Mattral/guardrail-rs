@@ -175,7 +175,10 @@ mod system_time_serde {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     pub fn serialize<S: Serializer>(t: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
-        let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
+        let secs = t
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
         secs.serialize(s)
     }
 
@@ -213,14 +216,18 @@ mod tests {
     #[test]
     fn test_message_content_as_text_parts() {
         let content = MessageContent::Parts(vec![
-            ContentPart::Text { text: "Hello".into() },
+            ContentPart::Text {
+                text: "Hello".into(),
+            },
             ContentPart::ImageUrl {
                 image_url: ImageUrl {
                     url: "https://example.com/img.png".into(),
                     detail: None,
                 },
             },
-            ContentPart::Text { text: "World".into() },
+            ContentPart::Text {
+                text: "World".into(),
+            },
         ]);
         assert_eq!(content.as_text(), "Hello\nWorld");
     }
