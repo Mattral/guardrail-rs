@@ -39,7 +39,7 @@ repository  = "https://github.com/Mattral/guardrail-rs"
 homepage    = "https://github.com/Mattral/guardrail-rs"
 readme      = "README.md"
 description = "Sub-millisecond LLM security proxy: detect prompt injection, redact PII, and block toxic content. OpenAI-compatible drop-in."
-categories  = ["web-programming", "network-programming", "science::ml"]
+categories  = ["web-programming", "network-programming", "machine-learning"]
 keywords    = ["llm", "security", "proxy", "guardrail", "prompt-injection"]
 
 [workspace.dependencies]
