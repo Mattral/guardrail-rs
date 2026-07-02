@@ -184,7 +184,7 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                         },
                     )?
                 } else {
-                    let bundled = guardrail_classifiers::RegexInjectionScanner::bundled_rule_source();
+                    let bundled = include_str!("injection.rules");
                     let mut bundled_rules = bundled.to_string();
                     for rule in &config.stages.regex_injection.extra_rules {
                         bundled_rules.push('\n');
