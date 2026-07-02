@@ -230,14 +230,10 @@ impl Write for SizeRotatingWriter {
 /// Returns [`AuditLogError::CreateDir`] if the parent directory cannot be
 /// created, or [`AuditLogError::OpenFile`] if the audit log file itself
 /// cannot be opened (e.g. permissions).
-pub fn build_layer<S>(
+pub fn build_layer(
     config: &AuditLogConfig,
-) -> Result<Option<(Box<dyn Layer<S> + Send + Sync + 'static>, WorkerGuard)>, AuditLogError>
+) -> Result<Option<(tracing_appender::non_blocking::NonBlocking, WorkerGuard)>, AuditLogError>
 where
-    S: tracing::Subscriber
-        + for<'a> tracing_subscriber::registry::LookupSpan<'a>
-        + Send
-        + Sync,
 {
     if !config.enabled {
         return Ok(None);
@@ -263,15 +259,7 @@ where
 
     let (non_blocking, guard) = tracing_appender::non_blocking(writer);
 
-    let layer = tracing_subscriber::fmt::layer()
-        .json()
-        .with_span_events(FmtSpan::NONE)
-        .with_target(false)
-        .with_writer(non_blocking)
-        .with_filter(filter_fn(|metadata| metadata.target() == AUDIT_TARGET))
-        .boxed();
-
-    Ok(Some((layer, guard)))
+    Ok(Some((non_blocking, guard)))
 }
 
 #[cfg(test)]
