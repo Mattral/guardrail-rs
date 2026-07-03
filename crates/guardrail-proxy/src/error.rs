@@ -1,7 +1,7 @@
 //! HTTP response and error-construction helpers shared across the request
 //! handler.
 //!
-//! Kept separate from [`crate::handler`] so error-shape concerns (what does
+//! Kept separate from `crate::handler` so error-shape concerns (what does
 //! a 400 vs 403 vs 502 body look like) are reviewable independently of
 //! routing/business logic, and so the body-reading size-limit logic — which
 //! has a non-obvious "did the connection error or did the body exceed the

@@ -29,6 +29,16 @@ at all):
   cargo run --example custom_stage -p guardrail-cli
   ```
 
+## Zero-setup: run it in Colab
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Mattral/guardrail-rs/blob/main/examples/notebooks/quickstart_colab.ipynb)
+
+[`notebooks/quickstart_colab.ipynb`](notebooks/quickstart_colab.ipynb) installs
+Rust, runs `cargo install guardrail-cli` against the real crates.io release,
+and drives the proxy against a local mock upstream (no API key required) to
+demonstrate a clean request, a blocked prompt injection, and PII redaction —
+all in the browser, no local setup.
+
 ## curl
 
 Runnable smoke-test script: [`examples/curl_test.sh`](curl_test.sh)
