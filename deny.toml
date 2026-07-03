@@ -2,6 +2,17 @@
 targets = []
 
 [licenses]
+# cargo-deny fully removed `deny`, `copyleft`, `allow-osi-fsf-free`, and
+# `default` from this section (see the migration note linked from the CI
+# error: https://github.com/EmbarkStudios/cargo-deny/pull/611) — setting any
+# of them is now a hard config-validation error, not just a warning.
+# Behavior-wise this is a no-op for us: "all licenses denied unless
+# explicitly in `allow`" is exactly what our old
+# `copyleft = "deny"` + `allow-osi-fsf-free = "neither"` + `default = "deny"`
+# combination already enforced, and the explicit `deny` list served no
+# purpose under that model even before the removal (anything not in `allow`
+# was already denied). So: just the allow-list and confidence-threshold
+# remain.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -14,17 +25,6 @@ allow = [
     "MPL-2.0",
     "OpenSSL",
 ]
-deny = [
-    "GPL-2.0",
-    "GPL-3.0",
-    "LGPL-2.0",
-    "LGPL-2.1",
-    "LGPL-3.0",
-    "AGPL-3.0",
-]
-copyleft = "deny"
-allow-osi-fsf-free = "neither"
-default = "deny"
 confidence-threshold = 0.8
 
 [bans]
