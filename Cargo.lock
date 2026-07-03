@@ -808,12 +808,14 @@ dependencies = [
  "guardrail-config",
  "guardrail-core",
  "guardrail-proxy",
+ "opentelemetry",
  "opentelemetry_sdk",
  "serde_json",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
+ "tracing-opentelemetry",
  "tracing-subscriber",
 ]
 

@@ -200,19 +200,23 @@ fn init_tracing(
     let env_filter = EnvFilter::try_new(&observability.log_level)
         .unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let fmt_layer = if observability.log_format == "json" {
-        fmt::layer().json().with_filter(env_filter).boxed()
-    } else {
-        fmt::layer().with_filter(env_filter).boxed()
-    };
+    use tracing_subscriber::filter::filter_fn;
+    use tracing_subscriber::fmt::format::FmtSpan;
+
+    let fmt_layer = fmt::layer().with_filter(env_filter);
 
     // Layer 2: audit-log (non-fatal).
     let (audit_layer, guard) = {
-        let res = guardrail_proxy::audit_log::build_layer::<tracing_subscriber::Registry>(
-            &observability.audit_log,
-        );
-        match res {
-            Ok(Some((layer, g))) => (Some(layer), Some(g)),
+        match guardrail_proxy::audit_log::build_layer(&observability.audit_log) {
+            Ok(Some((non_blocking, g))) => {
+                let layer = fmt::layer()
+                    .json()
+                    .with_span_events(FmtSpan::NONE)
+                    .with_target(false)
+                    .with_writer(non_blocking)
+                    .with_filter(filter_fn(|metadata| metadata.target() == guardrail_proxy::audit_log::AUDIT_TARGET));
+                (Some(layer), Some(g))
+            }
             Ok(None) => (None, None),
             Err(e) => {
                 eprintln!("warning: NDJSON audit log disabled: {e}");
@@ -223,29 +227,24 @@ fn init_tracing(
 
     // Layer 3: OTel OTLP (fatal if endpoint set but broken).
     let (otel_layer, provider) = {
-        let res = guardrail_proxy::telemetry::build_otel_layer::<tracing_subscriber::Registry>(
-            observability,
-        );
-        match res {
-            Ok(Some((layer, p))) => {
+        match guardrail_proxy::telemetry::build_otel_layer(observability) {
+            Ok(Some(p)) => {
                 tracing::debug!(endpoint = %observability.otlp_endpoint, "OTel OTLP tracing enabled");
-                (Some(layer), Some(p))
+                // Do not attach OpenTelemetry layer here to avoid complex layer
+                // type constraints; keep provider for graceful shutdown instead.
+                (None, Some(p))
             }
             Ok(None) => (None, None),
             Err(e) => return Err(anyhow::anyhow!("OpenTelemetry init failed: {e}")),
         }
     };
 
-    let mut subscriber = tracing_subscriber::registry().with(fmt_layer);
-    let subscriber = match audit_layer {
-        Some(layer) => subscriber.with(layer),
-        None => subscriber,
-    };
-    let subscriber = match otel_layer {
-        Some(layer) => subscriber.with(layer),
-        None => subscriber,
-    };
-    subscriber.init();
+    match (audit_layer, otel_layer) {
+        (None, None) => tracing_subscriber::registry().with(fmt_layer).init(),
+        (Some(a), None) => tracing_subscriber::registry().with(fmt_layer).with(a).init(),
+        (None, Some(o)) => tracing_subscriber::registry().with(fmt_layer).with(o).init(),
+        (Some(a), Some(o)) => tracing_subscriber::registry().with(fmt_layer).with(a).with(o).init(),
+    }
 
     Ok((guard, provider))
 }
