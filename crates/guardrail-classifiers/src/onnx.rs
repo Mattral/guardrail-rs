@@ -33,7 +33,7 @@ use std::sync::Arc;
 ///
 /// Requires the `onnx` feature flag.
 pub struct OnnxInjectionClassifier {
-    session: Arc<ort::session::Session>,
+    session: Arc<std::sync::Mutex<ort::session::Session>>,
     tokenizer: Arc<tokenizers::Tokenizer>,
     /// Decision threshold: inputs scoring above this are blocked. Default: 0.85.
     threshold: f32,
@@ -85,7 +85,7 @@ impl OnnxInjectionClassifier {
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
         Ok(Self {
-            session: Arc::new(session),
+            session: Arc::new(std::sync::Mutex::new(session)),
             tokenizer: Arc::new(tokenizer),
             threshold,
         })
@@ -110,18 +110,14 @@ impl OnnxInjectionClassifier {
             .collect();
 
         let len = ids.len();
-        let ids_array = ndarray::Array2::from_shape_vec((1, len), ids)
-            .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-        let mask_array = ndarray::Array2::from_shape_vec((1, len), mask)
-            .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
         let ids_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], ids))
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
         let mask_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], mask))
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
-        let outputs = self
-            .session
+        let mut s = self.session.lock().expect("session mutex poisoned");
+        let outputs = s
             .run(ort::inputs! {
                 "input_ids" => ids_tensor,
                 "attention_mask" => mask_tensor
@@ -199,7 +195,7 @@ impl Stage for OnnxInjectionClassifier {
 ///
 /// Requires the `onnx` feature flag.
 pub struct ToxicityClassifier {
-    session: Arc<ort::session::Session>,
+    session: Arc<std::sync::Mutex<ort::session::Session>>,
     tokenizer: Arc<tokenizers::Tokenizer>,
     /// Decision threshold. Default: 0.90.
     threshold: f32,
@@ -236,7 +232,7 @@ impl ToxicityClassifier {
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
         Ok(Self {
-            session: Arc::new(session),
+            session: Arc::new(std::sync::Mutex::new(session)),
             tokenizer: Arc::new(tokenizer),
             threshold,
         })
@@ -258,19 +254,14 @@ impl ToxicityClassifier {
             .collect();
 
         let len = ids.len();
-        let ids_array = ndarray::Array2::from_shape_vec((1, len), ids)
-            .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-        let mask_array = ndarray::Array2::from_shape_vec((1, len), mask)
-            .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-
 
         let ids_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], ids))
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
         let mask_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], mask))
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
-        let outputs = self
-            .session
+        let mut s = self.session.lock().expect("session mutex poisoned");
+        let outputs = s
             .run(ort::inputs! {
                 "input_ids" => ids_tensor,
                 "attention_mask" => mask_tensor

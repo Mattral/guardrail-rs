@@ -97,10 +97,10 @@ fn validate(config_path: std::path::PathBuf) -> anyhow::Result<()> {
                 "  audit_log:            {}",
                 if config.observability.audit_log.enabled {
                     format!(
-                        "enabled → {}/{}.* ({})",
-                        config.observability.audit_log.path,
-                        config.observability.audit_log.max_size_mb,
-                    )
+                            "enabled → {}/{}",
+                            config.observability.audit_log.path,
+                            config.observability.audit_log.max_size_mb,
+                        )
                 } else {
                     "disabled".to_string()
                 }
@@ -190,7 +190,7 @@ fn init_tracing(
     observability: &guardrail_config::ObservabilityConfig,
 ) -> anyhow::Result<(
     Option<tracing_appender::non_blocking::WorkerGuard>,
-    Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+    Option<opentelemetry_sdk::trace::TracerProvider>,
 )> {
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
@@ -236,11 +236,16 @@ fn init_tracing(
         }
     };
 
-    tracing_subscriber::registry()
-        .with(fmt_layer)
-        .with(audit_layer)
-        .with(otel_layer)
-        .init();
+    let mut subscriber = tracing_subscriber::registry().with(fmt_layer);
+    let subscriber = match audit_layer {
+        Some(layer) => subscriber.with(layer),
+        None => subscriber,
+    };
+    let subscriber = match otel_layer {
+        Some(layer) => subscriber.with(layer),
+        None => subscriber,
+    };
+    subscriber.init();
 
     Ok((guard, provider))
 }
