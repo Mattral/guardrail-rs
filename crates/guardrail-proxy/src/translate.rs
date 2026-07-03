@@ -387,4 +387,118 @@ mod tests {
         let result = parse_request(body, Provider::OpenAI);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_tool_and_function_roles_map_to_tool() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "tool", "content": "tool output"},
+                {"role": "function", "content": "function output"}
+            ]
+        }"#;
+        let req = parse_request(body, Provider::OpenAI).unwrap();
+        assert_eq!(req.messages[0].role, Role::Tool);
+        assert_eq!(req.messages[1].role, Role::Tool);
+    }
+
+    #[test]
+    fn test_messages_not_array_errors() {
+        let body = br#"{"model": "gpt-4o", "messages": "not-an-array"}"#;
+        let result = parse_request(body, Provider::OpenAI);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_message_missing_role_errors() {
+        let body = br#"{"model": "gpt-4o", "messages": [{"content": "Hi"}]}"#;
+        let result = parse_request(body, Provider::OpenAI);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_message_missing_content_errors() {
+        let body = br#"{"model": "gpt-4o", "messages": [{"role": "user"}]}"#;
+        let result = parse_request(body, Provider::OpenAI);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_null_content_becomes_empty_text() {
+        let body = br#"{"model": "gpt-4o", "messages": [{"role": "user", "content": null}]}"#;
+        let req = parse_request(body, Provider::OpenAI).unwrap();
+        assert_eq!(req.messages[0].content.as_text(), "");
+    }
+
+    #[test]
+    fn test_content_wrong_json_type_errors() {
+        let body = br#"{"model": "gpt-4o", "messages": [{"role": "user", "content": 42}]}"#;
+        let result = parse_request(body, Provider::OpenAI);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_content_part_unsupported_type_errors() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": [{"type": "video", "video": "x"}]}]
+        }"#;
+        let result = parse_request(body, Provider::OpenAI);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_content_part_image_type_becomes_empty_text_placeholder() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "data": "..."}}
+            ]}]
+        }"#;
+        let req = parse_request(body, Provider::OpenAI).unwrap();
+        assert_eq!(req.messages[0].content.as_text(), "");
+    }
+
+    #[test]
+    fn test_serialize_request_with_image_url_parts_roundtrip() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/a.png", "detail": "low"}}
+            ]}]
+        }"#;
+        let req = parse_request(body, Provider::OpenAI).unwrap();
+        let out = serialize_request(&req).unwrap();
+
+        let parts = out["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "look at this");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "https://example.com/a.png");
+        assert_eq!(parts[1]["image_url"]["detail"], "low");
+    }
+
+    #[test]
+    fn test_serialize_request_all_roles() {
+        let body = br#"{
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "usr"},
+                {"role": "assistant", "content": "asst"},
+                {"role": "tool", "content": "tool"}
+            ]
+        }"#;
+        let req = parse_request(body, Provider::OpenAI).unwrap();
+        let out = serialize_request(&req).unwrap();
+
+        let roles: Vec<&str> = out["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, vec!["system", "user", "assistant", "tool"]);
+    }
 }
