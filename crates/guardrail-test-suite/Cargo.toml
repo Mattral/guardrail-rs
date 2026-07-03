@@ -3,15 +3,16 @@ name        = "guardrail-test-suite"
 description = "End-to-end integration tests for guardrail-rs (not published)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish     = false
 
 [dependencies]
 
 [dev-dependencies]
-guardrail-core        = { path = "../guardrail-core", version = "0.1.0" }
-guardrail-config      = { path = "../guardrail-config", version = "0.1.0" }
-guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.0" }
-guardrail-proxy       = { path = "../guardrail-proxy", version = "0.1.0" }
+guardrail-core        = { path = "../guardrail-core", version = "0.1.1" }
+guardrail-config      = { path = "../guardrail-config", version = "0.1.1" }
+guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.1" }
+guardrail-proxy       = { path = "../guardrail-proxy", version = "0.1.1" }
 
 tokio      = { workspace = true }
 reqwest    = { workspace = true }

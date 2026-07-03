@@ -3,6 +3,7 @@ name        = "guardrail-proxy"
 description = "HTTP reverse-proxy server for guardrail-rs"
 version.workspace     = true
 edition.workspace     = true
+rust-version.workspace     = true
 authors.workspace     = true
 license.workspace     = true
 repository.workspace  = true
@@ -16,9 +17,9 @@ default = []
 onnx = ["guardrail-config/onnx", "guardrail-classifiers/onnx"]
 
 [dependencies]
-guardrail-core        = { path = "../guardrail-core", version = "0.1.0", features = ["reqwest-errors"] }
-guardrail-config      = { path = "../guardrail-config", version = "0.1.0" }
-guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.0" }
+guardrail-core        = { path = "../guardrail-core", version = "0.1.1", features = ["reqwest-errors"] }
+guardrail-config      = { path = "../guardrail-config", version = "0.1.1" }
+guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.1" }
 
 tokio          = { workspace = true }
 hyper          = { workspace = true }
