@@ -1,5 +1,11 @@
 # guardrail-rs
 
+[![CI](https://github.com/Mattral/guardrail-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattral/guardrail-rs/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/guardrail-cli.svg)](https://crates.io/crates/guardrail-cli)
+[![docs.rs](https://img.shields.io/docsrs/guardrail-core)](https://docs.rs/guardrail-core)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Rust 1.75+](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](rust-toolchain.toml)
+
 **A zero-Python, production-grade LLM security layer written in Rust.**
 
 `guardrail-rs` is a reverse-proxy that sits between your application and an
@@ -8,17 +14,58 @@ endpoint). It inspects every chat-completion request before it leaves your
 infrastructure, blocking prompt injection attempts, redacting PII, and
 enforcing custom policy rules — all with single-digit-millisecond overhead.
 
-```text
-┌──────────┐     ┌──────────────────┐     ┌────────────┐     ┌───────────────┐
-│  Your    │ ──▶│   guardrail-rs   │ ──▶ │  Pipeline  │ ──▶│   OpenAI /    │
-│  App     │     │  (drop-in proxy) │     │  (Stages)  │     │  Anthropic /… │
-└──────────┘     └──────────────────┘     └────────────┘     └───────────────┘
-                          │
-                          ▼
-                   403 + JSON error
-                  (blocked requests
-                   never leave your
-                      network)
+## Installation
+
+```bash
+cargo install guardrail-cli
+```
+
+This builds and installs the `guardrail` binary from
+[crates.io](https://crates.io/crates/guardrail-cli) (Rust 1.75+ required).
+Every crate in this workspace — [`guardrail-core`](https://crates.io/crates/guardrail-core),
+[`guardrail-classifiers`](https://crates.io/crates/guardrail-classifiers),
+[`guardrail-config`](https://crates.io/crates/guardrail-config),
+[`guardrail-proxy`](https://crates.io/crates/guardrail-proxy), and
+[`guardrail-cli`](https://crates.io/crates/guardrail-cli) — is published
+independently, so you can also depend on just `guardrail-core` to embed the
+pipeline in your own Rust application with no HTTP server at all.
+
+**Alternatives:**
+
+```bash
+# Docker (build locally from the Dockerfile in this repo)
+docker build -t guardrail-rs .
+docker run -p 8080:8080 -v $(pwd)/guardrail.toml:/etc/guardrail/guardrail.toml guardrail-rs
+
+# ...or the full local stack (guardrail + Ollama + Prometheus + Grafana):
+docker compose up -d
+
+# Build from source
+git clone https://github.com/Mattral/guardrail-rs.git && cd guardrail-rs
+cargo install just  # one-time
+just build
+```
+
+Want to try it in a couple of minutes with zero local setup? See
+[Try it in Colab](#try-it-in-colab) below — it installs Rust, runs
+`cargo install guardrail-cli` against the real crates.io release, and
+walks through blocking a prompt injection and redacting PII live.
+
+## At a glance
+
+| | |
+|---|---|
+| **Threat model scope** | Prompt injection, PII leakage (in + out), toxic content, custom policy violations. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
+| **Latency** | Regex + PII pipeline: low tens of microseconds per request. Full pipeline with ONNX classifiers: single-digit milliseconds. These are the project's design targets — see [`docs/benchmarks.md`](docs/benchmarks.md) for methodology and CI-enforced latency gates. |
+| **Fails open** | A misbehaving stage (e.g. a corrupt ONNX model file) never takes down production traffic by default; configurable per-stage via `on_error = "allow" \| "block"`. |
+| **Observability** | Prometheus metrics at `:9090/metrics`, OpenTelemetry traces (OTLP), and an NDJSON audit log — which never contains message content or API keys, only decision metadata. |
+
+```mermaid
+flowchart LR
+    A["Your app<br/>(OpenAI/Anthropic SDK)"] -->|"POST /v1/chat/completions"| B["guardrail-rs<br/>(drop-in proxy)"]
+    B --> C{{"Pipeline<br/>(stages)"}}
+    C -->|"allow / redact"| D["Upstream LLM<br/>OpenAI · Anthropic · Azure · …"]
+    C -->|"block"| E["403 + JSON error<br/>(never leaves your network)"]
 ```
 
 ## Why guardrail-rs?
@@ -39,18 +86,20 @@ enforcing custom policy rules — all with single-digit-millisecond overhead.
 
 ## Quick start
 
+Once installed (see [Installation](#installation) above):
+
 ```bash
 # 1. Copy and edit the example configuration
 cp guardrail.example.toml guardrail.toml
 # edit guardrail.toml: set [upstream].url
 
 # 2. Validate the configuration
-just validate
-# or: cargo run -p guardrail-cli -- validate --config guardrail.toml
+guardrail validate --config guardrail.toml
+# (from source: just validate / cargo run -p guardrail-cli -- validate --config guardrail.toml)
 
 # 3. Run the proxy
-just run
-# or: cargo run -p guardrail-cli -- run --config guardrail.toml
+guardrail run --config guardrail.toml
+# (from source: just run / cargo run -p guardrail-cli -- run --config guardrail.toml)
 ```
 
 Then point your application at `http://localhost:8080` instead of
@@ -132,6 +181,24 @@ guardrail-rs as a library with no HTTP server at all:
 ```bash
 cargo run --example minimal -p guardrail-cli
 ```
+
+### Try it in Colab
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Mattral/guardrail-rs/blob/main/examples/notebooks/quickstart_colab.ipynb)
+
+No local setup required. The notebook installs Rust, runs
+`cargo install guardrail-cli` against the real published crate on
+crates.io, starts the proxy against a small local mock upstream (no API
+key needed), and then sends three requests to show:
+
+1. A clean request passing through untouched.
+2. A prompt-injection attempt getting blocked with a `403` and the
+   `prompt_injection` error code.
+3. A message containing an email address getting redacted to `[EMAIL]`
+   before it ever reaches the (mock) upstream.
+
+First run takes a few minutes while Rust compiles the crate — that's the
+cost of testing the real crates.io artifact rather than a pre-built binary.
 
 ## Project layout
 
