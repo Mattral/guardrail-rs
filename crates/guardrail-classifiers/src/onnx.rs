@@ -33,7 +33,7 @@ use std::sync::Arc;
 ///
 /// Requires the `onnx` feature flag.
 pub struct OnnxInjectionClassifier {
-    session: Arc<ort::Session>,
+    session: Arc<ort::session::Session>,
     tokenizer: Arc<tokenizers::Tokenizer>,
     /// Decision threshold: inputs scoring above this are blocked. Default: 0.85.
     threshold: f32,
@@ -73,7 +73,8 @@ impl OnnxInjectionClassifier {
         tokenizer_path: impl AsRef<Path>,
         threshold: f32,
     ) -> Result<Self, GuardrailError> {
-        let session = ort::Session::builder()
+        use ort::session::Session;
+        let session = ort::session::Session::builder()
             .map_err(|e| GuardrailError::Internal(e.to_string()))?
             .with_intra_threads(1)
             .map_err(|e| GuardrailError::Internal(e.to_string()))?
@@ -114,23 +115,27 @@ impl OnnxInjectionClassifier {
         let mask_array = ndarray::Array2::from_shape_vec((1, len), mask)
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
+        let ids_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], ids))
+            .map_err(|e| GuardrailError::Internal(e.to_string()))?;
+        let mask_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], mask))
+            .map_err(|e| GuardrailError::Internal(e.to_string()))?;
+
         let outputs = self
             .session
-            .run(inputs![
-                "input_ids" => ids_array.view(),
-                "attention_mask" => mask_array.view()
-            ]?)
+            .run(ort::inputs! {
+                "input_ids" => ids_tensor,
+                "attention_mask" => mask_tensor
+            })
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
         // Output shape: [1, 2] — logits for [SAFE, INJECTION]
-        let logits = outputs[0]
+        let (_shape, data) = outputs[0]
             .try_extract_tensor::<f32>()
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-        let logits = logits.view();
 
         // Softmax over the two classes
-        let exp0 = logits[[0, 0]].exp();
-        let exp1 = logits[[0, 1]].exp();
+        let exp0 = data[0].exp();
+        let exp1 = data[1].exp();
         let injection_score = exp1 / (exp0 + exp1);
 
         Ok(injection_score)
@@ -194,7 +199,7 @@ impl Stage for OnnxInjectionClassifier {
 ///
 /// Requires the `onnx` feature flag.
 pub struct ToxicityClassifier {
-    session: Arc<ort::Session>,
+    session: Arc<ort::session::Session>,
     tokenizer: Arc<tokenizers::Tokenizer>,
     /// Decision threshold. Default: 0.90.
     threshold: f32,
@@ -219,7 +224,8 @@ impl ToxicityClassifier {
         tokenizer_path: impl AsRef<Path>,
         threshold: f32,
     ) -> Result<Self, GuardrailError> {
-        let session = ort::Session::builder()
+        use ort::session::Session;
+        let session = ort::session::Session::builder()
             .map_err(|e| GuardrailError::Internal(e.to_string()))?
             .with_intra_threads(1)
             .map_err(|e| GuardrailError::Internal(e.to_string()))?
@@ -257,21 +263,26 @@ impl ToxicityClassifier {
         let mask_array = ndarray::Array2::from_shape_vec((1, len), mask)
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
+
+        let ids_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], ids))
+            .map_err(|e| GuardrailError::Internal(e.to_string()))?;
+        let mask_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], mask))
+            .map_err(|e| GuardrailError::Internal(e.to_string()))?;
+
         let outputs = self
             .session
-            .run(inputs![
-                "input_ids" => ids_array.view(),
-                "attention_mask" => mask_array.view()
-            ]?)
+            .run(ort::inputs! {
+                "input_ids" => ids_tensor,
+                "attention_mask" => mask_tensor
+            })
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
 
-        let logits = outputs[0]
+        let (_shape, data) = outputs[0]
             .try_extract_tensor::<f32>()
             .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-        let logits = logits.view();
 
-        let exp0 = logits[[0, 0]].exp();
-        let exp1 = logits[[0, 1]].exp();
+        let exp0 = data[0].exp();
+        let exp1 = data[1].exp();
         Ok(exp1 / (exp0 + exp1))
     }
 }

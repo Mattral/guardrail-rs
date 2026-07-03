@@ -273,9 +273,9 @@ impl PiiRedactor {
                     let matched = caps.get(0).map_or("", |m| m.as_str());
                     let digits_only: String = matched.chars().filter(|c| c.is_ascii_digit()).collect();
                     if luhn_valid(&digits_only) {
-                        entry.replacement.as_str()
+                        entry.replacement.clone()
                     } else {
-                        matched
+                        matched.to_string()
                     }
                 });
                 result = Cow::Owned(replaced.into_owned());
