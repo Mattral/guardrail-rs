@@ -339,7 +339,7 @@ fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoad
 /// # Errors
 ///
 /// Returns [`ConfigLoadError::StageBuild`] under the same conditions as
-/// [`build_pii_redactor`].
+/// `build_pii_redactor`.
 ///
 /// # Examples
 ///
@@ -738,5 +738,53 @@ message = "Not permitted."
         let result = load_config(f.path());
         std::env::remove_var("GUARDRAIL_PORT");
         assert_eq!(result.unwrap().server.port, 8080);
+    }
+
+    /// `injection.rules` here and `guardrail-classifiers/src/rules/injection.rules`
+    /// are two physically separate files that are supposed to define the
+    /// *same* default rule set (see the module comment atop this crate's
+    /// own `injection.rules` for why they aren't shared via a single file).
+    /// They drifted silently once already — this test, plus the
+    /// `injection-rules-sync` CI job, are the two independent guards
+    /// against it happening again.
+    ///
+    /// Deliberately reads both files at runtime via `CARGO_MANIFEST_DIR`
+    /// rather than `include_str!`: the sibling crate's file lives outside
+    /// this crate's own package directory, so it won't exist if this crate
+    /// is ever built in isolation (e.g. from an extracted `cargo package`
+    /// tarball) — a scenario where `include_str!` would be a hard compile
+    /// error. This test instead skips itself in that case; the workspace
+    /// checkout used by `just test` / CI always has both files, so the
+    /// check still runs everywhere it matters.
+    #[test]
+    fn bundled_injection_rules_match_guardrail_classifiers_copy() {
+        let config_copy = include_str!("injection.rules");
+
+        let classifiers_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../guardrail-classifiers/src/rules/injection.rules");
+        let Ok(classifiers_copy) = std::fs::read_to_string(&classifiers_path) else {
+            eprintln!(
+                "skipping: {} not present (expected when this crate is built \
+                 outside the guardrail-rs workspace checkout)",
+                classifiers_path.display()
+            );
+            return;
+        };
+
+        let strip_noise = |s: &str| -> Vec<&str> {
+            s.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .collect()
+        };
+
+        assert_eq!(
+            strip_noise(config_copy),
+            strip_noise(&classifiers_copy),
+            "guardrail-config/src/injection.rules and \
+             guardrail-classifiers/src/rules/injection.rules have diverged — \
+             update whichever one is stale so both crates ship the same \
+             default prompt-injection rule set"
+        );
     }
 }
