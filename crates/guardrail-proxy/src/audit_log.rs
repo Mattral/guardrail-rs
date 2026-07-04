@@ -38,9 +38,8 @@ use std::sync::Mutex;
 
 use guardrail_config::schema::AuditLogConfig;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::filter::filter_fn;
-use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::Layer;
+// filter_fn/FmtSpan are composed by callers when constructing concrete
+// `fmt` layers; this module only builds the writer+guard pair.
 
 /// The tracing target audit records are emitted under.
 pub const AUDIT_TARGET: &str = "guardrail::audit";

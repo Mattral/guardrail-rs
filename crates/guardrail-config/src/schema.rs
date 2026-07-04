@@ -60,7 +60,6 @@
 //! max_size_mb = 100
 //! ```
 
-use std::collections::HashMap;
 use serde::Deserialize;
 
 // ── Top-level ─────────────────────────────────────────────────────────────────

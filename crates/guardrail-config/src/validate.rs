@@ -1,6 +1,6 @@
 //! Configuration validation — semantic checks beyond what `serde` can express.
 
-use crate::schema::{Config, PolicyConditionConfig, StageAction};
+use crate::schema::Config;
 
 /// Validate a [`Config`] for internal consistency.
 ///
@@ -104,7 +104,7 @@ pub fn validate_config(config: &Config) -> Vec<String> {
     }
 
     // ── ONNX stages ───────────────────────────────────────────────────────
-    for (stage_name, enabled, model_path, tokenizer_path, threshold) in [
+    for (stage_name, enabled, model_path, _tokenizer_path, threshold) in [
         (
             "onnx_injection",
             config.stages.onnx_injection.enabled,
