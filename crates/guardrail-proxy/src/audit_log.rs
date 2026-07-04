@@ -194,10 +194,7 @@ impl Write for SizeRotatingWriter {
         }
 
         let file = state.file.as_mut().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "audit log file handle unexpectedly absent after rotation",
-            )
+            io::Error::other("audit log file handle unexpectedly absent after rotation")
         })?;
         let written = file.write(buf)?;
         state.current_size += written as u64;

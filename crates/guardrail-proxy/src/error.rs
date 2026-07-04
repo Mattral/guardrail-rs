@@ -82,7 +82,8 @@ pub fn internal_error_response() -> Response<Full<Bytes>> {
 }
 
 /// Why reading the request body failed.
-pub(crate) enum BodyReadError {
+#[derive(Debug)]
+pub enum BodyReadError {
     /// The body exceeded `server.max_body_size_bytes`.
     TooLarge,
     /// A transport-level error occurred while reading.
@@ -103,7 +104,7 @@ pub(crate) enum BodyReadError {
 /// # async fn example(body: hyper::body::Incoming) {
 /// match read_limited_body(body, 1024).await {
 ///     Ok(bytes) => { /* use bytes */ }
-///     Err(_) => { /* too large or I/O error */ }
+///     Err(err) => { let _ = err; /* too large or I/O error */ }
 /// }
 /// # }
 /// ```
