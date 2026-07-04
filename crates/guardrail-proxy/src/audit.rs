@@ -243,54 +243,17 @@ fn chrono_timestamp() -> String {
 /// Minimal, allocation-free conversion of UNIX seconds to calendar fields
 /// (Gregorian calendar, UTC). Handles dates from 1970 to ~2200 correctly.
 fn unix_secs_to_datetime(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
-    // Use `chrono` for correctness and clarity in date conversion.
-    let ndt = chrono::NaiveDateTime::from_timestamp_opt(secs as i64, 0)
-        .unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp(0, 0));
+    let dt = chrono::DateTime::from_timestamp(secs as i64, 0)
+        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
+    let dt = dt.naive_utc();
     (
-        ndt.date().year() as u64,
-        ndt.date().month() as u64,
-        ndt.date().day() as u64,
-        ndt.time().hour() as u64,
-        ndt.time().minute() as u64,
-        ndt.time().second() as u64,
+        dt.year() as u64,
+        dt.month() as u64,
+        dt.day() as u64,
+        dt.hour() as u64,
+        dt.minute() as u64,
+        dt.second() as u64,
     )
-}
-
-fn is_leap(y: u64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-}
-
-fn year_start_day(y: u64) -> u64 {
-    let y = y - 1970;
-    y * 365 + y / 4 - y / 100 + y / 400
-}
-
-fn days_to_year(days: u64) -> u64 {
-    // Approximate, then adjust.
-    let mut y = 1970 + days / 365;
-    while year_start_day(y + 1) <= days {
-        y += 1;
-    }
-    while year_start_day(y) > days {
-        y -= 1;
-    }
-    y
-}
-
-fn day_of_year_to_month_day(doy: u64, leap: bool) -> (u64, u64) {
-    let days_in = if leap {
-        [31u64, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31u64, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut remaining = doy;
-    for (i, &d) in days_in.iter().enumerate() {
-        if remaining < d {
-            return ((i + 1) as u64, remaining + 1);
-        }
-        remaining -= d;
-    }
-    (12, 31) // fallback (should not reach)
 }
 
 #[cfg(test)]

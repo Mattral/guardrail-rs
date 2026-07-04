@@ -478,6 +478,19 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
+        let client = reqwest::Client::new();
+        let _ = client
+            .post(format!("http://{addr}/v1/chat/completions"))
+            .json(&serde_json::json!({
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "user", "content": "Hello there"}
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+
         let resp = reqwest::get(format!("http://{addr}/metrics")).await.unwrap();
         assert_eq!(resp.status(), 200);
         let body = resp.text().await.unwrap();
