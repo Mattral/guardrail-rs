@@ -170,7 +170,7 @@ fn default_connect_timeout() -> u64 { 10 }
 ///
 /// This is separate from the upstream API key; `guardrail-rs` never inspects,
 /// stores, or modifies the upstream `Authorization` header.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct AuthConfig {
     /// Whether to require callers to present a guardrail API key.
     /// Default: `false`.
@@ -180,15 +180,6 @@ pub struct AuthConfig {
     /// If `require_key = true` and this list is empty, all requests are rejected.
     #[serde(default)]
     pub keys: Vec<String>,
-}
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            require_key: false,
-            keys: Vec::new(),
-        }
-    }
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────

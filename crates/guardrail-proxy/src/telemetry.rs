@@ -105,8 +105,8 @@ pub fn build_otel_layer(config: &ObservabilityConfig) -> Result<Option<SdkTracer
 ///
 /// ```rust,no_run
 /// use guardrail_proxy::telemetry;
-/// # use opentelemetry_sdk::trace::SdkTracerProvider;
-/// # let provider: SdkTracerProvider = todo!();
+/// # use opentelemetry_sdk::trace::TracerProvider;
+/// # let provider: TracerProvider = todo!();
 /// telemetry::shutdown_tracer_provider(provider);
 /// ```
 pub fn shutdown_tracer_provider(provider: SdkTracerProvider) {

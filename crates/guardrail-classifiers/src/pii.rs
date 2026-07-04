@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn test_default_redactor_compiles() {
         let r = PiiRedactor::default();
-        assert!(r.patterns.len() > 0);
+        assert!(!r.patterns.is_empty());
     }
 
     // ── Email ────────────────────────────────────────────────────────────────

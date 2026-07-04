@@ -114,7 +114,7 @@ pub const STRIPPED_RESPONSE_HEADERS: &[&str] =
 mod tests {
     use super::*;
     use guardrail_core::test_helpers::clean_request;
-    use wiremock::matchers::{body_json_string, method, path};
+    use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
