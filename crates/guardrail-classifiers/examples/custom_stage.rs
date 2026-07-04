@@ -139,7 +139,7 @@ async fn main() {
                 "allow  — text: {:?}",
                 &final_req.user_text()[..final_req.user_text().len().min(50)]
             ),
-            Decision::Redact { reason, mutated } => format!(
+            Decision::Redact { reason, mutated, .. } => format!(
                 "redact — {reason} | sanitized: {:?}",
                 &mutated.user_text()[..mutated.user_text().len().min(50)]
             ),
