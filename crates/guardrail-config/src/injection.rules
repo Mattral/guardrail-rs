@@ -1,0 +1,8 @@
+# Bundled default rules for regex-based injection detection.
+# Keep this file in sync with crates/guardrail-classifiers/src/rules/injection.rules.
+(?i)ignore(?:\s+all)?\s+previous\s+(?:instructions|prompts?)
+(?i)act\s+as\s+(?:an?|the)\s+(?:admin|system|developer)
+(?i)system\s*:\s*\s*you\s+are\s+now
+(?i)developer\s*:\s*\s*ignore
+(?i)jailbreak
+(?i)prompt\s+injection
