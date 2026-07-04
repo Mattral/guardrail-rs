@@ -5,7 +5,7 @@
 # ── Jailbreak / role-override ────────────────────────────────────────────────
 (?i)ignore\s+(all\s+)?previous\s+instructions?
 (?i)disregard\s+(all\s+)?previous\s+(instructions?|prompts?|constraints?)
-(?i)forget\s+(all\s+)?previous\s+instructions?
+(?i)forget\s+(all\s+)?(your\s+)?previous\s+instructions?
 (?i)override\s+(your\s+)?(previous\s+)?(instructions?|programming|directives?)
 (?i)you\s+are\s+now\s+(a\s+)?(?:DAN|jailbroken|unrestricted|uncensored)
 (?i)act\s+as\s+if\s+you\s+(have\s+no\s+restrictions?|were\s+trained\s+differently)
