@@ -73,7 +73,7 @@ impl OnnxInjectionClassifier {
         tokenizer_path: impl AsRef<Path>,
         threshold: f32,
     ) -> Result<Self, GuardrailError> {
-        use ort::session::Session;
+        // fully-qualify ort types below; no local import needed
         let session = ort::session::Session::builder()
             .map_err(|e| GuardrailError::Internal(e.to_string()))?
             .with_intra_threads(1)
@@ -95,7 +95,7 @@ impl OnnxInjectionClassifier {
     ///
     /// Called inside `spawn_blocking` by [`Stage::evaluate`].
     fn infer_sync(&self, text: &str) -> Result<f32, GuardrailError> {
-        use ort::inputs;
+        // reference ort::inputs! macro fully-qualified below
 
         let encoding = self
             .tokenizer
@@ -220,7 +220,7 @@ impl ToxicityClassifier {
         tokenizer_path: impl AsRef<Path>,
         threshold: f32,
     ) -> Result<Self, GuardrailError> {
-        use ort::session::Session;
+        // fully-qualify ort types below; no local import needed
         let session = ort::session::Session::builder()
             .map_err(|e| GuardrailError::Internal(e.to_string()))?
             .with_intra_threads(1)
@@ -239,7 +239,7 @@ impl ToxicityClassifier {
     }
 
     fn infer_sync(&self, text: &str) -> Result<f32, GuardrailError> {
-        use ort::inputs;
+        // reference ort::inputs! macro fully-qualified below
 
         let encoding = self
             .tokenizer
