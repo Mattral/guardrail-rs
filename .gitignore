@@ -1,0 +1,32 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+*.pdb
+
+# Local configuration (don't commit real upstream URLs/secrets)
+guardrail.toml
+*.local.toml
+
+# Audit log output (NDJSON, plus rotated <path>.<unix_timestamp> backups)
+guardrail-audit.ndjson*
+audit-logs/
+
+# ONNX model artifacts (large binary files)
+/models/**
+!/models/README.md
+!/models/export_models.sh
+*.onnx
+tokenizer.json
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Criterion benchmark output
+/target/criterion/
+
+# Coverage
+*.profraw
+lcov.info

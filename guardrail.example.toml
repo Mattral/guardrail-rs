@@ -1,0 +1,162 @@
+# guardrail-rs example configuration
+#
+# Copy this file to `guardrail.toml` and edit `[upstream].url` at minimum.
+# Run `guardrail validate --config guardrail.toml` after any change.
+
+# ── Server ─────────────────────────────────────────────────────────────────────
+[server]
+host = "0.0.0.0"
+port = 8080
+
+# Number of Tokio worker threads. 0 = number of logical CPUs.
+workers = 0
+
+# Maximum accepted client request body size, in bytes.
+max_body_size_bytes = 10485760  # 10 MiB
+
+# ── Upstream LLM provider ─────────────────────────────────────────────────────
+[upstream]
+# Point this at the real provider. OpenAI- and Anthropic-shaped requests are
+# both supported (auto-detected by path: /v1/chat/completions vs /v1/messages).
+url = "https://api.openai.com"
+
+# Per-request timeout to the upstream, in seconds.
+timeout_secs = 120
+
+# TCP connection timeout, in seconds.
+connect_timeout = 10
+
+# ── Caller authentication (optional) ──────────────────────────────────────────
+# When enabled, callers must present a matching key in the X-Guardrail-Key
+# header. This is separate from the upstream Authorization header, which is
+# always forwarded opaquely and never inspected by guardrail-rs.
+[auth]
+require_key = false
+# keys = ["grk-your-generated-key-here"]
+
+# ── Pipeline ordering ──────────────────────────────────────────────────────────
+[pipeline]
+# Ordered list of request-side stages. Removing an entry disables that stage
+# regardless of its own [stages.*] enabled flag.
+request_stages = ["regex_injection", "onnx_injection", "pii_redactor", "toxicity", "policy"]
+
+# Ordered list of response-side stages.
+response_stages = ["output_pii_redactor"]
+
+# Behavior when the pipeline itself errors unexpectedly (not the same as a
+# stage's own Block decision): "allow" (fail-open, default) or "block".
+on_error = "allow"
+
+# ── Stage 1: regex-based prompt injection detection ───────────────────────────
+[stages.regex_injection]
+enabled = true
+
+# Path to a custom rule file (one regex per line, # for comments).
+# Empty string = use the bundled rule set.
+rules_file = ""
+
+# Additional patterns appended to whichever rule set is active.
+extra_rules = []
+
+# What to do on a match: "block" (default), "redact" (not meaningful for this
+# stage), or "log_only" (dry-run mode — logs but allows the request).
+action = "block"
+
+# ── Stage 2: ONNX semantic injection classifier (optional) ────────────────────
+# Requires building with --features onnx and providing model files.
+# See docs/onnx-models.md.
+[stages.onnx_injection]
+enabled = false
+model_path = ""
+tokenizer_path = ""
+threshold = 0.85
+action = "block"
+on_error = "allow"
+
+# ── Stage 3: PII detection and redaction ──────────────────────────────────────
+# Detects and replaces PII before it reaches the upstream LLM or the
+# toxicity classifier. Default action is "redact" (sanitize and continue).
+[stages.pii_redactor]
+enabled = true
+
+# Entity types to detect. Valid values:
+#   "email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key"
+entities = ["email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key"]
+
+action = "redact"
+
+# Apply Luhn checksum validation to candidate credit-card numbers before
+# redacting, to reduce false positives on arbitrary 16-digit numbers.
+validate_luhn = true
+
+# Whether to also scan non-streaming LLM *responses* for PII before
+# returning them to the caller. Streaming responses (stream: true) are
+# never scanned — see docs/architecture.md.
+redact_responses = false
+
+# Custom replacement tokens (all optional; shown values are the defaults).
+[stages.pii_redactor.replacements]
+email = "[EMAIL]"
+phone = "[PHONE]"
+credit_card = "[CARD]"
+ssn = "[SSN]"
+ip_address = "[IP_ADDRESS]"
+api_key = "[API_KEY]"
+aws_key = "[AWS_KEY]"
+
+# ── Stage 4: ONNX toxicity classifier (optional) ───────────────────────────────
+[stages.toxicity]
+enabled = false
+model_path = ""
+tokenizer_path = ""
+threshold = 0.90
+action = "block"
+scan_roles = ["user"]
+on_error = "allow"
+
+# ── Stage 5: user-defined policy rules ─────────────────────────────────────────
+# Evaluated last, in order. The first enabled rule whose `when` condition
+# matches determines the outcome. See docs/policy-rules.md for the full
+# condition reference and worked examples.
+[[policy.rules]]
+name = "block-competitor-mentions"
+enabled = false
+
+[policy.rules.when]
+content_contains = ["competitor-x", "competitor-y"]
+
+[policy.rules.then]
+action = "block"
+message = "Mentions of named competitors are not permitted in this deployment."
+
+
+# ── Observability ─────────────────────────────────────────────────────────────
+[observability]
+# Log level: "trace", "debug", "info", "warn", "error".
+log_level = "info"
+
+# Log output format: "pretty" (human-readable, default) or "json".
+# Use "json" in production for log aggregation (Datadog, Splunk, Loki, etc.).
+log_format = "pretty"
+
+# Reserved for a future release that serves /metrics on a separate port.
+# /metrics is currently served on server.host:server.port alongside the
+# proxy endpoints regardless of this setting.
+metrics_port = 9090
+
+# OpenTelemetry OTLP gRPC endpoint for distributed tracing.
+# Leave empty (default) to disable OTLP export.
+# Example: "http://localhost:4317" for a local Jaeger/Tempo collector.
+otlp_endpoint = ""
+
+# ── Structured NDJSON audit log ────────────────────────────────────────────────
+# When enabled, every pipeline decision (allow, redact, block) is written as a
+# newline-delimited JSON record to `path`, independently of the general
+# application log. Suitable for ingestion by Filebeat, Vector, etc.
+#
+# Rotation: when the file would exceed max_size_mb, it is renamed to
+# <path>.<unix_timestamp> and a fresh file is opened at `path`.
+[observability.audit_log]
+enabled = false
+path = "./guardrail-audit.ndjson"
+max_size_mb = 100

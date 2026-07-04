@@ -1,0 +1,53 @@
+# Keep the Docker build context small and the build fast — none of these
+# are referenced by any COPY instruction in the Dockerfile, but without
+# this file Docker still tars up and transmits the entire directory
+# (including target/, which can be several GB after a local build) to the
+# daemon before the Dockerfile gets a chance to ignore anything.
+
+# Build artifacts (can be gigabytes after a local `cargo build`)
+target/
+**/target/
+
+# VCS
+.git/
+.gitignore
+
+# CI/CD and project tooling not needed inside the image
+/.github/
+/.config/
+/justfile
+/Makefile
+/*.yml
+/*.yaml
+
+# Documentation (not needed at runtime; keeps layer cache stable across doc edits)
+/docs/
+/book.toml
+/*.md
+
+# Local/dev-only configuration and secrets
+/guardrail.toml
+/*.local.toml
+
+# Test fixtures and example clients (not part of the runtime image)
+/tests/
+/examples/
+
+# ONNX model artifacts — mounted as a volume at runtime, never baked into the image
+/models/**
+!/models/README.md
+!/models/export_models.sh
+
+# Audit log output (should never end up inside an image layer)
+/guardrail-audit.ndjson*
+/audit-logs/
+
+# Coverage and benchmark output
+/coverage/
+**/criterion/
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store

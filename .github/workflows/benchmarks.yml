@@ -1,0 +1,109 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    name: criterion benchmarks (classifiers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run benchmarks
+        # Without `pipefail` (bash's default), a `cargo bench` failure is
+        # masked: the pipeline's exit status is `tee`'s (which almost
+        # always succeeds), so this step reports success with an empty
+        # output.txt, and the *real* error only surfaces several minutes
+        # later as a confusing "No benchmark result was found... Benchmark
+        # output was ''" from the unrelated benchmark-action step below.
+        #
+        # `--bench classifier_benchmarks` is required, not optional:
+        # without it, `cargo bench -p guardrail-classifiers` also runs the
+        # crate's own lib unittest binary under the standard libtest bench
+        # harness (in addition to the actual Criterion `classifier_benchmarks`
+        # target), and forwards the same trailing `-- --output-format
+        # bencher` to *both* binaries. libtest's harness has no
+        # `--output-format` flag (that's Criterion-specific) and fails
+        # immediately with "Unrecognized option: 'output-format'" before
+        # cargo ever reaches the Criterion binary that would understand it.
+        # `pipeline-latency-gate` below already does this correctly with
+        # `--bench pipeline`; this job was just missing its equivalent.
+        run: |
+          set -o pipefail
+          cargo bench -p guardrail-classifiers --bench classifier_benchmarks -- --output-format bencher | tee output.txt
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: "cargo"
+          output-file-path: output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          alert-threshold: "150%"
+          comment-on-alert: true
+          fail-on-alert: false
+          summary-always: true
+
+  # ── Full-pipeline latency gate (spec §13) ───────────────────────────────────
+  # The p99 target is < 1ms for the full pipeline on CPU, regex-only path.
+  # CI hard-fails if any case exceeds 5ms (a 5x safety margin over the target,
+  # to avoid false failures from noisy shared runners while still catching
+  # real regressions). This is a separate, stricter gate from the soft
+  # 150%-regression alert above, which only tracks classifier microbenchmarks.
+  pipeline-latency-gate:
+    name: full-pipeline latency gate (5ms hard limit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run full-pipeline benchmark
+        run: |
+          set -o pipefail
+          cargo bench -p guardrail-test-suite --bench pipeline -- --output-format bencher \
+            | tee pipeline-output.txt
+
+      - name: Enforce 5ms ceiling
+        run: |
+          python3 - << 'EOF'
+          import re
+          import sys
+
+          THRESHOLD_NS = 5_000_000  # 5ms in nanoseconds
+          failures = []
+
+          with open("pipeline-output.txt") as f:
+              for line in f:
+                  # bencher format: "test bench_name ... bench: 1234 ns/iter (+/- 56)"
+                  m = re.search(r"^test (\S+).*bench:\s+([\d,]+) ns/iter", line)
+                  if not m:
+                      continue
+                  name, ns_str = m.group(1), m.group(2).replace(",", "")
+                  ns = int(ns_str)
+                  print(f"{name}: {ns} ns ({ns / 1_000_000:.3f} ms)")
+                  if ns > THRESHOLD_NS:
+                      failures.append((name, ns))
+
+          if failures:
+              print("\nFAILED: the following benchmarks exceeded the 5ms ceiling:")
+              for name, ns in failures:
+                  print(f"  {name}: {ns / 1_000_000:.3f} ms")
+              sys.exit(1)
+
+          print("\nAll full-pipeline benchmarks are within the 5ms ceiling.")
+          EOF

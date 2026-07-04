@@ -1,0 +1,23 @@
+[book]
+title       = "guardrail-rs"
+description = "Sub-millisecond LLM security proxy: detect prompt injection, redact PII, block toxic content."
+authors     = ["Mattral"]
+language    = "en"
+src         = "docs"
+
+[output.html]
+default-theme        = "navy"
+preferred-dark-theme = "ayu"
+git-repository-url   = "https://github.com/Mattral/guardrail-rs"
+edit-url-template    = "https://github.com/Mattral/guardrail-rs/edit/main/{path}"
+no-section-label     = false
+
+[output.html.fold]
+enable = true
+level  = 1
+
+[output.html.search]
+enable            = true
+limit-results     = 20
+teaser-word-count = 30
+copy-js           = true

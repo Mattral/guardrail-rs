@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest a new feature, rule, or PII entity type for guardrail-rs
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem would this feature solve? Is it a new injection pattern, PII type, policy condition, etc.?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like this to work? Example config snippets are very helpful.
+      render: toml
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

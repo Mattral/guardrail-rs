@@ -1,0 +1,43 @@
+# guardrail-rs bundled prompt-injection rule set
+# Format: one regex per line; lines beginning with '#' are comments.
+# All patterns are matched case-insensitively against the full message content.
+#
+# NOTE: this is duplicated at crates/guardrail-config/src/injection.rules
+# (guardrail-config can't depend on guardrail-classifiers's private
+# `include_str!` target, and a shared build-script/asset crate was judged
+# not worth it for one file). If you edit one, edit the other in the same
+# commit — CI's `injection-rules-sync` job (.github/workflows/ci.yml) fails
+# the build if they diverge again.
+#
+# ── Jailbreak / role-override ────────────────────────────────────────────────
+(?i)ignore\s+(all\s+)?previous\s+instructions?
+(?i)disregard\s+(all\s+)?previous\s+(instructions?|prompts?|constraints?)
+(?i)forget\s+(all\s+)?(your\s+)?previous\s+instructions?
+(?i)override\s+(your\s+)?(previous\s+)?(instructions?|programming|directives?)
+(?i)you\s+are\s+now\s+(a\s+)?(?:DAN|jailbroken|unrestricted|uncensored)
+(?i)act\s+as\s+if\s+you\s+(have\s+no\s+restrictions?|were\s+trained\s+differently)
+(?i)pretend\s+(you\s+)?(have\s+no\s+)?ethical\s+(guidelines?|constraints?|limits?)
+(?i)do\s+not\s+(follow|obey|apply)\s+(your\s+)?(safety|ethical|content)\s+(guidelines?|filters?|rules?)
+(?i)bypass\s+(all\s+)?(safety|ethical|content)\s+(checks?|filters?|restrictions?)
+(?i)you\s+must\s+comply\s+with\s+(all\s+)?my\s+(instructions?|requests?)
+(?i)your\s+new\s+(primary\s+)?directive\s+is
+(?i)switch\s+to\s+(developer|jailbreak|DAN|unrestricted)\s+mode
+(?i)enable\s+(developer|jailbreak|unrestricted|god)\s+mode
+(?i)\[SYSTEM\]\s*:?\s*you\s+are\s+now
+(?i)<<<\s*SYSTEM\s*>>>
+# ── System prompt extraction ──────────────────────────────────────────────────
+(?i)reveal\s+(your\s+)?(full\s+)?(system\s+prompt|initial\s+instructions?|base\s+prompt)
+(?i)print\s+(your\s+)?(system\s+prompt|original\s+instructions?)
+(?i)output\s+(your\s+)?(system\s+prompt|initial\s+message|base\s+instructions?)
+(?i)what\s+(are|were)\s+your\s+(original\s+|initial\s+)?instructions?
+(?i)tell\s+me\s+(everything|all)\s+(about\s+)?your\s+(training|system\s+prompt|instructions?)
+# ── Prompt injection via delimiter abuse ─────────────────────────────────────
+(?i)---\s*end\s+of\s+(system\s+)?prompt\s*---
+(?i)###\s*(human|assistant|system|user)\s*:
+(?i)<\s*/?\s*(system|assistant|user|human)\s*>
+(?i)\[\s*/?INST\s*\]
+(?i)<\s*\|?\s*(im_start|im_end)\s*\|?\s*>
+# ── Harmful capability elicitation ──────────────────────────────────────────
+(?i)(explain|describe|provide|give)\s+(step[\s-]by[\s-]step\s+)?(instructions?|steps?)\s+(to|for|on\s+how\s+to)\s+(make|build|create|synthesize|produce)\s+(a\s+)?(bomb|weapon|poison|malware|exploit)
+(?i)how\s+to\s+(make|build|synthesize|produce)\s+(methamphetamine|fentanyl|sarin|VX\s+nerve\s+agent|ricin|anthrax)
+(?i)write\s+(me\s+)?(working\s+)?(malware|ransomware|keylogger|exploit|shellcode|rootkit)

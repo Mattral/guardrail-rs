@@ -1,0 +1,5 @@
+# Clippy configuration for guardrail-rs
+msrv = "1.75"
+
+# Enforce documentation on all public items
+# (set via clippy attrs in CI: -D missing_docs)

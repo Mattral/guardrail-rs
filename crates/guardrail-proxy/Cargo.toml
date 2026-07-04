@@ -1,0 +1,52 @@
+[package]
+name        = "guardrail-proxy"
+description = "HTTP reverse-proxy server for guardrail-rs"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+homepage.workspace    = true
+categories.workspace  = true
+keywords.workspace  = true
+readme             = "../../README.md"
+
+[features]
+default = []
+onnx = ["guardrail-config/onnx", "guardrail-classifiers/onnx"]
+
+[dependencies]
+guardrail-core        = { path = "../guardrail-core", version = "0.1.1", features = ["reqwest-errors"] }
+guardrail-config      = { path = "../guardrail-config", version = "0.1.1" }
+guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.1" }
+
+tokio          = { workspace = true }
+hyper          = { workspace = true }
+hyper-util     = { workspace = true }
+http-body-util = { workspace = true }
+reqwest        = { workspace = true }
+bytes          = { workspace = true }
+futures        = { workspace = true }
+
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+anyhow     = { workspace = true }
+
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+tracing-appender    = "0.2"
+tracing-opentelemetry = { workspace = true }
+opentelemetry        = { workspace = true }
+opentelemetry_sdk    = { workspace = true }
+opentelemetry-otlp   = { workspace = true }
+prometheus          = { workspace = true }
+uuid                = { workspace = true }
+chrono              = { version = "0.4", features = ["alloc"] }
+
+[dev-dependencies]
+tokio-stream = { workspace = true }
+wiremock     = "0.6"
+tempfile     = "3"
+tokio-test   = "0.4"
