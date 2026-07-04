@@ -222,6 +222,28 @@ mod tests {
     #[test]
     fn test_metrics_render_contains_metric_names() {
         let metrics = Metrics::new();
+        // Populate a few metrics so the encoder includes them in the output.
+        metrics
+            .requests_total
+            .with_label_values(&["allow", "openai"])
+            .inc();
+        metrics.blocked_total.with_label_values(&["testcode"]).inc();
+        metrics.redacted_total.inc();
+        metrics.response_redacted_total.inc();
+        metrics.pipeline_duration_seconds.observe(0.001);
+        metrics
+            .stage_duration_seconds
+            .with_label_values(&["regex_injection"])
+            .observe(0.00003);
+        metrics
+            .request_duration_seconds
+            .with_label_values(&["allow"])
+            .observe(0.123);
+        metrics
+            .upstream_errors_total
+            .with_label_values(&["timeout"])
+            .inc();
+        metrics.active_connections.inc();
         let output = metrics.render().unwrap();
         assert!(output.contains("guardrail_requests_total"));
         assert!(output.contains("guardrail_blocked_total"));

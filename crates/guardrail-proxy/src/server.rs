@@ -403,10 +403,10 @@ mod tests {
             [server]
             host = "127.0.0.1"
             port = 0
+            max_body_size_bytes = 100
 
             [upstream]
             url = "https://api.openai.com"
-            max_body_size_bytes = 100
         "#;
         let f = write_temp_config(toml_str);
         let config = Arc::new(ConfigHandle::load(f.path()).unwrap());
