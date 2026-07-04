@@ -202,7 +202,7 @@ mod tests {
     fn test_empty_otlp_endpoint_returns_none() {
         let config = ObservabilityConfig::default();
         // default otlp_endpoint is empty string
-        let result = build_otel_layer::<tracing_subscriber::Registry>(&config).unwrap();
+        let result = build_otel_layer(&config).unwrap();
         assert!(result.is_none());
     }
 

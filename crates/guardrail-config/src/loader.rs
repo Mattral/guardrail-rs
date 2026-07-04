@@ -476,6 +476,7 @@ impl ConfigHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validate_config;
     use std::io::Write;
 
     fn write_temp_config(contents: &str) -> tempfile::NamedTempFile {

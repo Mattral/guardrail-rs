@@ -35,6 +35,7 @@ tracing-appender   = "0.2"
 opentelemetry_sdk  = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 opentelemetry = { workspace = true }
+async-trait = { workspace = true }
 
 serde_json = { workspace = true }
 
