@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Benchmark job: `cargo bench -p guardrail-classifiers` also ran the
+crate's own lib unittest binary, which choked on Criterion's CLI flag** —
+without an explicit `--bench <name>`, `cargo bench -p X` runs *every*
+bench-shaped target for that package: both the actual Criterion
+`classifier_benchmarks` target *and* the crate's plain lib unittest
+binary (compiled under the standard libtest harness). `cargo bench`
+forwards the same trailing `-- --output-format bencher` to both — but
+`--output-format` is a Criterion-only flag; libtest's own bench runner
+doesn't recognize it and fails immediately (`error: Unrecognized option:
+'output-format'`), before cargo ever reaches the Criterion binary that
+would have handled it. This was there from the start; the `pipefail` fix
+above didn't cause it, it just finally made it visible instead of a
+silently-empty `output.txt`. `pipeline-latency-gate` right below this job
+already had the fix (`--bench pipeline`) — this job was just missing its
+equivalent. Added `--bench classifier_benchmarks`.
+
 **Docker release build failed outright — this is why `v0.1.1` never
 actually reached crates.io despite the tag existing** — `Dockerfile`'s
 builder stage was pinned to `rust:1.81-slim-bookworm`. A transitive
