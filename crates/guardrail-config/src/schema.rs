@@ -126,9 +126,15 @@ impl Default for ServerConfig {
     }
 }
 
-fn default_host() -> String { "127.0.0.1".to_string() }
-fn default_port() -> u16 { 8080 }
-fn default_max_body_size() -> usize { 10 * 1024 * 1024 }
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+fn default_port() -> u16 {
+    8080
+}
+fn default_max_body_size() -> usize {
+    10 * 1024 * 1024
+}
 
 // ── Upstream ──────────────────────────────────────────────────────────────────
 
@@ -156,9 +162,15 @@ impl Default for UpstreamConfig {
     }
 }
 
-fn default_upstream_url() -> String { "https://api.openai.com".to_string() }
-fn default_upstream_timeout() -> u64 { 120 }
-fn default_connect_timeout() -> u64 { 10 }
+fn default_upstream_url() -> String {
+    "https://api.openai.com".to_string()
+}
+fn default_upstream_timeout() -> u64 {
+    120
+}
+fn default_connect_timeout() -> u64 {
+    10
+}
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -339,13 +351,27 @@ impl Default for PiiReplacements {
     }
 }
 
-fn default_email_replacement() -> String { "[EMAIL]".into() }
-fn default_phone_replacement() -> String { "[PHONE]".into() }
-fn default_card_replacement() -> String { "[CARD]".into() }
-fn default_ssn_replacement() -> String { "[SSN]".into() }
-fn default_ip_replacement() -> String { "[IP_ADDRESS]".into() }
-fn default_apikey_replacement() -> String { "[API_KEY]".into() }
-fn default_awskey_replacement() -> String { "[AWS_KEY]".into() }
+fn default_email_replacement() -> String {
+    "[EMAIL]".into()
+}
+fn default_phone_replacement() -> String {
+    "[PHONE]".into()
+}
+fn default_card_replacement() -> String {
+    "[CARD]".into()
+}
+fn default_ssn_replacement() -> String {
+    "[SSN]".into()
+}
+fn default_ip_replacement() -> String {
+    "[IP_ADDRESS]".into()
+}
+fn default_apikey_replacement() -> String {
+    "[API_KEY]".into()
+}
+fn default_awskey_replacement() -> String {
+    "[AWS_KEY]".into()
+}
 
 /// Configuration for [`guardrail_classifiers::PiiRedactor`].
 #[derive(Debug, Clone, Deserialize)]
@@ -383,12 +409,19 @@ impl Default for PiiRedactorConfig {
     }
 }
 
-fn default_redact_action() -> StageAction { StageAction::Redact }
+fn default_redact_action() -> StageAction {
+    StageAction::Redact
+}
 
 fn default_pii_entities() -> Vec<String> {
     vec![
-        "email".into(), "phone".into(), "credit_card".into(),
-        "ssn".into(), "ip_address".into(), "api_key".into(), "aws_key".into(),
+        "email".into(),
+        "phone".into(),
+        "credit_card".into(),
+        "ssn".into(),
+        "ip_address".into(),
+        "api_key".into(),
+        "aws_key".into(),
     ]
 }
 
@@ -468,10 +501,18 @@ impl Default for ToxicityStageConfig {
     }
 }
 
-fn default_threshold() -> f32 { 0.85 }
-fn default_toxicity_threshold() -> f32 { 0.90 }
-fn default_scan_roles() -> Vec<String> { vec!["user".into()] }
-fn default_true() -> bool { true }
+fn default_threshold() -> f32 {
+    0.85
+}
+fn default_toxicity_threshold() -> f32 {
+    0.90
+}
+fn default_scan_roles() -> Vec<String> {
+    vec!["user".into()]
+}
+fn default_true() -> bool {
+    true
+}
 
 // ── Policy ────────────────────────────────────────────────────────────────────
 
@@ -538,7 +579,10 @@ pub struct PolicyActionConfig {
 
 impl Default for PolicyActionConfig {
     fn default() -> Self {
-        Self { action: PolicyAction::Block, message: None }
+        Self {
+            action: PolicyAction::Block,
+            message: None,
+        }
     }
 }
 
@@ -591,9 +635,15 @@ impl Default for ObservabilityConfig {
     }
 }
 
-fn default_log_level() -> String { "info".to_string() }
-fn default_log_format() -> String { "pretty".to_string() }
-fn default_metrics_port() -> u16 { 9090 }
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_log_format() -> String {
+    "pretty".to_string()
+}
+fn default_metrics_port() -> u16 {
+    9090
+}
 
 /// Rotating NDJSON audit log configuration.
 #[derive(Debug, Clone, Deserialize)]
@@ -619,8 +669,12 @@ impl Default for AuditLogConfig {
     }
 }
 
-fn default_audit_path() -> String { "./guardrail-audit.ndjson".to_string() }
-fn default_max_size_mb() -> u64 { 100 }
+fn default_audit_path() -> String {
+    "./guardrail-audit.ndjson".to_string()
+}
+fn default_max_size_mb() -> u64 {
+    100
+}
 
 // ── PiiEntityList helper ──────────────────────────────────────────────────────
 

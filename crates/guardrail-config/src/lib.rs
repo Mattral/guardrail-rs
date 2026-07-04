@@ -54,8 +54,7 @@ pub mod validate;
 
 pub use loader::{build_response_redactor, ConfigHandle, ConfigLoadError};
 pub use schema::{
-    AuditLogConfig, AuthConfig, Config, ObservabilityConfig, PiiEntityList,
+    AuditLogConfig, AuthConfig, Config, ObservabilityConfig, OnErrorBehavior, PiiEntityList,
     PipelineConfig, PolicyRuleConfig, ServerConfig, StagesConfig, UpstreamConfig,
-    OnErrorBehavior,
 };
 pub use validate::validate_config;

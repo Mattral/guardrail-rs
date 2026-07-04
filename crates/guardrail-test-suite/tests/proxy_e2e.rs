@@ -27,7 +27,9 @@ fn write_config(contents: &str) -> tempfile::NamedTempFile {
     f
 }
 
-async fn start_proxy(config_toml: &str) -> (guardrail_proxy::ServerHandle, tempfile::NamedTempFile) {
+async fn start_proxy(
+    config_toml: &str,
+) -> (guardrail_proxy::ServerHandle, tempfile::NamedTempFile) {
     let f = write_config(config_toml);
     let config = Arc::new(ConfigHandle::load(f.path()).unwrap());
     let handle = guardrail_proxy::run_server(config).await.unwrap();
@@ -370,7 +372,9 @@ async fn health_and_metrics_endpoints() {
     let (handle, _f) = start_proxy(config_toml).await;
     let addr = handle.local_addr();
 
-    let health = reqwest::get(format!("http://{addr}/healthz")).await.unwrap();
+    let health = reqwest::get(format!("http://{addr}/healthz"))
+        .await
+        .unwrap();
     assert_eq!(health.status(), 200);
 
     // Drive a request through the pipeline so metrics have data.
@@ -385,7 +389,9 @@ async fn health_and_metrics_endpoints() {
         .await
         .unwrap();
 
-    let metrics = reqwest::get(format!("http://{addr}/metrics")).await.unwrap();
+    let metrics = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap();
     assert_eq!(metrics.status(), 200);
     let body = metrics.text().await.unwrap();
     assert!(body.contains("guardrail_requests_total"));
@@ -463,7 +469,9 @@ async fn response_pii_is_redacted_when_enabled() {
     assert_eq!(body["choices"][0]["finish_reason"], "stop");
 
     // Metric incremented.
-    let metrics = reqwest::get(format!("http://{addr}/metrics")).await.unwrap();
+    let metrics = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap();
     let metrics_body = metrics.text().await.unwrap();
     assert!(metrics_body.contains("guardrail_response_redacted_total 1"));
 
@@ -653,4 +661,3 @@ async fn audit_log_config_does_not_break_proxy() {
 
     handle.shutdown();
 }
-

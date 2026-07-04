@@ -96,8 +96,8 @@ impl Stage for PolicyEngine {
                     .iter()
                     .any(|m| matches!(m.role, crate::request::Role::System)),
                 PolicyCondition::TokenCountExceeds(limit) => {
-                    let approx_tokens = (req.all_text().split_whitespace().count() as f64 * 1.3)
-                        as usize;
+                    let approx_tokens =
+                        (req.all_text().split_whitespace().count() as f64 * 1.3) as usize;
                     approx_tokens > *limit
                 }
                 PolicyCondition::Always => true,

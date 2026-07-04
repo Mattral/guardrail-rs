@@ -344,10 +344,18 @@ mod tests {
         let client = reqwest::Client::new();
 
         // No key presented, but these endpoints must remain accessible.
-        let health = client.get(format!("http://{addr}/healthz")).send().await.unwrap();
+        let health = client
+            .get(format!("http://{addr}/healthz"))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(health.status(), 200);
 
-        let metrics = client.get(format!("http://{addr}/metrics")).send().await.unwrap();
+        let metrics = client
+            .get(format!("http://{addr}/metrics"))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(metrics.status(), 200);
 
         handle.shutdown();
@@ -491,7 +499,9 @@ mod tests {
             .await
             .unwrap();
 
-        let resp = reqwest::get(format!("http://{addr}/metrics")).await.unwrap();
+        let resp = reqwest::get(format!("http://{addr}/metrics"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 200);
         let body = resp.text().await.unwrap();
         assert!(body.contains("guardrail_requests_total"));

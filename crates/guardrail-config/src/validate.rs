@@ -61,7 +61,11 @@ pub fn validate_config(config: &Config) -> Vec<String> {
 
     // ── Pipeline stage IDs ────────────────────────────────────────────────
     const KNOWN_REQUEST_STAGES: &[&str] = &[
-        "regex_injection", "onnx_injection", "pii_redactor", "toxicity", "policy",
+        "regex_injection",
+        "onnx_injection",
+        "pii_redactor",
+        "toxicity",
+        "policy",
     ];
     const KNOWN_RESPONSE_STAGES: &[&str] = &["output_pii_redactor"];
 
@@ -84,7 +88,13 @@ pub fn validate_config(config: &Config) -> Vec<String> {
 
     // ── PII entities ──────────────────────────────────────────────────────
     const VALID_ENTITIES: &[&str] = &[
-        "email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key",
+        "email",
+        "phone",
+        "credit_card",
+        "ssn",
+        "ip_address",
+        "api_key",
+        "aws_key",
     ];
     if config.stages.pii_redactor.enabled {
         for entity in &config.stages.pii_redactor.entities {
@@ -97,9 +107,7 @@ pub fn validate_config(config: &Config) -> Vec<String> {
             }
         }
         if config.stages.pii_redactor.entities.is_empty() {
-            errors.push(
-                "stages.pii_redactor is enabled but entities list is empty".into(),
-            );
+            errors.push("stages.pii_redactor is enabled but entities list is empty".into());
         }
     }
 
@@ -126,9 +134,7 @@ pub fn validate_config(config: &Config) -> Vec<String> {
                 "stages.{stage_name} is enabled but this build lacks the 'onnx' feature"
             ));
 
-            if !model_path.trim().is_empty()
-                && !std::path::Path::new(model_path).exists()
-            {
+            if !model_path.trim().is_empty() && !std::path::Path::new(model_path).exists() {
                 errors.push(format!(
                     "stages.{stage_name}.model_path '{model_path}' does not exist"
                 ));
@@ -206,9 +212,7 @@ pub fn validate_config(config: &Config) -> Vec<String> {
             );
         }
         if config.observability.audit_log.max_size_mb == 0 {
-            errors.push(
-                "observability.audit_log.max_size_mb must be > 0".into(),
-            );
+            errors.push("observability.audit_log.max_size_mb must be > 0".into());
         }
     }
 

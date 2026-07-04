@@ -241,7 +241,11 @@ impl Pipeline {
 
             match decision {
                 Decision::Allow => continue,
-                Decision::Redact { reason, mutated, entities } => {
+                Decision::Redact {
+                    reason,
+                    mutated,
+                    entities,
+                } => {
                     tracing::info!(stage = stage_name, reason = %reason, "request redacted");
                     req = mutated;
                     redaction_reasons.push(reason);
@@ -258,13 +262,7 @@ impl Pipeline {
                         code = %code,
                         "request blocked"
                     );
-                    return Ok((
-                        Decision::Block {
-                            reason,
-                            code,
-                        },
-                        req,
-                    ));
+                    return Ok((Decision::Block { reason, code }, req));
                 }
             }
         }
@@ -336,9 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_pass_stage_allows() {
-        let pipeline = PipelineBuilder::default()
-            .stage(PassthroughStage)
-            .build();
+        let pipeline = PipelineBuilder::default().stage(PassthroughStage).build();
         let req = clean_request();
         let (decision, _) = pipeline.run(req).await.unwrap();
         assert_eq!(decision, Decision::Allow);
@@ -375,7 +371,9 @@ mod tests {
         let (decision, _) = pipeline.run(req).await.unwrap();
 
         match decision {
-            Decision::Redact { reason, entities, .. } => {
+            Decision::Redact {
+                reason, entities, ..
+            } => {
                 assert_eq!(reason, "PII detected and redacted: Email");
                 assert_eq!(entities, vec!["email".to_string()]);
             }
@@ -404,7 +402,9 @@ mod tests {
         let (decision, _) = pipeline.run(req).await.unwrap();
 
         match decision {
-            Decision::Redact { reason, entities, .. } => {
+            Decision::Redact {
+                reason, entities, ..
+            } => {
                 assert_eq!(reason, "redacted email; redacted phone");
                 assert_eq!(entities, vec!["email".to_string(), "phone".to_string()]);
             }
@@ -451,7 +451,10 @@ mod tests {
         use crate::test_helpers::RedactingStage;
 
         let pipeline = PipelineBuilder::default()
-            .stage(RedactingStage::new("redacted first", vec!["email".to_string()]))
+            .stage(RedactingStage::new(
+                "redacted first",
+                vec!["email".to_string()],
+            ))
             .stage(BlockingStage)
             .build();
 

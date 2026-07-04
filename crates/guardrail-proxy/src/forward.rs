@@ -67,10 +67,7 @@ pub async fn forward_request(
         builder = builder.header(key, value);
     }
 
-    builder
-        .send()
-        .await
-        .map_err(GuardrailError::from)
+    builder.send().await.map_err(GuardrailError::from)
 }
 
 /// Read the full response body as bytes.
@@ -82,10 +79,7 @@ pub async fn forward_request(
 ///
 /// Returns [`GuardrailError::Upstream`] if reading the body fails.
 pub async fn read_body(response: Response) -> Result<Bytes, GuardrailError> {
-    response
-        .bytes()
-        .await
-        .map_err(GuardrailError::from)
+    response.bytes().await.map_err(GuardrailError::from)
 }
 
 /// Headers that must never be forwarded to the upstream as-is.
