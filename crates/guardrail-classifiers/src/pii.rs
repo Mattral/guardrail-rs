@@ -164,8 +164,8 @@ impl Default for PiiRedactor {
         Self::new(
             vec![
                 PiiEntityType::Email,
-                PiiEntityType::Phone,
                 PiiEntityType::CreditCard,
+                PiiEntityType::Phone,
                 PiiEntityType::Ssn,
                 PiiEntityType::IpAddress,
                 PiiEntityType::ApiKey,
@@ -426,7 +426,8 @@ fn entity_pattern(entity: &PiiEntityType) -> &'static str {
         }
         PiiEntityType::ApiKey => {
             // OpenAI sk-..., Anthropic sk-ant-..., GitHub ghp_/gho_/ghs_, Bearer tokens
-            r"(?:sk-[a-zA-Z0-9\-_]{20,}|sk-ant-[a-zA-Z0-9\-_]{20,}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|Bearer\s+[a-zA-Z0-9\-._~+/]{20,})"
+            // Relax GH token length to a reasonable range to match common examples
+            r"(?:sk-[a-zA-Z0-9\-_]{20,}|sk-ant-[a-zA-Z0-9\-_]{20,}|ghp_[a-zA-Z0-9]{30,40}|gho_[a-zA-Z0-9]{30,40}|ghs_[a-zA-Z0-9]{30,40}|Bearer\s+[a-zA-Z0-9\-._~+/]{20,})"
         }
         PiiEntityType::AwsKey => {
             r"\bAKIA[A-Z0-9]{16}\b"
