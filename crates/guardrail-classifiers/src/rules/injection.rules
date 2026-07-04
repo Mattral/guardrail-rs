@@ -2,6 +2,13 @@
 # Format: one regex per line; lines beginning with '#' are comments.
 # All patterns are matched case-insensitively against the full message content.
 #
+# NOTE: this is duplicated at crates/guardrail-config/src/injection.rules
+# (guardrail-config can't depend on guardrail-classifiers's private
+# `include_str!` target, and a shared build-script/asset crate was judged
+# not worth it for one file). If you edit one, edit the other in the same
+# commit — CI's `injection-rules-sync` job (.github/workflows/ci.yml) fails
+# the build if they diverge again.
+#
 # ── Jailbreak / role-override ────────────────────────────────────────────────
 (?i)ignore\s+(all\s+)?previous\s+instructions?
 (?i)disregard\s+(all\s+)?previous\s+(instructions?|prompts?|constraints?)
