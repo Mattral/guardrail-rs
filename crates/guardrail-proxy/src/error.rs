@@ -9,9 +9,9 @@
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
+use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{Response, StatusCode};
-use http_body_util::Full;
 
 /// Build a standard error response body and wrap it as a full HTTP response.
 ///
@@ -108,10 +108,7 @@ pub enum BodyReadError {
 /// }
 /// # }
 /// ```
-pub async fn read_limited_body(
-    body: Incoming,
-    max_size: usize,
-) -> Result<Bytes, BodyReadError> {
+pub async fn read_limited_body(body: Incoming, max_size: usize) -> Result<Bytes, BodyReadError> {
     let collected = body.collect().await.map_err(BodyReadError::Io)?;
     let bytes = collected.to_bytes();
     if bytes.len() > max_size {

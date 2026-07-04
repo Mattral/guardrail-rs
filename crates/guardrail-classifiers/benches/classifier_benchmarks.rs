@@ -16,14 +16,13 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use guardrail_classifiers::{PiiRedactor, RegexInjectionScanner};
 use guardrail_core::{
-    request::{ChatMessage, GuardrailRequest, MessageContent, Provider, Role},
     pipeline::Stage,
+    request::{ChatMessage, GuardrailRequest, MessageContent, Provider, Role},
 };
 
 /// Build a synthetic request with `n` repetitions of a benign sentence.
 fn build_request(repeats: usize) -> GuardrailRequest {
-    let text = "The quick brown fox jumps over the lazy dog near the riverbank. "
-        .repeat(repeats);
+    let text = "The quick brown fox jumps over the lazy dog near the riverbank. ".repeat(repeats);
 
     GuardrailRequest::new(
         vec![ChatMessage {
@@ -106,16 +105,14 @@ fn bench_full_pipeline_async(c: &mut Criterion) {
 
     let clean_req = build_request(16);
     group.bench_function("regex_injection_async_clean", |b| {
-        b.to_async(&rt).iter(|| async {
-            scanner.evaluate(&clean_req).await.unwrap()
-        });
+        b.to_async(&rt)
+            .iter(|| async { scanner.evaluate(&clean_req).await.unwrap() });
     });
 
     let pii_req = build_pii_request(16);
     group.bench_function("pii_redactor_async_with_pii", |b| {
-        b.to_async(&rt).iter(|| async {
-            redactor.evaluate(&pii_req).await.unwrap()
-        });
+        b.to_async(&rt)
+            .iter(|| async { redactor.evaluate(&pii_req).await.unwrap() });
     });
 
     group.finish();

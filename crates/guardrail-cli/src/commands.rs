@@ -27,10 +27,7 @@ async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     // Build the tracing subscriber: fmt layer + optional audit-log layer +
     // optional OpenTelemetry OTLP layer. Guards/providers must be kept alive
     // for the entire process lifetime.
-    let (
-        _audit_guard,
-        _otel_provider,
-    ) = init_tracing(&config_handle.config().observability)?;
+    let (_audit_guard, _otel_provider) = init_tracing(&config_handle.config().observability)?;
 
     let handle = guardrail_proxy::run_server(config_handle.clone()).await?;
     tracing::info!(addr = %handle.local_addr(), "guardrail-rs is running");
@@ -41,8 +38,8 @@ async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
         let reload_handle = config_handle.clone();
         tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
-            let mut sighup = signal(SignalKind::hangup())
-                .expect("failed to install SIGHUP handler");
+            let mut sighup =
+                signal(SignalKind::hangup()).expect("failed to install SIGHUP handler");
             loop {
                 sighup.recv().await;
                 tracing::info!("SIGHUP received — reloading configuration");
@@ -81,26 +78,41 @@ fn validate(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     match guardrail_config::loader::load_config(&config_path) {
         Ok(config) => {
             println!("✓ configuration is valid");
-            println!("  server:               {}:{}", config.server.host, config.server.port);
+            println!(
+                "  server:               {}:{}",
+                config.server.host, config.server.port
+            );
             println!("  upstream.url:         {}", config.upstream.url);
             println!(
                 "  regex_injection:      {}",
-                if config.stages.regex_injection.enabled { "enabled" } else { "disabled" }
+                if config.stages.regex_injection.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
             );
             println!(
                 "  pii_redactor:         {}{}",
-                if config.stages.pii_redactor.enabled { "enabled" } else { "disabled" },
-                if config.stages.pii_redactor.redact_responses { " (+ response redaction)" } else { "" }
+                if config.stages.pii_redactor.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                if config.stages.pii_redactor.redact_responses {
+                    " (+ response redaction)"
+                } else {
+                    ""
+                }
             );
             println!("  policy rules:         {}", config.policy.rules.len());
             println!(
                 "  audit_log:            {}",
                 if config.observability.audit_log.enabled {
                     format!(
-                            "enabled → {}/{}",
-                            config.observability.audit_log.path,
-                            config.observability.audit_log.max_size_mb,
-                        )
+                        "enabled → {}/{}",
+                        config.observability.audit_log.path,
+                        config.observability.audit_log.max_size_mb,
+                    )
                 } else {
                     "disabled".to_string()
                 }
@@ -137,7 +149,11 @@ async fn check(text: String, config_path: std::path::PathBuf) -> anyhow::Result<
         guardrail_core::decision::Decision::Allow => serde_json::json!({
             "decision": "allow",
         }),
-        guardrail_core::decision::Decision::Redact { reason, mutated, entities } => serde_json::json!({
+        guardrail_core::decision::Decision::Redact {
+            reason,
+            mutated,
+            entities,
+        } => serde_json::json!({
             "decision": "redact",
             "reason": reason,
             "entities": entities,
@@ -197,8 +213,8 @@ fn init_tracing(
 
     // Layer 1: fmt — apply log_level filter only to this layer so audit
     // events are never suppressed by the log_level setting.
-    let env_filter = EnvFilter::try_new(&observability.log_level)
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter =
+        EnvFilter::try_new(&observability.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
 
     use tracing_subscriber::filter::filter_fn;
     use tracing_subscriber::fmt::format::FmtSpan;
@@ -214,7 +230,9 @@ fn init_tracing(
                     .with_span_events(FmtSpan::NONE)
                     .with_target(false)
                     .with_writer(non_blocking)
-                    .with_filter(filter_fn(|metadata| metadata.target() == guardrail_proxy::audit_log::AUDIT_TARGET));
+                    .with_filter(filter_fn(|metadata| {
+                        metadata.target() == guardrail_proxy::audit_log::AUDIT_TARGET
+                    }));
                 (Some(layer), Some(g))
             }
             Ok(None) => (None, None),
@@ -237,7 +255,10 @@ fn init_tracing(
 
     match audit_layer {
         None => tracing_subscriber::registry().with(fmt_layer).init(),
-        Some(a) => tracing_subscriber::registry().with(fmt_layer).with(a).init(),
+        Some(a) => tracing_subscriber::registry()
+            .with(fmt_layer)
+            .with(a)
+            .init(),
     }
 
     Ok((guard, provider))
@@ -249,7 +270,8 @@ async fn wait_for_shutdown_signal() {
     {
         use tokio::signal::unix::{signal, SignalKind};
 
-        let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
         let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
 
         tokio::select! {

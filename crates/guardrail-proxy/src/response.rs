@@ -106,10 +106,7 @@ pub fn redact_response_body(
     // ── OpenAI shape: choices[].message.content ─────────────────────────────
     if let Some(choices) = value.get_mut("choices").and_then(Value::as_array_mut) {
         for choice in choices.iter_mut() {
-            if let Some(content) = choice
-                .get_mut("message")
-                .and_then(|m| m.get_mut("content"))
-            {
+            if let Some(content) = choice.get_mut("message").and_then(|m| m.get_mut("content")) {
                 if let Some(text) = content.as_str() {
                     if let Some((sanitized, records)) = redactor.redact_response_text(text) {
                         for r in &records {
@@ -165,7 +162,10 @@ mod tests {
     #[test]
     fn test_is_redactable_response() {
         assert!(is_redactable_response(Some("application/json"), false));
-        assert!(is_redactable_response(Some("application/json; charset=utf-8"), false));
+        assert!(is_redactable_response(
+            Some("application/json; charset=utf-8"),
+            false
+        ));
         assert!(!is_redactable_response(Some("text/event-stream"), true));
         assert!(!is_redactable_response(Some("text/event-stream"), false));
         assert!(!is_redactable_response(Some("application/json"), true));

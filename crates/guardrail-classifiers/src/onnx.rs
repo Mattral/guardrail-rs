@@ -169,11 +169,18 @@ impl Stage for OnnxInjectionClassifier {
             .await
             .map_err(|e| GuardrailError::Internal(e.to_string()))??;
 
-        tracing::debug!(score, threshold, stage = "onnx_injection", "inference complete");
+        tracing::debug!(
+            score,
+            threshold,
+            stage = "onnx_injection",
+            "inference complete"
+        );
 
         if score >= threshold {
             Ok(Decision::Block {
-                reason: format!("ONNX injection classifier score {score:.3} >= threshold {threshold:.3}"),
+                reason: format!(
+                    "ONNX injection classifier score {score:.3} >= threshold {threshold:.3}"
+                ),
                 code: BlockCode::PromptInjection,
             })
         } else {

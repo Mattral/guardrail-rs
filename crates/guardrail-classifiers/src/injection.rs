@@ -102,10 +102,7 @@ impl RegexInjectionScanner {
     ///     true,
     /// ).unwrap();
     /// ```
-    pub fn from_rules(
-        patterns: Vec<String>,
-        block_on_match: bool,
-    ) -> Result<Self, GuardrailError> {
+    pub fn from_rules(patterns: Vec<String>, block_on_match: bool) -> Result<Self, GuardrailError> {
         let rule_names = patterns.clone();
         let set = RegexSet::new(&patterns)?;
         Ok(Self {
@@ -120,10 +117,7 @@ impl RegexInjectionScanner {
     /// # Errors
     ///
     /// Returns [`GuardrailError::Regex`] if any pattern fails to compile.
-    pub fn from_rule_str(
-        rule_str: &str,
-        block_on_match: bool,
-    ) -> Result<Self, GuardrailError> {
+    pub fn from_rule_str(rule_str: &str, block_on_match: bool) -> Result<Self, GuardrailError> {
         Self::from_rules(parse_rules(rule_str), block_on_match)
     }
 
@@ -234,7 +228,13 @@ mod tests {
     async fn test_injection_request_blocked() {
         let scanner = RegexInjectionScanner::default();
         let d = scanner.evaluate(&injection_request()).await.unwrap();
-        assert!(matches!(d, Decision::Block { code: BlockCode::PromptInjection, .. }));
+        assert!(matches!(
+            d,
+            Decision::Block {
+                code: BlockCode::PromptInjection,
+                ..
+            }
+        ));
     }
 
     #[rstest]

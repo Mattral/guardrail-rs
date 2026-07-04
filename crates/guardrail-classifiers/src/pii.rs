@@ -106,7 +106,11 @@ fn luhn_valid(digits: &str) -> bool {
         .map(|(i, &d)| {
             if i % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -183,10 +187,7 @@ impl PiiRedactor {
     /// # Errors
     ///
     /// Returns [`GuardrailError::Regex`] if a pattern fails to compile.
-    pub fn new(
-        entities: Vec<PiiEntityType>,
-        validate_luhn: bool,
-    ) -> Result<Self, GuardrailError> {
+    pub fn new(entities: Vec<PiiEntityType>, validate_luhn: bool) -> Result<Self, GuardrailError> {
         let mut patterns = Vec::with_capacity(entities.len());
         for entity in entities {
             let pattern_str = entity_pattern(&entity);
@@ -269,15 +270,18 @@ impl PiiRedactor {
 
             // Special handling for credit cards: apply Luhn check.
             if entry.entity_type == PiiEntityType::CreditCard && self.validate_luhn {
-                let replaced = entry.regex.replace_all(&result, |caps: &regex::Captures<'_>| {
-                    let matched = caps.get(0).map_or("", |m| m.as_str());
-                    let digits_only: String = matched.chars().filter(|c| c.is_ascii_digit()).collect();
-                    if luhn_valid(&digits_only) {
-                        entry.replacement.clone()
-                    } else {
-                        matched.to_string()
-                    }
-                });
+                let replaced = entry
+                    .regex
+                    .replace_all(&result, |caps: &regex::Captures<'_>| {
+                        let matched = caps.get(0).map_or("", |m| m.as_str());
+                        let digits_only: String =
+                            matched.chars().filter(|c| c.is_ascii_digit()).collect();
+                        if luhn_valid(&digits_only) {
+                            entry.replacement.clone()
+                        } else {
+                            matched.to_string()
+                        }
+                    });
                 result = Cow::Owned(replaced.into_owned());
             } else {
                 let replaced = entry.regex.replace_all(&result, entry.replacement.as_str());
@@ -381,10 +385,7 @@ impl Stage for PiiRedactor {
                     .into_iter()
                     .collect();
 
-                let reason = format!(
-                    "PII detected and redacted: {}",
-                    entity_summary.join(", ")
-                );
+                let reason = format!("PII detected and redacted: {}", entity_summary.join(", "));
 
                 tracing::info!(
                     entities = ?entity_summary,
@@ -406,9 +407,7 @@ impl Stage for PiiRedactor {
 
 fn entity_pattern(entity: &PiiEntityType) -> &'static str {
     match entity {
-        PiiEntityType::Email => {
-            r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
-        }
+        PiiEntityType::Email => r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
         PiiEntityType::Phone => {
             // Matches: +1-555-867-5309, (555) 867-5309, 555.867.5309, 5558675309
             r"(?:\+?1[\s\-.]?)?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4}"
@@ -417,9 +416,7 @@ fn entity_pattern(entity: &PiiEntityType) -> &'static str {
             // Matches 13–19 digit sequences with optional spaces/hyphens
             r"\b(?:\d[ \-]?){13,19}\b"
         }
-        PiiEntityType::Ssn => {
-            r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b"
-        }
+        PiiEntityType::Ssn => r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b",
         PiiEntityType::IpAddress => {
             // IPv4 + simplified IPv6
             r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b"
@@ -429,9 +426,7 @@ fn entity_pattern(entity: &PiiEntityType) -> &'static str {
             // Relax GH token length to a reasonable range to match common examples
             r"(?:sk-[a-zA-Z0-9\-_]{20,}|sk-ant-[a-zA-Z0-9\-_]{20,}|ghp_[a-zA-Z0-9]{30,40}|gho_[a-zA-Z0-9]{30,40}|ghs_[a-zA-Z0-9]{30,40}|Bearer\s+[a-zA-Z0-9\-._~+/]{20,})"
         }
-        PiiEntityType::AwsKey => {
-            r"\bAKIA[A-Z0-9]{16}\b"
-        }
+        PiiEntityType::AwsKey => r"\bAKIA[A-Z0-9]{16}\b",
     }
 }
 
@@ -562,7 +557,9 @@ mod tests {
     #[test]
     fn test_redact_response_text_without_pii_returns_none() {
         let r = PiiRedactor::default();
-        assert!(r.redact_response_text("Here is a haiku about autumn leaves.").is_none());
+        assert!(r
+            .redact_response_text("Here is a haiku about autumn leaves.")
+            .is_none());
     }
 
     #[test]
@@ -616,10 +613,10 @@ mod tests {
     // ── Luhn helper ──────────────────────────────────────────────────────────
 
     #[rstest]
-    #[case("4111111111111111", true)]   // Visa test
-    #[case("5500005555555559", true)]   // Mastercard test
-    #[case("4111111111111112", false)]  // Invalid
-    #[case("1234567890123456", false)]  // Invalid
+    #[case("4111111111111111", true)] // Visa test
+    #[case("5500005555555559", true)] // Mastercard test
+    #[case("4111111111111112", false)] // Invalid
+    #[case("1234567890123456", false)] // Invalid
     fn test_luhn(#[case] digits: &str, #[case] expected: bool) {
         assert_eq!(luhn_valid(digits), expected);
     }

@@ -22,7 +22,12 @@ pub enum Command {
         /// Falls back to the `GUARDRAIL_CONFIG` environment variable if the
         /// flag is not given, then to `guardrail.toml` in the current
         /// directory if neither is set.
-        #[arg(short, long, env = "GUARDRAIL_CONFIG", default_value = "guardrail.toml")]
+        #[arg(
+            short,
+            long,
+            env = "GUARDRAIL_CONFIG",
+            default_value = "guardrail.toml"
+        )]
         config: PathBuf,
     },
 
@@ -33,7 +38,12 @@ pub enum Command {
         /// Falls back to the `GUARDRAIL_CONFIG` environment variable if the
         /// flag is not given, then to `guardrail.toml` in the current
         /// directory if neither is set.
-        #[arg(short, long, env = "GUARDRAIL_CONFIG", default_value = "guardrail.toml")]
+        #[arg(
+            short,
+            long,
+            env = "GUARDRAIL_CONFIG",
+            default_value = "guardrail.toml"
+        )]
         config: PathBuf,
     },
 
@@ -49,7 +59,12 @@ pub enum Command {
         /// Falls back to the `GUARDRAIL_CONFIG` environment variable if the
         /// flag is not given, then to `guardrail.toml` in the current
         /// directory if neither is set.
-        #[arg(short, long, env = "GUARDRAIL_CONFIG", default_value = "guardrail.toml")]
+        #[arg(
+            short,
+            long,
+            env = "GUARDRAIL_CONFIG",
+            default_value = "guardrail.toml"
+        )]
         config: PathBuf,
     },
 }

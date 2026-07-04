@@ -54,9 +54,7 @@ pub fn is_authorized(config: &AuthConfig, path: &str, headers: &HeaderMap) -> bo
         return true;
     }
 
-    let presented_key = headers
-        .get(AUTH_HEADER_NAME)
-        .and_then(|v| v.to_str().ok());
+    let presented_key = headers.get(AUTH_HEADER_NAME).and_then(|v| v.to_str().ok());
 
     match presented_key {
         Some(key) => config.keys.iter().any(|k| k == key),
@@ -76,26 +74,46 @@ mod tests {
 
     #[test]
     fn test_disabled_auth_always_allows() {
-        let config = AuthConfig { require_key: false, keys: vec![] };
-        assert!(is_authorized(&config, "/v1/chat/completions", &HeaderMap::new()));
+        let config = AuthConfig {
+            require_key: false,
+            keys: vec![],
+        };
+        assert!(is_authorized(
+            &config,
+            "/v1/chat/completions",
+            &HeaderMap::new()
+        ));
     }
 
     #[test]
     fn test_missing_key_rejected() {
-        let config = AuthConfig { require_key: true, keys: vec!["secret".into()] };
-        assert!(!is_authorized(&config, "/v1/chat/completions", &HeaderMap::new()));
+        let config = AuthConfig {
+            require_key: true,
+            keys: vec!["secret".into()],
+        };
+        assert!(!is_authorized(
+            &config,
+            "/v1/chat/completions",
+            &HeaderMap::new()
+        ));
     }
 
     #[test]
     fn test_wrong_key_rejected() {
-        let config = AuthConfig { require_key: true, keys: vec!["secret".into()] };
+        let config = AuthConfig {
+            require_key: true,
+            keys: vec!["secret".into()],
+        };
         let headers = headers_with_key("wrong");
         assert!(!is_authorized(&config, "/v1/chat/completions", &headers));
     }
 
     #[test]
     fn test_correct_key_allowed() {
-        let config = AuthConfig { require_key: true, keys: vec!["secret".into()] };
+        let config = AuthConfig {
+            require_key: true,
+            keys: vec!["secret".into()],
+        };
         let headers = headers_with_key("secret");
         assert!(is_authorized(&config, "/v1/chat/completions", &headers));
     }
@@ -106,24 +124,37 @@ mod tests {
             require_key: true,
             keys: vec!["key-a".into(), "key-b".into()],
         };
-        assert!(is_authorized(&config, "/v1/chat/completions", &headers_with_key("key-b")));
+        assert!(is_authorized(
+            &config,
+            "/v1/chat/completions",
+            &headers_with_key("key-b")
+        ));
     }
 
     #[test]
     fn test_healthz_exempt_even_without_key() {
-        let config = AuthConfig { require_key: true, keys: vec!["secret".into()] };
+        let config = AuthConfig {
+            require_key: true,
+            keys: vec!["secret".into()],
+        };
         assert!(is_authorized(&config, "/healthz", &HeaderMap::new()));
     }
 
     #[test]
     fn test_metrics_exempt_even_without_key() {
-        let config = AuthConfig { require_key: true, keys: vec!["secret".into()] };
+        let config = AuthConfig {
+            require_key: true,
+            keys: vec!["secret".into()],
+        };
         assert!(is_authorized(&config, "/metrics", &HeaderMap::new()));
     }
 
     #[test]
     fn test_proxy_path_not_exempt() {
-        let config = AuthConfig { require_key: true, keys: vec!["secret".into()] };
+        let config = AuthConfig {
+            require_key: true,
+            keys: vec!["secret".into()],
+        };
         assert!(!is_authorized(&config, "/v1/messages", &HeaderMap::new()));
     }
 
@@ -132,7 +163,14 @@ mod tests {
         // Misconfiguration (require_key=true, keys=[]) is caught by config
         // validation separately, but this function must still fail closed
         // rather than panic or accidentally allow.
-        let config = AuthConfig { require_key: true, keys: vec![] };
-        assert!(!is_authorized(&config, "/v1/chat/completions", &headers_with_key("anything")));
+        let config = AuthConfig {
+            require_key: true,
+            keys: vec![],
+        };
+        assert!(!is_authorized(
+            &config,
+            "/v1/chat/completions",
+            &headers_with_key("anything")
+        ));
     }
 }

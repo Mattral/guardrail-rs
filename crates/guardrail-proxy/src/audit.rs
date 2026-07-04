@@ -27,12 +27,12 @@
 //! - Audit records never contain message content or API keys.
 //! - Only metadata needed for security analysis is logged.
 
+use chrono::{Datelike, Timelike};
 use guardrail_core::{
     decision::{BlockCode, Decision},
     request::GuardrailRequest,
 };
 use serde::Serialize;
-use chrono::{Datelike, Timelike};
 
 /// A structured audit record for a single pipeline decision.
 ///
@@ -120,9 +120,9 @@ impl AuditRecord {
 
         let (decision_name, stage, reason, code, pii_entities) = match decision {
             Decision::Allow => ("allow", None, None, None, Vec::new()),
-            Decision::Redact { reason, entities, .. } => {
-                ("redact", None, Some(reason.clone()), None, entities.clone())
-            }
+            Decision::Redact {
+                reason, entities, ..
+            } => ("redact", None, Some(reason.clone()), None, entities.clone()),
             Decision::Block { reason, code } => (
                 "block",
                 None, // stage name is best-effort from caller context
@@ -235,9 +235,7 @@ fn chrono_timestamp() -> String {
     // using a minimal algorithm to avoid pulling in `chrono`.
     let (year, month, day, hour, min, sec) = unix_secs_to_datetime(total_secs);
 
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}.{millis:03}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}.{millis:03}Z")
 }
 
 /// Minimal, allocation-free conversion of UNIX seconds to calendar fields

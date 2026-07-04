@@ -162,37 +162,41 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
     for stage_id in &config.pipeline.request_stages {
         match stage_id.as_str() {
             "regex_injection" if config.stages.regex_injection.enabled => {
-                let log_only = config.stages.regex_injection.action
-                    == crate::schema::StageAction::LogOnly;
+                let log_only =
+                    config.stages.regex_injection.action == crate::schema::StageAction::LogOnly;
 
                 let scanner = if !config.stages.regex_injection.rules_file.trim().is_empty() {
                     let path = &config.stages.regex_injection.rules_file;
-                    let mut contents = std::fs::read_to_string(path).map_err(|source| {
-                        ConfigLoadError::Io { path: PathBuf::from(path), source }
-                    })?;
+                    let mut contents =
+                        std::fs::read_to_string(path).map_err(|source| ConfigLoadError::Io {
+                            path: PathBuf::from(path),
+                            source,
+                        })?;
                     // Append extra_rules to the file content.
                     for rule in &config.stages.regex_injection.extra_rules {
                         contents.push('\n');
                         contents.push_str(rule);
                     }
-                    RegexInjectionScanner::from_rule_str(&contents, !log_only)
-                        .map_err(|source| ConfigLoadError::StageBuild {
+                    RegexInjectionScanner::from_rule_str(&contents, !log_only).map_err(
+                        |source| ConfigLoadError::StageBuild {
                             stage: "regex_injection".into(),
                             source,
-                        })?
+                        },
+                    )?
                 } else {
-                    let mut bundled = include_str!(
-                        "../../guardrail-classifiers/src/rules/injection.rules"
-                    ).to_string();
+                    let mut bundled =
+                        include_str!("../../guardrail-classifiers/src/rules/injection.rules")
+                            .to_string();
                     for rule in &config.stages.regex_injection.extra_rules {
                         bundled.push('\n');
                         bundled.push_str(rule);
                     }
-                    RegexInjectionScanner::from_rule_str(&bundled, !log_only)
-                        .map_err(|source| ConfigLoadError::StageBuild {
+                    RegexInjectionScanner::from_rule_str(&bundled, !log_only).map_err(|source| {
+                        ConfigLoadError::StageBuild {
                             stage: "regex_injection".into(),
                             source,
-                        })?
+                        }
+                    })?
                 };
                 builder = builder.stage(scanner);
             }
@@ -259,7 +263,10 @@ fn convert_policy_rules(rules: &[crate::schema::PolicyRuleConfig]) -> Vec<Policy
                     PolicyCondition::Always
                 } else if !w.content_contains.is_empty() {
                     PolicyCondition::ContentContains(
-                        w.content_contains.iter().map(|k| k.to_lowercase()).collect(),
+                        w.content_contains
+                            .iter()
+                            .map(|k| k.to_lowercase())
+                            .collect(),
                     )
                 } else if w.system_prompt_absent {
                     PolicyCondition::SystemPromptAbsent
@@ -310,11 +317,12 @@ fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoad
             }
         })?;
 
-    let redactor = PiiRedactor::new(entities.0, config.stages.pii_redactor.validate_luhn)
-        .map_err(|source| ConfigLoadError::StageBuild {
+    let redactor = PiiRedactor::new(entities.0, config.stages.pii_redactor.validate_luhn).map_err(
+        |source| ConfigLoadError::StageBuild {
             stage: "pii_redactor".into(),
             source,
-        })?;
+        },
+    )?;
 
     Ok(Some(redactor))
 }
@@ -432,7 +440,8 @@ impl ConfigHandle {
 
         self.config.store(Arc::new(new_config));
         self.pipeline.store(Arc::new(new_pipeline));
-        self.response_redactor.store(Arc::new(new_response_redactor));
+        self.response_redactor
+            .store(Arc::new(new_response_redactor));
 
         tracing::info!(path = %self.path.display(), "configuration reloaded");
         Ok(())

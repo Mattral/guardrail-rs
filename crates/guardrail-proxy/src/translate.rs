@@ -90,12 +90,9 @@ fn parse_messages(value: &Value, _provider: &Provider) -> Result<Vec<ChatMessage
 
     let mut out = Vec::with_capacity(arr.len());
     for (i, item) in arr.iter().enumerate() {
-        let role_str = item
-            .get("role")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                GuardrailError::Internal(format!("messages[{i}] missing 'role' field"))
-            })?;
+        let role_str = item.get("role").and_then(Value::as_str).ok_or_else(|| {
+            GuardrailError::Internal(format!("messages[{i}] missing 'role' field"))
+        })?;
 
         let role = match role_str {
             "system" => Role::System,
@@ -109,11 +106,9 @@ fn parse_messages(value: &Value, _provider: &Provider) -> Result<Vec<ChatMessage
             }
         };
 
-        let content = item
-            .get("content")
-            .ok_or_else(|| {
-                GuardrailError::Internal(format!("messages[{i}] missing 'content' field"))
-            })?;
+        let content = item.get("content").ok_or_else(|| {
+            GuardrailError::Internal(format!("messages[{i}] missing 'content' field"))
+        })?;
 
         let content = parse_content(content, i)?;
 

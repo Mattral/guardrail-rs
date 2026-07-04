@@ -204,17 +204,28 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
         Decision::Allow | Decision::Redact { .. } => {
             let is_redact = matches!(&decision, Decision::Redact { .. });
 
-            let upstream_response =
-                forward_to_upstream(&state, &config, &path, &final_req, &request_id, forward_headers)
-                    .await;
+            let upstream_response = forward_to_upstream(
+                &state,
+                &config,
+                &path,
+                &final_req,
+                &request_id,
+                forward_headers,
+            )
+            .await;
 
             let total_elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
             // `from_decision` reads the PII entity list directly from
             // `decision` (Decision::Redact's own `entities` field) — no
             // separate parameter to keep in sync.
-            AuditRecord::from_decision(&final_req, &decision, pipeline_elapsed_ms, total_elapsed_ms)
-                .emit();
+            AuditRecord::from_decision(
+                &final_req,
+                &decision,
+                pipeline_elapsed_ms,
+                total_elapsed_ms,
+            )
+            .emit();
 
             if is_redact {
                 state.metrics.redacted_total.inc();
