@@ -24,7 +24,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run benchmarks
-        run: cargo bench -p guardrail-classifiers -- --output-format bencher | tee output.txt
+        # Without `pipefail` (bash's default), a `cargo bench` failure is
+        # masked: the pipeline's exit status is `tee`'s (which almost
+        # always succeeds), so this step reports success with an empty
+        # output.txt, and the *real* error only surfaces several minutes
+        # later as a confusing "No benchmark result was found... Benchmark
+        # output was ''" from the unrelated benchmark-action step below.
+        run: |
+          set -o pipefail
+          cargo bench -p guardrail-classifiers -- --output-format bencher | tee output.txt
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
@@ -54,6 +62,7 @@ jobs:
 
       - name: Run full-pipeline benchmark
         run: |
+          set -o pipefail
           cargo bench -p guardrail-test-suite --bench pipeline -- --output-format bencher \
             | tee pipeline-output.txt
 

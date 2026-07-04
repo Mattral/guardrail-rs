@@ -11,6 +11,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Docker release build failed outright — this is why `v0.1.1` never
+actually reached crates.io despite the tag existing** — `Dockerfile`'s
+builder stage was pinned to `rust:1.81-slim-bookworm`. A transitive
+dependency (`time-core`) now requires the `edition2024` Cargo feature,
+stabilized in Cargo 1.85, so `cargo build` failed at the
+manifest-parsing stage before compiling anything: `feature 'edition2024'
+is required ... not stabilized in this version of Cargo (1.81.0)`. Since
+`release.yml`'s `publish` job requires both `build-binaries` *and*
+`docker` to succeed, this alone blocked the real crates.io publish even
+though `verify` was green — every `guardrail-core = "^0.1.1"`-style
+resolution failure in `publish-dry-run` on subsequent pushes to `main`
+was a downstream symptom of this, not a separate bug (crates.io simply
+never received 0.1.1 to resolve against). Changed the base image to
+`rust:1-slim-bookworm`, which floats to the latest stable release —
+matching `rust-toolchain.toml` (`channel = "stable"`) and every GitHub
+Actions workflow in this repo, rather than reintroducing the same
+category of bug the next time some dependency bumps its MSRV past
+whatever specific patch version got pinned.
+
+**Docker's dependency-caching layer was silently a no-op** — found while
+fixing the above: the same builder stage creates dummy `src/lib.rs` /
+`src/main.rs` files and runs `cargo build ... || true` specifically to
+warm the dependency cache in its own Docker layer before the real source
+is copied in. But `guardrail-classifiers` and `guardrail-test-suite` each
+declare a `[[bench]]` target, and Cargo parses every workspace member's
+manifest to load the workspace even when building a single package with
+`-p` — so that dummy build failed immediately at manifest-parsing
+(`can't find classifier_benchmarks bench at benches/classifier_benchmarks.rs`),
+before ever fetching a single dependency, with the `|| true` silently
+swallowing it. Every Docker build was re-downloading and re-compiling the
+entire dependency tree from scratch regardless of Docker's layer cache.
+Added dummy `benches/classifier_benchmarks.rs` and `benches/pipeline.rs`
+stubs alongside the existing `src/` stubs so the cache-warming build
+actually gets past manifest parsing.
+
+**Benchmark CI job's `cargo bench | tee output.txt` masked real
+failures** — without `pipefail` (bash's default), the pipeline's exit
+status is `tee`'s, not `cargo bench`'s, so a benchmark failure produced
+an empty `output.txt` and reported this step as successful — the actual
+error only surfaced several minutes later, several steps downstream, as
+an unhelpful "No benchmark result was found... Benchmark output was ''"
+from the unrelated `benchmark-action` step. Added `set -o pipefail` to
+both this job and `pipeline-latency-gate`'s identical pattern, so a real
+`cargo bench` failure now fails the correct step immediately with its
+actual error message. (This doesn't yet explain *why* the classifier
+benchmark produced no output in the first place — that error was never
+visible before this fix. Should surface clearly on the next run.)
+
 **Flaky tests: `test_load_minimal_config` and `test_load_invalid_semantics_errors`
 failed nondeterministically under `cargo tarpaulin`** — both got tripped up by
 `test_env_override_behavior` running concurrently on another thread.
