@@ -174,6 +174,11 @@ impl RegexInjectionScanner {
     pub fn num_patterns(&self) -> usize {
         self.patterns.len()
     }
+
+    /// Return the embedded default rule source used by [`Self::default`].
+    pub fn bundled_rule_source() -> &'static str {
+        BUNDLED_RULES
+    }
 }
 
 #[async_trait::async_trait]

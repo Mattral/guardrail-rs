@@ -184,19 +184,18 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                         },
                     )?
                 } else {
-                    let mut bundled =
-                        include_str!("../../guardrail-classifiers/src/rules/injection.rules")
-                            .to_string();
+                    let bundled = guardrail_classifiers::RegexInjectionScanner::bundled_rule_source();
+                    let mut bundled_rules = bundled.to_string();
                     for rule in &config.stages.regex_injection.extra_rules {
-                        bundled.push('\n');
-                        bundled.push_str(rule);
+                        bundled_rules.push('\n');
+                        bundled_rules.push_str(rule);
                     }
-                    RegexInjectionScanner::from_rule_str(&bundled, !log_only).map_err(|source| {
-                        ConfigLoadError::StageBuild {
+                    RegexInjectionScanner::from_rule_str(&bundled_rules, !log_only).map_err(
+                        |source| ConfigLoadError::StageBuild {
                             stage: "regex_injection".into(),
                             source,
-                        }
-                    })?
+                        },
+                    )?
                 };
                 builder = builder.stage(scanner);
             }
