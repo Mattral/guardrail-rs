@@ -39,10 +39,17 @@ deny = [
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
+# NOTE: `vulnerability`, `unsound`, and `notice` were removed from cargo-deny's
+# schema (all vulnerability/unsound advisories now unconditionally emit
+# errors, and specifying these fields is itself a config error) — do not
+# re-add them. Ignore a specific advisory via `ignore = ["RUSTSEC-...."]`
+# instead.
+# `workspace`: only fail on unmaintained advisories for crates that are a
+# *direct* dependency of this workspace. Deep transitive unmaintained deps
+# (e.g. pulled in by a dev-dependency like `criterion`) are surfaced by
+# `cargo audit`'s informational warnings but won't hard-fail this gate.
+unmaintained = "workspace"
 yanked = "warn"
-notice = "warn"
 
 [sources]
 unknown-registry = "deny"
