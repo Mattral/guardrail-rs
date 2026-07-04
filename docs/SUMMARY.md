@@ -6,7 +6,6 @@
 
 # User Guide
 
-- [Quick Start](../README.md)
 - [Configuration Reference](configuration.md)
 - [Policy Rules](policy-rules.md)
 - [Deployment](deployment.md)
