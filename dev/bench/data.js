@@ -1,0 +1,92 @@
+window.BENCHMARK_DATA = {
+  "lastUpdate": 1783166904127,
+  "repoUrl": "https://github.com/Mattral/guardrail-rs",
+  "entries": {
+    "Benchmark": [
+      {
+        "commit": {
+          "author": {
+            "email": "88831350+Mattral@users.noreply.github.com",
+            "name": "Min Htet Myet",
+            "username": "Mattral"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "abcc5fdf0fe519164b2ebbccf79fff6ddce59c5c",
+          "message": "Update GitHub Actions permissions and token usage",
+          "timestamp": "2026-07-04T21:05:29+09:00",
+          "tree_id": "74092269aa4285ef0defb630b71a50465fffd768",
+          "url": "https://github.com/Mattral/guardrail-rs/commit/abcc5fdf0fe519164b2ebbccf79fff6ddce59c5c"
+        },
+        "date": 1783166903715,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 368,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 4061,
+            "range": "± 17",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 15941,
+            "range": "± 83",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 31681,
+            "range": "± 65",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 1576,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 15076,
+            "range": "± 239",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 58665,
+            "range": "± 87",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 116913,
+            "range": "± 428",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 4114,
+            "range": "± 8",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 16038,
+            "range": "± 183",
+            "unit": "ns/iter"
+          }
+        ]
+      }
+    ]
+  }
+}
