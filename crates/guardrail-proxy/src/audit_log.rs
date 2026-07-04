@@ -24,11 +24,7 @@
 //!     max_size_mb: 100,
 //! };
 //!
-//! if let Some((layer, _guard)) = audit_log::build_layer::<tracing_subscriber::Registry>(
-//!     &config
-//! ).unwrap() {
-//!     tracing_subscriber::registry().with(layer).init();
-//! }
+//! let _ = audit_log::build_layer(&config).unwrap();
 //! ```
 
 use std::fs::{File, OpenOptions};

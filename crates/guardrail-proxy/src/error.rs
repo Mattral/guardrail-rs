@@ -107,7 +107,7 @@ pub(crate) enum BodyReadError {
 /// }
 /// # }
 /// ```
-pub(crate) async fn read_limited_body(
+pub async fn read_limited_body(
     body: Incoming,
     max_size: usize,
 ) -> Result<Bytes, BodyReadError> {

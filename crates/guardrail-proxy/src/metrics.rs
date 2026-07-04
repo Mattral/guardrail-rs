@@ -197,6 +197,7 @@ impl Metrics {
     /// use guardrail_proxy::metrics::Metrics;
     ///
     /// let metrics = Metrics::new();
+    /// metrics.requests_total.with_label_values(&["allow", "openai"]).inc();
     /// let output = metrics.render().unwrap();
     /// assert!(output.contains("guardrail_requests_total"));
     /// ```

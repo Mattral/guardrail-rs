@@ -235,10 +235,9 @@ async fn custom_policy_rule_blocks_keyword() {
         [[policy.rules]]
         name = "block-acme-corp-mentions"
         enabled = true
-        action = "block"
-        condition.type = "content_contains"
-        condition.keywords = ["acme corp"]
-        message = "Mentions of Acme Corp are not permitted in this deployment."
+        when.content_contains = ["acme corp"]
+        then.action = "block"
+        then.message = "Mentions of Acme Corp are not permitted in this deployment."
         "#,
         upstream.uri()
     );
