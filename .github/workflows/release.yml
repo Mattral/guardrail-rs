@@ -57,22 +57,22 @@ jobs:
   # crates with no unpublished-sibling dependencies, rather than discovered
   # for the first time on a real tagged release.
   #
-  # IMPORTANT CAVEAT, unverified against a real `cargo publish --dry-run`
-  # run (no toolchain was available to test this claim before committing
-  # it): `cargo publish --dry-run` packages a crate by stripping its `path`
-  # dependency keys and resolving the remainder via `version` requirements
-  # against the registry, the same way a real publish does. For
+  # CAVEAT (still applies even now that every crate has a real release on
+  # crates.io — see https://crates.io/users/Mattral): `cargo publish
+  # --dry-run` packages a crate by stripping its `path` dependency keys and
+  # resolving the remainder via `version` requirements against the
+  # registry, the same way a real publish does. For
   # `guardrail-classifiers`/`guardrail-config`/`guardrail-proxy`/
   # `guardrail-cli` — every crate here other than `guardrail-core` — that
-  # means this dry-run job will almost certainly FAIL until `guardrail-core`
-  # (and each crate's other unpublished siblings) have actually been
-  # published at least once. If that's what happens here, it is an expected
-  # failure mode for a not-yet-published workspace, not evidence the
-  # manifests themselves are broken — re-run this job (or just trust the
-  # real `publish` job's own per-crate dependency-order waits) once the
-  # first real release has gone out and every crate exists on the registry.
-  # `guardrail-core` itself has no such sibling dependency and should be a
-  # meaningful, trustworthy signal from the very first run.
+  # means this job will fail on main *between* a version bump in this repo
+  # and the matching tagged release actually publishing that version (e.g.
+  # right now, after bumping to 0.1.1 in Cargo.toml but before a `v0.1.1`
+  # tag has been pushed and gone through the real `publish` job below,
+  # `guardrail-core = { version = "0.1.1" }` can't resolve against the
+  # registry, which still only has 0.1.0). That's expected, not evidence of
+  # a broken manifest — it self-resolves once the tagged release publishes
+  # the new version. `guardrail-core` itself has no such sibling dependency
+  # and is a trustworthy signal on every run regardless.
   publish-dry-run:
     name: dry-run publish (${{ matrix.crate }})
     needs: verify
