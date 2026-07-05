@@ -211,20 +211,31 @@ mod tests {
         // `.trim()` in build_otel_layer should treat a whitespace-only
         // endpoint the same as an absent one, rather than attempting to
         // build an exporter against an empty address.
-        let mut config = ObservabilityConfig::default();
-        config.otlp_endpoint = "   ".to_string();
+        let config = ObservabilityConfig {
+            otlp_endpoint: "   ".to_string(),
+            ..Default::default()
+        };
         let result = build_otel_layer(&config).unwrap();
         assert!(result.is_none());
     }
 
-    #[test]
-    fn test_build_otel_layer_with_endpoint_returns_provider() {
+    #[tokio::test]
+    async fn test_build_otel_layer_with_endpoint_returns_provider() {
         // Building the tonic gRPC exporter is lazy — it does not connect
         // eagerly — so this succeeds even with no collector listening on
         // the endpoint. This exercises the `Some` path (the tracer provider
         // is actually constructed) and the `shutdown_tracer_provider` call.
-        let mut config = ObservabilityConfig::default();
-        config.otlp_endpoint = "http://localhost:4317".to_string();
+        //
+        // Requires an active Tokio runtime: `Endpoint::connect_lazy()`
+        // spawns a background connection-management task via
+        // `tokio::task::spawn` even though it doesn't block on an actual
+        // handshake, so a plain `#[test]` panics with "there is no reactor
+        // running" (as it did in CI on every OS before this was a
+        // `#[tokio::test]`).
+        let config = ObservabilityConfig {
+            otlp_endpoint: "http://localhost:4317".to_string(),
+            ..Default::default()
+        };
         let provider = build_otel_layer(&config)
             .expect("building the OTLP exporter should not require a live collector")
             .expect("a non-empty endpoint should produce Some(provider)");
