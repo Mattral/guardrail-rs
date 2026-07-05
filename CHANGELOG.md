@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-03
+
+### Fixed
+
+**Security: default bundled prompt-injection rules were badly out of sync
+between crates** — `guardrail-config/src/injection.rules` (the rule set
+`guardrail run` actually loads by default, with no custom `rules_file`
+configured) had drifted down to 8 basic patterns, while
+`guardrail-classifiers/src/rules/injection.rules` (used by
+`RegexInjectionScanner::default()` when embedding the pipeline directly,
+and by that crate's own benches/tests) had grown to 30+ patterns covering
+delimiter-abuse and harmful-capability-elicitation categories that the
+config crate's copy was missing entirely — despite a code comment on the
+config copy explicitly saying to keep the two in sync. Every proxy
+deployment running with default settings was getting materially weaker
+injection defense than the embedded-library path or the project's own
+tests exercised. Synced both files to the comprehensive 30+ pattern set
+and added a new `injection-rules-sync` CI job
+(`.github/workflows/ci.yml`) that diffs the two files (ignoring comments)
+on every push so this can't silently regress again.
+
+**CI: `cargo-deny` schema drift** — `deny.toml`'s `[advisories]` table used
+the pre-0.14 `vulnerability = "deny"` / `unmaintained = "warn"` / `notice = "warn"`
+values. Current `cargo-deny` removed `vulnerability` and `notice` entirely
+(all vulnerability advisories now unconditionally error) and changed
+`unmaintained` to an enum of `"all" | "workspace" | "transitive" | "none"`,
+so CI was failing with `error[unexpected-value]` before the advisory check
+itself ever ran. Removed the deprecated fields and set
+`unmaintained = "workspace"` (fails only on unmaintained *direct*
+dependencies; deep transitive ones like `criterion`'s `number_prefix`/`paste`
+no longer hard-fail the gate).
+
+**CI: `RUSTSEC-2024-0437` (protobuf uncontrolled recursion) via `prometheus`** —
+`prometheus`'s default features pull in `protobuf` 2.28.0 for its protobuf
+metrics encoder, which we never use (`guardrail-proxy::metrics::render`
+only calls `prometheus::TextEncoder`). Set
+`prometheus = { version = "0.13", default-features = false }` in the
+workspace dependency table, dropping the vulnerable dependency entirely
+with no functional change.
+
+**CI: rustdoc `private_intra_doc_links` build failures** — Six module-level
+doc comments linked to the crate-private `handler` module
+(`guardrail-proxy`) or the private `build_pii_redactor` function
+(`guardrail-config`) using intra-doc link syntax (`` [`crate::handler`] ``),
+which `-D warnings` promotes to a hard error since the link can never
+resolve for downstream readers of the public docs. De-linked these
+references to plain code-formatted text (`` `crate::handler` ``) — same
+readability, no broken-link error.
+
+**CI: coverage gate (was 79.37%, threshold 80%)** — `guardrail-proxy`'s
+`telemetry.rs` (10/20 lines) and `translate.rs` (74/94 lines) were the two
+files dragging the workspace below the 80% line-coverage gate. Added
+targeted tests: the `Some(provider)` branch of `build_otel_layer` (endpoint
+non-empty), `shutdown_tracer_provider`, whitespace-only endpoint trimming,
+and `OtelError`'s `Display` impls in `telemetry.rs`; and the remaining
+`parse_request`/`parse_messages`/`parse_content`/`serialize_request` error
+and branch paths (non-array `messages`, missing `role`/`content`, null
+content, non-string/array content, unsupported content-part types, the
+Anthropic-style `image` placeholder branch, `tool`/`function` role mapping,
+and multi-part `image_url` round-tripping) in `translate.rs`.
+
+### Changed
+
+- Workspace version bumped `0.1.0` → `0.1.1` (and all 14 internal
+  `guardrail-* = { path = "...", version = "..." }` pins updated to match —
+  see the version-bump-checklist comment on `[workspace.package]` in the
+  root `Cargo.toml`).
+- README: added status badges (CI, crates.io, docs.rs, license, MSRV), a
+  `cargo install guardrail-cli` installation section ahead of the
+  build-from-source path, and an "At a glance" box summarizing latency
+  targets, fail-open behavior, and threat-model scope for people evaluating
+  the project from crates.io or GitHub.
+- Added a Colab-runnable notebook
+  (`examples/notebooks/quickstart_colab.ipynb`) that installs Rust,
+  `cargo install`s `guardrail-cli` straight from crates.io, and drives the
+  running proxy against a local mock upstream to demonstrate prompt-injection
+  blocking and PII redaction end-to-end with no API key required. Linked
+  from the README and `examples/README.md` via an "Open in Colab" badge.
+- `justfile`: added the `reload` recipe and a `smoke` alias for
+  `example-curl` — both were already referenced by name in the README and
+  `examples/README.md` but didn't actually exist, so `just reload` / `just
+  smoke` would previously fail with "unknown recipe".
+
 ### Added
 
 **`publish-dry-run` CI job — continuous publish validation ahead of crates.io Trusted Publishing setup**
