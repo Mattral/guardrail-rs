@@ -771,12 +771,12 @@ message = "Not permitted."
             return;
         };
 
-        let strip_noise = |s: &str| -> Vec<&str> {
+        fn strip_noise(s: &str) -> Vec<&str> {
             s.lines()
                 .map(str::trim)
                 .filter(|l| !l.is_empty() && !l.starts_with('#'))
                 .collect()
-        };
+        }
 
         assert_eq!(
             strip_noise(config_copy),

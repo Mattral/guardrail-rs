@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**CI: `cargo-deny`'s `[licenses]` schema was *also* out of date** — a second
+real CI run (after the `[advisories]` fix below) surfaced that
+`deny.toml`'s `[licenses]` table used `deny`, `copyleft`,
+`allow-osi-fsf-free`, and `default`, all of which current `cargo-deny` has
+removed outright (see [PR #611](https://github.com/EmbarkStudios/cargo-deny/pull/611)) —
+every license not explicitly in `allow` is now unconditionally denied,
+which is exactly what our old settings already enforced, so this is a
+behavior-preserving trim down to `allow` + `confidence-threshold`.
+
+**Test: lifetime error in the new `injection.rules`-sync test** — the
+`strip_noise` helper added below was a closure with an explicit `-> Vec<&str>`
+return type; closures (unlike `fn` items) don't get per-call-site lifetime
+generalization, so calling it once with a `&'static str` and once with a
+`&String` of a shorter, unrelated lifetime failed to type-check
+(`'1` must outlive `'2`) under `clippy`/`nextest` on Linux, Windows, and
+macOS runners alike. Changed it from a closure to a nested `fn`, which
+*does* get fresh per-call lifetime elision.
+
+**Orphaned duplicate example caused a build-output filename collision** —
+`crates/guardrail-classifiers/examples/custom_stage.rs` was a near-identical
+leftover of a file this same changelog already records as "moved" to
+`crates/guardrail-cli/examples/custom_stage.rs` earlier — the move copied
+the file but never deleted the original, so `cargo` warned about both
+crates' example binaries colliding on the same
+`target/debug/examples/custom_stage` output path (flagged as a
+"may become a hard error in the future" cargo warning). Nothing referenced
+the `guardrail-classifiers` copy (README, `examples/README.md`, and
+`justfile`'s `example-custom-stage` recipe all already pointed at
+`-p guardrail-cli`), so it was safe to just delete.
+
 **Security: default bundled prompt-injection rules were badly out of sync
 between crates** — `guardrail-config/src/injection.rules` (the rule set
 `guardrail run` actually loads by default, with no custom `rules_file`
