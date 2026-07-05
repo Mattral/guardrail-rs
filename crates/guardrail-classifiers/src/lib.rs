@@ -6,12 +6,17 @@
 //!
 //! ## Available stages
 //!
+//! (`OnnxInjectionClassifier` and `ToxicityClassifier` below are plain code
+//! text, not links: they only exist under the `onnx` feature, and CI builds
+//! docs with default features, so a link to either would be a broken-link
+//! build error.)
+//!
 //! | Stage | Feature flag | Description |
 //! |-------|-------------|-------------|
 //! | [`RegexInjectionScanner`] | *(always)* | Fast regex-based prompt injection detection |
 //! | [`PiiRedactor`] | *(always)* | Regex-based PII detection and redaction |
-//! | [`OnnxInjectionClassifier`] | `onnx` | DeBERTa-based semantic injection detection |
-//! | [`ToxicityClassifier`] | `onnx` | RoBERTa-based toxicity detection |
+//! | `OnnxInjectionClassifier` | `onnx` | DeBERTa-based semantic injection detection |
+//! | `ToxicityClassifier` | `onnx` | RoBERTa-based toxicity detection |
 //!
 //! ## Quick example
 //!

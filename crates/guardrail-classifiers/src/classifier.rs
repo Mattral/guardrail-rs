@@ -12,11 +12,16 @@
 //!
 //! ## Built-in backends
 //!
+//! (`OnnxCpuBackend` and `OnnxCudaBackend` below are plain code text, not
+//! links: they only exist under the `onnx`/`onnx-cuda` features, and CI
+//! builds docs with default features, so a link to either would be a
+//! broken-link build error.)
+//!
 //! | Backend | Feature | Description |
 //! |---------|---------|-------------|
 //! | [`RegexBackend`] | *(always)* | Zero-allocation regex matching via `RegexSet` |
-//! | [`OnnxCpuBackend`] | `onnx` | ONNX Runtime CPU execution provider |
-//! | [`OnnxCudaBackend`] | `onnx-cuda` | ONNX Runtime CUDA execution provider |
+//! | `OnnxCpuBackend` | `onnx` | ONNX Runtime CPU execution provider |
+//! | `OnnxCudaBackend` | `onnx-cuda` | ONNX Runtime CUDA execution provider |
 //!
 //! ## Implementing a custom backend
 //!
@@ -49,8 +54,8 @@ use guardrail_core::GuardrailError;
 /// # Implementors
 ///
 /// - [`RegexBackend`] — always available, zero dependencies.
-/// - [`OnnxCpuBackend`] — behind the `onnx` feature.
-/// - [`OnnxCudaBackend`] — behind the `onnx-cuda` feature.
+/// - `OnnxCpuBackend` — behind the `onnx` feature.
+/// - `OnnxCudaBackend` — behind the `onnx-cuda` feature.
 #[async_trait::async_trait]
 pub trait Classifier: Send + Sync + 'static {
     /// The type of input the classifier accepts.
