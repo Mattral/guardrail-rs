@@ -21,9 +21,19 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-DFS-2016",
+    # Newer ICU4X-family crates (icu_*, zerovec, yoke, tinystr, litemap, ...,
+    # transitively pulled in via `idna` -> `url` -> `reqwest`, and
+    # `unicode-ident`) moved from Unicode-DFS-2016 to this newer, still
+    # OSI-approved license. Keeping both since different dependency
+    # versions in the graph use either one.
+    "Unicode-3.0",
     "CC0-1.0",
     "MPL-2.0",
     "OpenSSL",
+    # webpki-root-certs / webpki-roots (transitively via rustls, and via
+    # `onnx`'s `ort` -> `ureq`), a permissive data-only license for the
+    # bundled Mozilla root certificate list.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
@@ -31,9 +41,18 @@ confidence-threshold = 0.8
 multiple-versions = "warn"
 wildcards = "deny"
 deny = [
-    # OpenSSL is banned; use rustls instead
-    { name = "openssl" },
-    { name = "openssl-sys" },
+    # OpenSSL is banned everywhere in the *runtime* dependency tree; use
+    # rustls instead (already the case for reqwest/hyper/tonic here). The
+    # `wrappers` exception below allows it ONLY when pulled in transitively
+    # by `native-tls`, which under the `onnx`/`onnx-cuda` features is itself
+    # only a (build) dependency of `ort-sys` — used solely to download the
+    # prebuilt ONNX Runtime shared library at compile time. It never links
+    # into, or ships inside, the actual guardrail-rs binary, so it doesn't
+    # carry the same runtime TLS-stack risk this ban exists to prevent.
+    # `cargo tree -e build -i openssl` and `-i openssl-sys` confirm `(build)
+    # ort-sys` is the only path either crate is reachable from.
+    { crate = "openssl", wrappers = ["native-tls"], reason = "only a (build)-dependency of ort-sys via native-tls/ureq when the onnx feature downloads its prebuilt runtime; never in the shipped binary's runtime TLS stack" },
+    { crate = "openssl-sys", wrappers = ["native-tls", "openssl"], reason = "see the openssl entry above" },
 ]
 
 [advisories]
