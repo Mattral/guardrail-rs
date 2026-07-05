@@ -203,6 +203,40 @@ jobs:
           fi
           echo "All internal dependency version pins match the workspace version."
 
+  # ── Bundled injection-rules drift check ─────────────────────────────────────
+  # guardrail-config/src/injection.rules (the default rule set the *proxy*
+  # actually loads via ConfigLoader) and
+  # guardrail-classifiers/src/rules/injection.rules (loaded by
+  # RegexInjectionScanner::default(), used directly when embedding the
+  # library and by guardrail-classifiers' own benches/tests) are two
+  # physically separate `include_str!` targets in different crates that are
+  # supposed to be identical. They previously drifted — the config crate's
+  # copy fell back to an 8-pattern subset while the classifiers crate's copy
+  # grew to 30+ patterns covering delimiter abuse and harmful-capability
+  # elicitation — silently weakening the *default* injection defense for
+  # every user running `guardrail run` without a custom `rules_file`. Diffing
+  # on every push catches that class of regression immediately instead of
+  # relying on someone noticing during a security review.
+  injection-rules-sync:
+    name: bundled injection-rules files stay in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Diff the two bundled rule-set files (ignoring comment lines)
+        run: |
+          A=crates/guardrail-config/src/injection.rules
+          B=crates/guardrail-classifiers/src/rules/injection.rules
+          grep -v '^\s*#' "$A" | grep -v '^\s*$' > /tmp/a.rules
+          grep -v '^\s*#' "$B" | grep -v '^\s*$' > /tmp/b.rules
+          if ! diff -u /tmp/a.rules /tmp/b.rules; then
+            echo ""
+            echo "FAILED: $A and $B have diverged (diff above, comments/blank"
+            echo "lines ignored). Update whichever one is stale so both crates"
+            echo "ship the same default prompt-injection rule set."
+            exit 1
+          fi
+          echo "$A and $B match."
+
   # ── Security audit ─────────────────────────────────────────────────────────
   audit:
     name: cargo-audit
