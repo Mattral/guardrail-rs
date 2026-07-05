@@ -3,6 +3,7 @@ name        = "guardrail-classifiers"
 description = "Classifier implementations for guardrail-rs: regex, ONNX, and PII redaction"
 version.workspace     = true
 edition.workspace     = true
+rust-version.workspace     = true
 authors.workspace     = true
 license.workspace     = true
 repository.workspace  = true
@@ -21,7 +22,7 @@ onnx-pii = ["onnx"]
 onnx-cuda = ["onnx", "ort/cuda"]
 
 [dependencies]
-guardrail-core = { path = "../guardrail-core", version = "0.1.0" }
+guardrail-core = { path = "../guardrail-core", version = "0.1.1" }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 thiserror      = { workspace = true }

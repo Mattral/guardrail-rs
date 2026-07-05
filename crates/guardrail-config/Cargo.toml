@@ -3,6 +3,7 @@ name        = "guardrail-config"
 description = "Configuration loading, validation, and hot-reload for guardrail-rs"
 version.workspace     = true
 edition.workspace     = true
+rust-version.workspace     = true
 authors.workspace     = true
 license.workspace     = true
 repository.workspace  = true
@@ -16,8 +17,8 @@ default = []
 onnx = ["guardrail-classifiers/onnx"]
 
 [dependencies]
-guardrail-core        = { path = "../guardrail-core", version = "0.1.0" }
-guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.0" }
+guardrail-core        = { path = "../guardrail-core", version = "0.1.1" }
+guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.1.1" }
 serde       = { workspace = true }
 toml        = { workspace = true }
 thiserror   = { workspace = true }
