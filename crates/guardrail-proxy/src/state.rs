@@ -1,6 +1,6 @@
 //! Shared server state and lifecycle handle.
 //!
-//! Kept separate from request-handling logic ([`crate::handler`]) and the
+//! Kept separate from request-handling logic (`crate::handler`) and the
 //! listener loop ([`crate::server`]) so each module has a single, obvious
 //! responsibility: this one just defines *what data* every connection
 //! handler needs, with no behavior of its own.
