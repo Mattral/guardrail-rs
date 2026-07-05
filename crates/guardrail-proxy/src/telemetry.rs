@@ -207,6 +207,46 @@ mod tests {
     }
 
     #[test]
+    fn test_whitespace_only_otlp_endpoint_returns_none() {
+        // `.trim()` in build_otel_layer should treat a whitespace-only
+        // endpoint the same as an absent one, rather than attempting to
+        // build an exporter against an empty address.
+        let mut config = ObservabilityConfig::default();
+        config.otlp_endpoint = "   ".to_string();
+        let result = build_otel_layer(&config).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_otel_layer_with_endpoint_returns_provider() {
+        // Building the tonic gRPC exporter is lazy — it does not connect
+        // eagerly — so this succeeds even with no collector listening on
+        // the endpoint. This exercises the `Some` path (the tracer provider
+        // is actually constructed) and the `shutdown_tracer_provider` call.
+        let mut config = ObservabilityConfig::default();
+        config.otlp_endpoint = "http://localhost:4317".to_string();
+        let provider = build_otel_layer(&config)
+            .expect("building the OTLP exporter should not require a live collector")
+            .expect("a non-empty endpoint should produce Some(provider)");
+        shutdown_tracer_provider(provider);
+    }
+
+    #[test]
+    fn test_otel_error_display() {
+        let exporter_err = OtelError::ExporterBuild("bad endpoint".to_string());
+        assert_eq!(
+            exporter_err.to_string(),
+            "failed to build OTLP exporter: bad endpoint"
+        );
+
+        let provider_err = OtelError::ProviderInstall("already installed".to_string());
+        assert_eq!(
+            provider_err.to_string(),
+            "failed to install global tracer provider: already installed"
+        );
+    }
+
+    #[test]
     fn test_stage_span_is_created() {
         let span = stage_span("regex_injection");
         assert!(span.metadata().is_some() || span.is_disabled());
