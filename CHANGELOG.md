@@ -11,6 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Test: `test_build_otel_layer_with_endpoint_returns_provider` panicked on
+every OS ("there is no reactor running")** — this test calls
+`build_otel_layer`, which (via `opentelemetry_otlp`'s tonic exporter
+builder → `Endpoint::connect_lazy()`) spawns a background
+connection-management task with `tokio::task::spawn` immediately at
+construction time, even though it doesn't block on an actual handshake.
+That requires an active Tokio runtime context. The test was a plain
+`#[test]`, so it had none. Changed it to `#[tokio::test] async fn`
+(matching the convention already used elsewhere in this crate, e.g.
+`error.rs`, `forward.rs`, `handler.rs`) — no other change needed since
+`build_otel_layer` and `shutdown_tracer_provider` are both synchronous
+functions; they just needed to be *called from* an async context.
+
+**Clippy: `field_reassign_with_default` on the two `telemetry.rs` tests
+added in this same release** — `let mut config = ObservabilityConfig::default(); config.otlp_endpoint = "...".to_string();`
+triggers this lint under `-D warnings`. Switched both to struct-update
+syntax (`ObservabilityConfig { otlp_endpoint: "...".into(), ..Default::default() }`),
+which `ObservabilityConfig` supports since all of its fields are `pub`.
+
+**rustdoc `broken_intra_doc_links` for ONNX-gated types** —
+`guardrail-classifiers/src/lib.rs` and `src/classifier.rs` linked to
+`OnnxInjectionClassifier`, `ToxicityClassifier`, `OnnxCpuBackend`, and
+`OnnxCudaBackend` from doc comments that are always compiled, but those
+four types only exist under the `onnx`/`onnx-cuda` feature flags — and
+CI's `docs` job (like docs.rs) builds with default features, i.e. neither
+flag on. De-linked all four to plain code-formatted text with an
+explanatory comment, matching the approach already used for the
+`private_intra_doc_links` fix earlier in this same release. (Two other
+matches for these type names — inside `onnx.rs`'s own module doc, and
+inside `OnnxCudaBackend`'s doc comment referencing `OnnxCpuBackend` — were
+left as real links: both are already behind the same feature gate as the
+type they reference, so they're never broken in any buildable
+configuration.)
+
 **CI: `cargo-deny`'s `[licenses]` schema was *also* out of date** — a second
 real CI run (after the `[advisories]` fix below) surfaced that
 `deny.toml`'s `[licenses]` table used `deny`, `copyleft`,
