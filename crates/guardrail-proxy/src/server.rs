@@ -1,7 +1,7 @@
 //! Server lifecycle: bind a listener, accept connections, and serve them
 //! until shutdown is requested.
 //!
-//! Request *routing and handling* lives in [`crate::handler`]; this module
+//! Request *routing and handling* lives in `crate::handler`; this module
 //! is deliberately narrow — it owns the TCP accept loop and the
 //! [`ServerHandle`] lifecycle, nothing else. See `docs/architecture.md` for
 //! how this fits with `handler`, `auth`, `error`, and `state`.

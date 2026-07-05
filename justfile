@@ -124,6 +124,11 @@ run-release config=CONFIG:
 check text config=CONFIG:
     cargo run -p guardrail-cli -- check "{{ text }}" --config {{ config }}
 
+# Send SIGHUP to a running `guardrail` process to hot-reload its config
+# without dropping in-flight connections (Unix only).
+reload:
+    pkill -HUP guardrail
+
 # ── Docker ────────────────────────────────────────────────────────────────────
 
 # Build the Docker image.
@@ -179,6 +184,9 @@ example-node:
 # Smoke-test a running proxy with curl.
 example-curl addr="http://localhost:8080":
     bash examples/curl_test.sh {{ addr }}
+
+# Alias matching the name used in examples/README.md.
+alias smoke := example-curl
 
 # ── Docs ──────────────────────────────────────────────────────────────────────
 

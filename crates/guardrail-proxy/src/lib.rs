@@ -26,12 +26,12 @@
 //! ## Modules
 //!
 //! - [`server`]: the listener lifecycle — bind, accept, serve, shutdown
-//! - [`handler`]: per-request routing and the core proxy flow (auth check →
+//! - `handler`: per-request routing and the core proxy flow (auth check →
 //!   parse → run pipeline → forward or block)
 //! - [`auth`]: caller authentication (`[auth]`), as a standalone, pure,
 //!   independently-testable predicate
 //! - [`error`]: HTTP error-response construction and upstream error
-//!   classification, shared by [`handler`]
+//!   classification, shared by `handler`
 //! - [`state`]: internal connection-handler state and [`ServerHandle`] — the
 //!   data every connection handler needs, with no behavior of its own
 //! - [`forward`]: upstream request forwarding (streaming + non-streaming)
