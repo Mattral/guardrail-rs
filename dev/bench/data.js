@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783248422662,
+  "lastUpdate": 1783251351493,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -755,6 +755,90 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 14690,
             "range": "± 40",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "88831350+Mattral@users.noreply.github.com",
+            "name": "Min Htet Myet",
+            "username": "Mattral"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "14c1634254223ee0e23f1f66acab4b71fde2f975",
+          "message": "fix: Add visitor badge to README",
+          "timestamp": "2026-07-05T20:33:39+09:00",
+          "tree_id": "25025ab3aa040d900be3d7050b0df584ebcc9b0a",
+          "url": "https://github.com/Mattral/guardrail-rs/commit/14c1634254223ee0e23f1f66acab4b71fde2f975"
+        },
+        "date": 1783251351244,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 356,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 3650,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 14271,
+            "range": "± 334",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 28412,
+            "range": "± 216",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 1415,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 13178,
+            "range": "± 32",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 50946,
+            "range": "± 83",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 101228,
+            "range": "± 196",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 3699,
+            "range": "± 18",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 14443,
+            "range": "± 81",
             "unit": "ns/iter"
           }
         ]
