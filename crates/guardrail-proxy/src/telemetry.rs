@@ -219,7 +219,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_build_otel_layer_with_endpoint_returns_provider() {
         // Building the tonic gRPC exporter is lazy — it does not connect
         // eagerly — so this succeeds even with no collector listening on
@@ -230,8 +230,17 @@ mod tests {
         // spawns a background connection-management task via
         // `tokio::task::spawn` even though it doesn't block on an actual
         // handshake, so a plain `#[test]` panics with "there is no reactor
-        // running" (as it did in CI on every OS before this was a
-        // `#[tokio::test]`).
+        // running".
+        //
+        // Requires a MULTI-THREADED runtime specifically: this test body
+        // has no `.await` points, and `shutdown_tracer_provider` below
+        // blocks synchronously waiting for that same background task to
+        // acknowledge shutdown. On the default current-thread runtime, the
+        // one and only executor thread is the thread doing that blocking
+        // wait — it can never also poll the background task to let it make
+        // progress, so the test hangs and times out rather than panicking.
+        // A multi-thread runtime has a separate worker thread free to drive
+        // the background task while the main thread blocks.
         let config = ObservabilityConfig {
             otlp_endpoint: "http://localhost:4317".to_string(),
             ..Default::default()
