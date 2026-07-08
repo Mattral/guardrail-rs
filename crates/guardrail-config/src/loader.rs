@@ -487,6 +487,36 @@ mod tests {
     use crate::validate_config;
     use std::io::Write;
 
+    /// Guards every test that either mutates `GUARDRAIL_UPSTREAM` /
+    /// `GUARDRAIL_PORT` / `GUARDRAIL_LOG_LEVEL` / `GUARDRAIL_OTLP_ENDPOINT`
+    /// (via `std::env::set_var`) or calls [`load_config`] expecting a
+    /// specific field value / validation outcome that such an override
+    /// could silently change out from under it. `std::env::set_var` mutates
+    /// process-global state, and `cargo test`/`nextest` run test functions
+    /// in parallel by default — without this, `test_env_override_behavior`
+    /// setting e.g. `GUARDRAIL_PORT=9999` can interleave with
+    /// `test_load_minimal_config` asserting `port == 8080` on a different
+    /// thread and fail it nondeterministically (as it did in CI:
+    /// `test_load_minimal_config` saw port 9999, and
+    /// `test_load_invalid_semantics_errors` saw its intentionally-invalid
+    /// `ftp://` upstream URL silently "fixed" by a concurrently-applied
+    /// `GUARDRAIL_UPSTREAM` override, so the validation error it expected
+    /// never fired).
+    ///
+    /// `.unwrap_or_else(|poisoned| poisoned.into_inner())` recovers from
+    /// poisoning: if some other test panics while holding this lock, that
+    /// failure is already reported on its own, and there's no shared data
+    /// here to actually be left inconsistent, so there's no reason to
+    /// cascade the failure into every other test that happens to run
+    /// afterwards.
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_env_tests() -> std::sync::MutexGuard<'static, ()> {
+        ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn write_temp_config(contents: &str) -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(contents.as_bytes()).unwrap();
@@ -505,6 +535,7 @@ url = "https://api.openai.com"
 
     #[test]
     fn test_load_minimal_config() {
+        let _guard = lock_env_tests();
         let f = write_temp_config(MINIMAL);
         let config = load_config(f.path()).unwrap();
         assert_eq!(config.upstream.url, "https://api.openai.com");
@@ -526,6 +557,7 @@ url = "https://api.openai.com"
 
     #[test]
     fn test_load_invalid_semantics_errors() {
+        let _guard = lock_env_tests();
         // Bad upstream scheme triggers validation failure.
         let f = write_temp_config(
             r#"
@@ -707,6 +739,7 @@ message = "Not permitted."
 
     #[test]
     fn test_env_override_behavior() {
+        let _guard = lock_env_tests();
         let f = write_temp_config(MINIMAL);
 
         // 1. GUARDRAIL_UPSTREAM overrides upstream.url.
