@@ -11,6 +11,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**CI: `cargo-deny` under `--all-features` — the license/bans checks were
+never actually exercising the `onnx`/`onnx-cuda` dependency tree until
+now** — `EmbarkStudios/cargo-deny-action@v2` defaults its `arguments`
+input to `--all-features` even though our `ci.yml` doesn't set it
+explicitly, so the `deny` job was always meant to check the ONNX feature's
+dependencies too; the schema errors fixed earlier in this release were
+just failing before dependency resolution ever got that far. Once those
+were fixed, four real issues surfaced:
+- `guardrail-test-suite` had no `license` field (cargo-deny checks every
+  workspace member, `publish = false` or not) — added
+  `license.workspace = true`.
+- ICU4X-family crates (`icu_*`, `zerovec`, `yoke`, `tinystr`, `litemap`,
+  etc., pulled in transitively via `idna` → `url` → `reqwest`) and
+  `unicode-ident` use the `Unicode-3.0` license, a newer OSI-approved
+  license most of the ecosystem is migrating to from `Unicode-DFS-2016`
+  (which we already allowed) — added `Unicode-3.0` to the allow-list.
+- `webpki-root-certs`/`webpki-roots` use `CDLA-Permissive-2.0` (a
+  permissive data-only license for the bundled Mozilla root certificate
+  list) — added to the allow-list.
+- `openssl`/`openssl-sys` are explicitly banned project-wide (we use
+  rustls everywhere in the runtime TLS stack), but the `onnx` feature's
+  `ort` crate pulls in `ureq` → `native-tls` → `openssl` as a *build-time
+  only* dependency of `ort-sys` (downloading the prebuilt ONNX Runtime
+  shared library at compile time — it never links into or ships inside
+  the actual proxy binary). Added a `wrappers` exception scoped to
+  exactly that path (`wrappers = ["native-tls"]` / `["native-tls",
+  "openssl"]`) rather than removing the ban outright, so it still fires
+  for any *other*, unexpected path a future dependency change might
+  introduce.
+
+**Test: `test_build_otel_layer_with_endpoint_returns_provider` now hung
+and timed out (60s × 3 retries) instead of the panic fixed earlier** —
+switching it to `#[tokio::test]` fixed the "no reactor running" panic,
+but `#[tokio::test]`'s *default* runtime is single-threaded
+(current-thread). The test body has no `.await` points, and
+`shutdown_tracer_provider` blocks synchronously waiting for the
+background connection-management task that `Endpoint::connect_lazy()`
+spawned — on a current-thread runtime, the one executor thread is the
+same thread doing that blocking wait, so it can never also poll the
+background task to let it finish: a textbook single-threaded-runtime
+self-deadlock. Changed to `#[tokio::test(flavor = "multi_thread",
+worker_threads = 2)]` so a separate worker thread is free to drive the
+background task while the main thread blocks.
+
+**rustdoc `broken_intra_doc_links` in `guardrail-test-suite`** —
+`src/lib.rs`'s crate doc linked to `guardrail_config` and
+`guardrail_proxy`, but both are declared under `[dev-dependencies]`, not
+`[dependencies]` — rustdoc only has a crate's regular dependencies
+available when documenting its plain `lib` target (dev-dependencies are
+only linked in for compiling tests), so these links could never resolve.
+De-linked both to plain code text with an explanatory comment. (Checked
+every other crate in the workspace for the same class of bug —
+`guardrail-proxy`'s own equivalent links to `guardrail_core`/
+`guardrail_classifiers`/`guardrail_config` are fine, since those three
+are genuinely regular `[dependencies]` of `guardrail-proxy`.)
+
 **Test: `test_build_otel_layer_with_endpoint_returns_provider` panicked on
 every OS ("there is no reactor running")** — this test calls
 `build_otel_layer`, which (via `opentelemetry_otlp`'s tonic exporter
