@@ -51,13 +51,13 @@ jobs:
         with:
           tool: "cargo"
           output-file-path: output.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          github-token: ${{ secrets.BENCHMARK_PAT }}  # Use your PAT instead
+          auto-push: true
           alert-threshold: "150%"
           comment-on-alert: true
           fail-on-alert: false
           summary-always: true
-
+  
   # ── Full-pipeline latency gate (spec §13) ───────────────────────────────────
   # The p99 target is < 1ms for the full pipeline on CPU, regex-only path.
   # CI hard-fails if any case exceeds 5ms (a 5x safety margin over the target,
