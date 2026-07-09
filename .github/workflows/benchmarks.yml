@@ -1,5 +1,8 @@
 name: Benchmarks
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [main]
@@ -51,7 +54,7 @@ jobs:
         with:
           tool: "cargo"
           output-file-path: output.txt
-          github-token: ${{ secrets.BENCHMARK_PAT }}  # Use your PAT instead
+          github-token: ${{ secrets.GITHUB_TOKEN }}  # Use the built-in token for writes
           auto-push: true
           alert-threshold: "150%"
           comment-on-alert: true
