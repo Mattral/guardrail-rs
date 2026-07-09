@@ -126,6 +126,7 @@ jobs:
         run: cargo install cargo-tarpaulin --locked
       - name: Generate coverage (XML + stdout summary)
         run: |
+          set -o pipefail
           cargo tarpaulin \
             --workspace \
             --exclude guardrail-test-suite \
@@ -136,17 +137,29 @@ jobs:
             2>&1 | tee coverage/tarpaulin-stdout.txt
       - name: Enforce ≥ 80% line coverage
         run: |
-          # Extract the coverage percentage from the tarpaulin stdout.
-          # Line looks like: "X% coverage, Y/Z lines covered"
-          PCT=$(grep -oP '\d+\.\d+(?=% coverage)' coverage/tarpaulin-stdout.txt | tail -1)
-          echo "Measured line coverage: ${PCT}%"
-          python3 -c "
-          pct = float('${PCT}')
+          # Robustly parse the tarpaulin stdout and enforce threshold.
+          python3 - <<'PY'
+          import re, sys
+          try:
+              txt = open('coverage/tarpaulin-stdout.txt', 'r', encoding='utf-8').read()
+          except FileNotFoundError:
+              print('ERROR: coverage/tarpaulin-stdout.txt not found. cargo-tarpaulin may have failed to run.')
+              sys.exit(1)
+      
+          m = re.search(r'(\d+(?:\.\d+)?)\s*% coverage', txt)
+          if not m:
+              print('ERROR: Could not find coverage percentage in tarpaulin output. Full output below:\n')
+              print(txt)
+              sys.exit(1)
+      
+          pct = float(m.group(1))
+          print(f'Measured line coverage: {pct}%')
           if pct < 80.0:
-            print(f'Coverage {pct:.1f}% is below the 80% threshold.')
-            raise SystemExit(1)
+              print(f'Coverage {pct:.1f}% is below the 80% threshold.')
+              sys.exit(1)
+      
           print(f'Coverage {pct:.1f}% meets the 80% threshold. ✓')
-          "
+          PY
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:
