@@ -324,6 +324,25 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      - name: Extract this version's changelog section
+        run: |
+          # CHANGELOG.md has one `## [X.Y.Z] - date` heading per release,
+          # newest first. Grab everything between the heading matching this
+          # tag and the next `## [` heading (or end of file), so the
+          # release body is just what changed in *this* release rather
+          # than the entire file's history every time.
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; print; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG.md section found for version $VERSION" >&2
+            echo "(no matching CHANGELOG.md section for $GITHUB_REF_NAME)" > release-notes.md
+          fi
+          cat release-notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -331,4 +350,4 @@ jobs:
             dist/*.zip
             dist/SHA256SUMS.txt
           generate_release_notes: true
-          body_path: CHANGELOG.md
+          body_path: release-notes.md

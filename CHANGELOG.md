@@ -11,6 +11,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Flaky tests: `test_load_minimal_config` and `test_load_invalid_semantics_errors`
+failed nondeterministically under `cargo tarpaulin`** — both got tripped up by
+`test_env_override_behavior` running concurrently on another thread.
+`std::env::set_var`/`remove_var` mutate process-global state, and
+`cargo test`/`nextest`/`tarpaulin` all run test functions in parallel by
+default. `test_load_minimal_config` asserts `config.server.port == 8080`,
+but caught `GUARDRAIL_PORT=9999` mid-flight from the other test's
+override check (`left: 9999, right: 8080` in the CI log).
+`test_load_invalid_semantics_errors` writes a config with an intentionally
+invalid `ftp://` upstream scheme expecting a validation error, but caught
+a concurrent `GUARDRAIL_UPSTREAM=https://api.anthropic.com` override that
+silently replaced the bad URL with a valid one before validation ever
+ran, so the expected error never fired. The existing code already had a
+comment explaining why *all five* env-var assertions live in one test
+function rather than five separate ones (to stop them from racing each
+other) — but that only protects assertions *within* that one function; it
+doesn't protect *other*, unrelated tests that call `load_config()` and
+assert exact field values or validation outcomes the same four env vars
+can silently change. Added a shared `static Mutex<()>` that
+`test_env_override_behavior` and both previously-flaky tests now acquire
+for their duration, so none of them can interleave with each other
+(every other loader test either fails before `apply_env_overrides` ever
+runs — missing file, bad TOML — or doesn't assert a value any of the four
+`GUARDRAIL_*` vars can affect, so they're left alone).
+
+**`mdbook build` — "Duplicate file in SUMMARY.md: `../README.md`"** —
+`docs/SUMMARY.md` linked `../README.md` twice: once as the book's
+top-level title-page link, and again as a "Quick Start" entry under User
+Guide. mdbook renders each source file to exactly one page and rejects a
+SUMMARY.md that maps two navigation entries onto the same file. Removed
+the redundant "Quick Start" entry — the title-page link already covers
+it.
+
 **CI: `cargo-deny` under `--all-features` — the license/bans checks were
 never actually exercising the `onnx`/`onnx-cuda` dependency tree until
 now** — `EmbarkStudios/cargo-deny-action@v2` defaults its `arguments`
