@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784113348614,
+  "lastUpdate": 1784114468873,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -923,6 +923,90 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 12475,
             "range": "± 169",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "88831350+Mattral@users.noreply.github.com",
+            "name": "Min Htet Myet",
+            "username": "Mattral"
+          },
+          "committer": {
+            "email": "88831350+Mattral@users.noreply.github.com",
+            "name": "Min Htet Myet",
+            "username": "Mattral"
+          },
+          "distinct": true,
+          "id": "14d6fe2708604dc1f074770b86dc8193527e8dd7",
+          "message": "chore(ci): update cargo-deny config and apply dependency updates\n\n- Migrated deny.toml to new cargo-deny schema:\n  - Removed deprecated fields (`deny`, `copyleft`, `allow-osi-fsf-free`, `default`)\n  - Cleaned up license allow-list to avoid unmatched warnings\n  - Retained explicit bans for openssl/openssl-sys with wrappers\n\n- Applied cargo update commands to resolve advisories:\n  - Upgraded crossbeam-epoch to >=0.9.20 (RUSTSEC-2026-0204)\n  - Aligned duplicate crate versions via cargo update\n  - Left Cargo.toml untouched for now; overrides will follow separately\n\n- CI: cargo-deny and cargo-audit now pass with updated config and patched deps",
+          "timestamp": "2026-07-15T11:18:53Z",
+          "tree_id": "658dda88a71cee45bb969fad47a9736bc6e6f2ff",
+          "url": "https://github.com/Mattral/guardrail-rs/commit/14d6fe2708604dc1f074770b86dc8193527e8dd7"
+        },
+        "date": 1784114468100,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 297,
+            "range": "± 4",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 3375,
+            "range": "± 63",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 13227,
+            "range": "± 181",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 26204,
+            "range": "± 356",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 1035,
+            "range": "± 22",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 12418,
+            "range": "± 145",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 48382,
+            "range": "± 761",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 95977,
+            "range": "± 1357",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 3381,
+            "range": "± 63",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 13503,
+            "range": "± 223",
             "unit": "ns/iter"
           }
         ]
