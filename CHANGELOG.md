@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**`docs/benchmarks.md` had a fictional benchmarking environment and
+placeholder numbers presented as targets** — replaced with real data
+pulled from the live `gh-pages` dashboard (6 tracked runs as of
+2026-07-05): median + observed range per benchmark, computed from actual
+history rather than a single noisy sample. Corrected the header, which
+claimed measurement on a dedicated AWS `c6i.xlarge` instance running Rust
+1.81 — the real environment is GitHub Actions' shared `ubuntu-latest`
+runners on whatever `stable` Rust resolves to, and the dashboard's own
+run-to-run variance (e.g. ±22% on `regex_injection_scanner` at 8.2 KB
+across otherwise-unrelated commits) is direct evidence of that. Also
+surfaced two things the real numbers show that the placeholder table
+couldn't: `pii_redactor` misses its own documented `< 20 µs / 4 KB`
+target by 2.5–5× once the input contains a few KB of actual PII (nowhere
+near threatening the pipeline's 5ms hard ceiling, but worth knowing), and
+the real async `Stage::evaluate` path runs ~12% slower than the sync
+`PiiRedactor::redact_text` microbenchmark because it does real additional
+work (building the full `Decision::Redact`, entity-summary
+deduplication, a `tracing::info!` emission) that the sync benchmark
+doesn't exercise. Explicitly labeled the ONNX classifier rows and the
+full-pipeline row as not-yet-measured rather than presenting design
+targets as data — no benchmark exists yet for either
+`OnnxInjectionClassifier`/`ToxicityClassifier`, and the full-pipeline
+benchmark (`pipeline-latency-gate` job) enforces its 5ms ceiling but
+doesn't currently publish historical data to `gh-pages` the way the
+classifier microbenchmarks do.
+
 **Colab notebook: proxy port 8080 collided with Colab's own kernel
 gateway** — `examples/notebooks/quickstart_colab.ipynb` configured
 guardrail-rs to listen on port 8080, the same port [Google's own Colab

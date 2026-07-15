@@ -1,12 +1,10 @@
 # guardrail-rs
 
 [![CI](https://github.com/Mattral/guardrail-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattral/guardrail-rs/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/guardrail-cli)](https://crates.io/crates/guardrail-cli)
+[![crates.io](https://img.shields.io/crates/v/guardrail-cli.svg)](https://crates.io/crates/guardrail-cli)
 [![docs.rs](https://img.shields.io/docsrs/guardrail-core)](https://docs.rs/guardrail-core)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/Mattral/guardrail-rs/blob/main/LICENSE-APACHE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://github.com/Mattral/guardrail-rs/blob/main/rust-toolchain.toml)
-
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Mattral/guardrail-rs/blob/main/examples/notebooks/quickstart_colab.ipynb)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Rust 1.75+](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](rust-toolchain.toml)
 
 **A zero-Python, production-grade LLM security layer written in Rust.**
 
