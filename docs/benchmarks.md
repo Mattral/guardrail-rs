@@ -40,7 +40,7 @@ variance on shared runners is large enough to be misleading otherwise — see
 | `stage_evaluate_async` (real `Stage::evaluate`, incl. `Decision`/tracing) | ~742 B, w/ PII | 14.7 µs | 13.3 – 16.0 µs | — | |
 | `onnx_injection` (CPU) | — | *not yet benchmarked* | — | < 5 ms | ⬜ |
 | `toxicity` (CPU) | — | *not yet benchmarked* | — | < 5 ms | ⬜ |
-| Full pipeline (regex + PII) | — | *see [below](#full-pipeline-latency-gated-but-not-yet-published)* | — | < 1 ms | see below |
+| Full pipeline (regex + PII), worst case (8 KB) | 8.2 KB | 158 µs | — | < 1 ms | ✅ [see detail](#full-pipeline-measured-gated-and-passing-single-run-snapshot) |
 
 **One real finding worth flagging:** `pii_redactor` misses its own
 documented `< 20 µs / 4 KB` target once the input actually contains PII at
@@ -78,19 +78,42 @@ reported number) that actually exercises it. Until then, the `< 5 ms`
 figures anywhere else in this repo's docs are the *design target* from the
 project guidelines, not a measurement — treat them accordingly.
 
-### Full pipeline: latency-gated, but not yet published
+### Full pipeline: measured, gated, and passing (single-run snapshot)
 
-`guardrail-test-suite/benches/pipeline.rs` (run via the separate
-`pipeline-latency-gate` CI job, not the `bench` job above) measures the
-assembled `Pipeline` end-to-end and hard-fails CI if any case exceeds 5 ms
-— that gate has been passing. But that job only prints values to its own
-CI log and enforces the threshold; unlike the classifier microbenchmarks
-above, it doesn't currently push historical data to the `gh-pages`
-dashboard, so there's no tracked number to report here yet. Two ways to
-close this gap: paste that job's printed `name: ns (ms)` lines from a
-recent Actions run log, or add a second `benchmark-action` step to
-`pipeline-latency-gate` so it starts tracking automatically going forward
-(the latter is the better long-term fix — happy to wire it up on request).
+Unlike the classifier microbenchmarks above, `guardrail-test-suite/benches/pipeline.rs`
+(the `pipeline-latency-gate` CI job) doesn't publish historical data to
+`gh-pages` yet, so the figures below are from one specific run
+(`8a8bc3a`, 2026-07-05) rather than a median across several — there's no
+observed-variance range to report the way there is above. All figures
+are well inside both the 1 ms design target and the 5 ms CI hard ceiling.
+
+| Benchmark | What it measures | Latency | vs. 1 ms target |
+|-----------|-------------------|--------:|:-----------------|
+| `full_pipeline_regex_only` | Full assembled `Pipeline::run()` (regex injection + PII redaction stages, async, via `tokio`), short request containing an email address | 2.99 µs | 0.3% |
+| `full_pipeline_by_size/clean_with_pii/512` | Same, padded to ~512 B | 12.3 µs | 1.2% |
+| `full_pipeline_by_size/clean_with_pii/4096` | Same, padded to ~4 KB | 80.8 µs | 8.1% |
+| `full_pipeline_by_size/clean_with_pii/8192` | Same, padded to ~8 KB | 158 µs | 15.8% |
+| `full_pipeline_blocked_short_circuit` | Malicious input — regex stage blocks immediately, PII stage never runs (the fastest possible path) | 1.01 µs | 0.1% |
+
+Two extra cases in the same benchmark file, run in isolation rather than
+through the assembled pipeline — not part of the CI gate, but useful
+context: `regex_injection_scanner/clean_input` (short clean sentence) took
+241 ns, `regex_injection_scanner/malicious_input` (short injection
+attempt) took 516 ns. (Both are labeled by a fixed short sentence, not an
+actual byte-size target — unlike `full_pipeline_by_size` above, which
+really does pad its input to hit the labeled size.)
+
+At worst case (8 KB, with PII present), the full pipeline uses about 16%
+of its 1 ms design budget and about 3% of the 5 ms CI ceiling — a
+comfortable margin, consistent with the regex/PII stages individually
+each coming in well under their own per-stage targets in the classifier
+table above.
+
+Want this tracked over time instead of a single snapshot? Adding a
+second `benchmark-action/github-action-benchmark` step to
+`pipeline-latency-gate` (mirroring the one already in the `bench` job)
+would start publishing this to `gh-pages` on every push, same as the
+classifier microbenchmarks — happy to wire that up on request.
 
 ---
 
