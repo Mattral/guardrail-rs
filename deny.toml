@@ -20,16 +20,16 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
+    #"Unicode-DFS-2016",
     # Newer ICU4X-family crates (icu_*, zerovec, yoke, tinystr, litemap, ...,
     # transitively pulled in via `idna` -> `url` -> `reqwest`, and
     # `unicode-ident`) moved from Unicode-DFS-2016 to this newer, still
     # OSI-approved license. Keeping both since different dependency
     # versions in the graph use either one.
     "Unicode-3.0",
-    "CC0-1.0",
-    "MPL-2.0",
-    "OpenSSL",
+    #"CC0-1.0",
+    #"MPL-2.0",
+    #"OpenSSL",
     # webpki-root-certs / webpki-roots (transitively via rustls, and via
     # `onnx`'s `ort` -> `ureq`), a permissive data-only license for the
     # bundled Mozilla root certificate list.
