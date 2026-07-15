@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**Colab notebook: proxy port 8080 collided with Colab's own kernel
+gateway** — `examples/notebooks/quickstart_colab.ipynb` configured
+guardrail-rs to listen on port 8080, the same port [Google's own Colab
+local-runtime Docker image](https://research.google.com/colaboratory/local-runtimes.html)
+uses internally for its kernel-connection gateway (confirmed independently
+by the crashed kernel's own error URL, which embeds a signed token scoped
+to `"port":8080`). Binding our proxy there raced Colab's own kernel proxy
+for the port; an attempt to "free up" the port with `fuser -k 8080/tcp`
+made it worse by killing Colab's kernel gateway itself rather than a
+stray process of ours, disconnecting the whole notebook. Moved the proxy
+to port 8081 (the mock upstream's port 9000 was never affected and stays
+put), and rewrote the startup cell to be safely re-runnable — it now
+tracks and cleanly stops only the specific `guardrail` process *this
+notebook* started, rather than anything found bound to a port.
+
+**CI workflow corrections** — adopted the project owner's own fixes to
+`ci.yml`'s coverage job (`mkdir -p coverage/` so the output directory is
+guaranteed to exist, `set -o pipefail` paired with a deliberate `|| true`
+so a `cargo tarpaulin` crash is converted into a clear, well-formatted
+"could not find coverage percentage" failure at the next step rather than
+a raw, undiagnosed exit code) and `benchmarks.yml` (`permissions:
+contents: write` at the workflow level, required for
+`benchmark-action/github-action-benchmark`'s `auto-push` to actually be
+able to push to `gh-pages`).
+
 **Benchmark job: `cargo bench -p guardrail-classifiers` also ran the
 crate's own lib unittest binary, which choked on Criterion's CLI flag** —
 without an explicit `--bench <name>`, `cargo bench -p X` runs *every*
