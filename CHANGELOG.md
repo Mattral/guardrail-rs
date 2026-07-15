@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+**`docs/benchmarks.md`'s full-pipeline row now has real data too** —
+filled in from an actual `pipeline-latency-gate` CI run (`8a8bc3a`,
+2026-07-05) rather than left as "not yet published." At worst case (8 KB,
+with PII present), the full assembled pipeline uses about 16% of its 1 ms
+design budget and about 3% of the 5 ms CI hard ceiling — comfortable
+margin, consistent with each stage individually coming in well under its
+own per-stage target. This is a single-run snapshot, not a
+median-across-runs like the classifier microbenchmarks above it in the
+same doc, since this job doesn't publish historical data to `gh-pages`
+(noted explicitly in the doc; still an open option if continuous
+tracking is wanted later).
+
+**Mislabeled benchmark IDs in `pipeline.rs`** — found while mapping the
+above: `regex_injection_scanner/clean_input/512b` and
+`.../malicious_input/512b` were never actually ~512 bytes; that's a
+fixed short sentence (36–67 characters) with a label copied from a
+different, unrelated convention. Unlike `full_pipeline_by_size`'s cases
+in the same file, which genuinely compute repeats to hit their labeled
+target size, these two never did. Renamed the label to `"short"` — no
+behavior change, just an accurate name for what's actually being measured.
+
 **`docs/benchmarks.md` had a fictional benchmarking environment and
 placeholder numbers presented as targets** — replaced with real data
 pulled from the live `gh-pages` dashboard (6 tracked runs as of
