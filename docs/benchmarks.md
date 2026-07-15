@@ -1,46 +1,115 @@
 # Benchmarks
 
-Performance characteristics of `guardrail-rs` measured on an AWS `c6i.xlarge`
-(4 vCPU, 8 GB RAM, Intel Ice Lake @ 3.5 GHz) running Ubuntu 22.04 LTS. Rust
-1.81 stable, compiled with `--release`.
+Performance characteristics of `guardrail-rs`'s classifier microbenchmarks,
+measured on GitHub Actions' `ubuntu-latest` shared runners via the
+[benchmark workflow](../.github/workflows/benchmarks.yml)
+(`bench` job → `cargo bench -p guardrail-classifiers --bench
+classifier_benchmarks`), tracked on every push to `main` with
+`benchmark-action/github-action-benchmark` and published to the
+[live, interactive dashboard](https://mattral.github.io/guardrail-rs/dev/bench/).
 
-All benchmarks are run with:
-
-```bash
-cargo bench -p guardrail-classifiers
-```
-
-Results are tracked automatically on every push to `main` via the
-[GitHub Actions benchmark workflow](.github/workflows/benchmarks.yml)
-using `benchmark-action/github-action-benchmark`. Regressions ≥ 150% of
-the baseline trigger a PR comment.
+**This is a shared CI runner, not a dedicated benchmarking machine** — Rust
+toolchain is whatever `stable` resolves to at run time, not a pinned
+version, and run-to-run variance from neighboring CI load is real and
+visible below (this replaces an earlier version of this doc that described
+a fictional dedicated AWS instance before any benchmark had actually been
+run). Treat the numbers below as directional, not lab-grade precision; use
+the live dashboard's per-commit history if you need to correlate a specific
+change to a specific latency shift.
 
 ---
 
 ## Pipeline latency summary
 
-| Stage | Input size | p50 | p95 | p99 | Target |
-|-------|-----------|-----|-----|-----|--------|
-| `regex_injection` | 512 B | 3 µs | 6 µs | 8 µs | < 50 µs / 8 KB |
-| `regex_injection` | 4 KB | 18 µs | 22 µs | 28 µs | < 50 µs / 8 KB |
-| `regex_injection` | 8 KB | 34 µs | 40 µs | 47 µs | < 50 µs / 8 KB ✅ |
-| `pii_redactor` | 512 B | 1.5 µs | 3 µs | 4 µs | < 20 µs / 4 KB |
-| `pii_redactor` | 4 KB | 12 µs | 16 µs | 18 µs | < 20 µs / 4 KB ✅ |
-| `pii_redactor` (w/ PII) | 4 KB | 14 µs | 19 µs | 22 µs | < 20 µs / 4 KB ✅ |
-| `onnx_injection` (CPU) | 128 tok | 2.1 ms | 2.8 ms | 3.4 ms | < 5 ms ✅ |
-| `onnx_injection` (CPU) | 512 tok | 3.8 ms | 4.5 ms | 4.9 ms | < 5 ms ✅ |
-| `toxicity` (CPU) | 512 tok | 3.6 ms | 4.2 ms | 4.7 ms | < 5 ms ✅ |
-| Full pipeline (regex + PII) | 4 KB | 22 µs | 28 µs | 35 µs | < 1 ms ✅ |
+Figures are the **median across the 6 most recent tracked runs** (as of
+2026-07-05) rather than a single sample, specifically because run-to-run
+variance on shared runners is large enough to be misleading otherwise — see
+[Observed CI variance](#observed-ci-variance-why-median-not-latest) below.
 
-> **Note:** These figures are indicative targets. Until this project is
-> installed in a CI environment with stable hardware and the benchmarks
-> have been run, they represent design goals extrapolated from `RegexSet`
-> and ONNX Runtime characteristics. After running `cargo bench`, replace
-> these rows with actual measured values.
+| Benchmark | Input size | Median | Observed range (6 runs) | Target | |
+|-----------|-----------:|-------:|:------------------------|--------|:-:|
+| `regex_injection_scanner` (sync) | 64 B | 0.36 µs | 0.30 – 0.37 µs | — | |
+| `regex_injection_scanner` (sync) | 1.0 KB | 3.65 µs | 3.33 – 4.06 µs | — | |
+| `regex_injection_scanner` (sync) | 4.1 KB | 14.3 µs | 13.3 – 15.9 µs | — | |
+| `regex_injection_scanner` (sync) | 8.2 KB | 28.5 µs | 26.1 – 31.7 µs | < 50 µs / 8 KB | ✅ |
+| `pii_redactor` (sync, `redact_text`) | 46 B | 1.4 µs | 1.0 – 1.6 µs | — | |
+| `pii_redactor` (sync, `redact_text`) | 742 B | 13.1 µs | 12.0 – 15.1 µs | < 20 µs / 4 KB | ✅ |
+| `pii_redactor` (sync, `redact_text`) | 3.0 KB | 50.8 µs | 46.7 – 58.7 µs | < 20 µs / 4 KB | ❌ |
+| `pii_redactor` (sync, `redact_text`) | 6.0 KB | 101 µs | 93.0 – 116.9 µs | — | |
+| `stage_evaluate_async` (real `Stage::evaluate`, incl. `Decision`/tracing) | ~1.0 KB, clean | 3.71 µs | 3.36 – 4.11 µs | — | |
+| `stage_evaluate_async` (real `Stage::evaluate`, incl. `Decision`/tracing) | ~742 B, w/ PII | 14.7 µs | 13.3 – 16.0 µs | — | |
+| `onnx_injection` (CPU) | — | *not yet benchmarked* | — | < 5 ms | ⬜ |
+| `toxicity` (CPU) | — | *not yet benchmarked* | — | < 5 ms | ⬜ |
+| Full pipeline (regex + PII) | — | *see [below](#full-pipeline-latency-gated-but-not-yet-published)* | — | < 1 ms | see below |
+
+**One real finding worth flagging:** `pii_redactor` misses its own
+documented `< 20 µs / 4 KB` target once the input actually contains PII at
+a few KB — 50.8 µs at 3.0 KB, 101 µs at 6.0 KB, roughly 2.5–5× over budget.
+It's nowhere close to threatening the pipeline's overall 5 ms hard ceiling
+(see below), so this isn't a functional problem today, but if sub-100 µs
+tail latency on large, PII-dense payloads matters for your deployment,
+it's the one stage worth profiling first. (`RegexInjectionScanner`, by
+contrast, comes in at roughly half its budget even at the worst-case 8 KB
+input.)
+
+**A second, smaller, real finding:** the actual production code path
+(`Stage::evaluate`, async, benchmarked as `stage_evaluate_async`) tracks
+closely with the raw sync `RegexInjectionScanner` call (3.71 µs vs 3.65 µs
+— negligible async-dispatch overhead) but runs about 12% slower than the
+raw sync `PiiRedactor::redact_text` call (14.7 µs vs 13.1 µs at a
+comparable size). Reading `PiiRedactor::evaluate`'s source explains why: it
+does real extra work the sync microbenchmark doesn't exercise — building
+the full `Decision::Redact` (a cloned, mutated `GuardrailRequest`, not just
+a string), deduplicating entity types into a summary, formatting a reason
+string, and emitting a `tracing::info!` event. Not a bug, just a reminder
+that the sync `pii_redactor` numbers above are a *lower bound* on what a
+real request actually costs, not the full picture.
+
+### ONNX classifiers: not yet benchmarked
+
+`classifier_benchmarks.rs` has no benchmark group for `OnnxInjectionClassifier`
+or `ToxicityClassifier` at all — not "ran and slow," genuinely absent from
+the file, and the CI `bench` job doesn't pass `--features onnx` regardless.
+Getting real numbers here needs: (1) exported model files (`./models/export_models.sh`
+— not bundled in the repo, see `docs/onnx-models.md`), (2) a new
+`#[cfg(feature = "onnx")]`-gated benchmark group added to
+`classifier_benchmarks.rs`, and (3) a CI job (or a manually-run, locally
+reported number) that actually exercises it. Until then, the `< 5 ms`
+figures anywhere else in this repo's docs are the *design target* from the
+project guidelines, not a measurement — treat them accordingly.
+
+### Full pipeline: latency-gated, but not yet published
+
+`guardrail-test-suite/benches/pipeline.rs` (run via the separate
+`pipeline-latency-gate` CI job, not the `bench` job above) measures the
+assembled `Pipeline` end-to-end and hard-fails CI if any case exceeds 5 ms
+— that gate has been passing. But that job only prints values to its own
+CI log and enforces the threshold; unlike the classifier microbenchmarks
+above, it doesn't currently push historical data to the `gh-pages`
+dashboard, so there's no tracked number to report here yet. Two ways to
+close this gap: paste that job's printed `name: ns (ms)` lines from a
+recent Actions run log, or add a second `benchmark-action` step to
+`pipeline-latency-gate` so it starts tracking automatically going forward
+(the latter is the better long-term fix — happy to wire it up on request).
+
+---
+
+## Observed CI variance (why median, not "latest")
+
+The dashboard's 6 tracked runs so far show real run-to-run swings on
+what's presumably unchanged benchmark code — e.g. `regex_injection_scanner`
+at 8.2 KB ranges from 26.1 µs to 31.7 µs (≈ 22%) across runs with no
+obvious relationship to what each commit actually changed. This is
+expected on shared, variable-load CI runners and is exactly why the table
+above reports a median across runs rather than whatever the latest run
+happened to show — a single sample could easily overstate or understate
+a real regression. As more runs accumulate on the dashboard, prefer
+reading the live charts over this static table for anything time-sensitive.
 
 ---
 
 ## Running benchmarks locally
+
 
 ```bash
 # Classifier microbenchmarks (CPU-only, no ONNX)
