@@ -39,6 +39,10 @@ and drives the proxy against a local mock upstream (no API key required) to
 demonstrate a clean request, a blocked prompt injection, and PII redaction —
 all in the browser, no local setup.
 
+Want a dashboard on top of the same proxy (test console, policy editor,
+audit log)? See [GuardRail Studio](https://github.com/Mattral/GuardRail-Studio).
+It is a separate repo and is not required for these examples.
+
 ## curl
 
 Runnable smoke-test script: [`examples/curl_test.sh`](curl_test.sh)
