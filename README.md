@@ -206,6 +206,21 @@ key needed), and then sends three requests to show:
 First run takes a few minutes while Rust compiles the crate — that's the
 cost of testing the real crates.io artifact rather than a pre-built binary.
 
+
+---
+
+## Related: GuardRail Studio (optional)
+
+A separate control-plane app — dashboard, policy editor, audit log, metrics —
+that drives this proxy. It does not reimplement detection.
+
+- Repo: https://github.com/Mattral/GuardRail-Studio
+- Talks to a running `guardrail` process (`/v1/chat/completions`, `/healthz`,
+  `:9090/metrics`, `guardrail.toml` + `SIGHUP`)
+- Not required to use `guardrail-cli`
+
+---
+
 ## Project layout
 
 ```text
