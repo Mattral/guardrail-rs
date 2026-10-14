@@ -794,6 +794,111 @@ on_error = "allow"
         assert_eq!(config.stages.toxicity.on_error, None);
     }
 
+    /// End-to-end `on_error` tests: build a pipeline from TOML with an ONNX
+    /// stage whose model has the wrong output shape, so every inference
+    /// errors, and check that `on_error` decides the outcome. Before the
+    /// fix, all of these returned `Allow` regardless of configuration.
+    #[cfg(feature = "onnx")]
+    mod onnx_on_error {
+        use super::*;
+        use guardrail_core::{decision::Decision, pipeline::STAGE_ERROR_CODE};
+
+        fn fixture(name: &str) -> String {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../guardrail-classifiers/tests/fixtures/onnx")
+                .join(name)
+                .to_string_lossy()
+                .replace('\\', "/")
+        }
+
+        /// `stage` is `onnx_injection` or `toxicity`; `pipeline_on_error` and
+        /// `stage_on_error` are inserted as-is (`None` leaves the key out).
+        fn config(
+            stage: &str,
+            pipeline_on_error: Option<&str>,
+            stage_on_error: Option<&str>,
+        ) -> Config {
+            let mut s = String::from(
+                "[server]\nhost = \"127.0.0.1\"\nport = 8080\n\n\
+                 [upstream]\nurl = \"https://api.openai.com\"\n\n\
+                 [stages.regex_injection]\nenabled = false\n\n\
+                 [stages.pii_redactor]\nenabled = false\n\n",
+            );
+            s.push_str("[pipeline]\n");
+            s.push_str(&format!("request_stages = [\"{stage}\"]\n"));
+            if let Some(v) = pipeline_on_error {
+                s.push_str(&format!("on_error = \"{v}\"\n"));
+            }
+            s.push_str(&format!("\n[stages.{stage}]\nenabled = true\n"));
+            s.push_str(&format!(
+                "model_path = '{}'\n",
+                fixture("wrong_output.onnx")
+            ));
+            s.push_str(&format!(
+                "tokenizer_path = '{}'\n",
+                fixture("tokenizer.json")
+            ));
+            if let Some(v) = stage_on_error {
+                s.push_str(&format!("on_error = \"{v}\"\n"));
+            }
+            let config: Config = toml::from_str(&s).unwrap();
+            assert!(validate_config(&config).is_empty());
+            config
+        }
+
+        async fn decide(config: &Config) -> Decision {
+            let pipeline = build_pipeline(config).unwrap();
+            assert_eq!(pipeline.len(), 1);
+            let req = guardrail_core::test_helpers::clean_request();
+            pipeline.run(req).await.unwrap().0
+        }
+
+        fn assert_stage_error_block(decision: Decision) {
+            match decision {
+                Decision::Block { code, .. } => assert_eq!(code.as_str(), STAGE_ERROR_CODE),
+                other => panic!("expected Block(stage_error), got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn default_fails_open() {
+            for stage in ["onnx_injection", "toxicity"] {
+                assert_eq!(
+                    decide(&config(stage, None, None)).await,
+                    Decision::Allow,
+                    "{stage}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn pipeline_block_applies_to_onnx_stage() {
+            for stage in ["onnx_injection", "toxicity"] {
+                assert_stage_error_block(decide(&config(stage, Some("block"), None)).await);
+            }
+        }
+
+        #[tokio::test]
+        async fn stage_block_overrides_pipeline_allow() {
+            for stage in ["onnx_injection", "toxicity"] {
+                assert_stage_error_block(
+                    decide(&config(stage, Some("allow"), Some("block"))).await,
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn stage_allow_overrides_pipeline_block() {
+            for stage in ["onnx_injection", "toxicity"] {
+                assert_eq!(
+                    decide(&config(stage, Some("block"), Some("allow"))).await,
+                    Decision::Allow,
+                    "{stage}"
+                );
+            }
+        }
+    }
+
     // ── Environment variable overlay ────────────────────────────────────────
     // All five assertions live in a single test function rather than five
     // separate `#[test]` functions, because `std::env::set_var`/`remove_var`

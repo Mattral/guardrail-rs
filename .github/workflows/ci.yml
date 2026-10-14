@@ -91,16 +91,31 @@ jobs:
       - run: cargo check -p guardrail-core --no-default-features
       - run: cargo check -p guardrail-classifiers --no-default-features
 
-  # ── ONNX feature build ─────────────────────────────────────────────────────
-  build-onnx:
-    name: build (onnx feature)
-    runs-on: ubuntu-latest
+  # ── ONNX feature: lint + real inference tests ──────────────────────────────
+  # Runs ONNX Runtime against the tiny fixture models committed under
+  # crates/guardrail-classifiers/tests/fixtures/onnx (no download needed).
+  # Windows is included because the feature once failed to link there
+  # (static vs dynamic MSVC runtime between tokenizers and ort).
+  test-onnx:
+    name: test (onnx feature, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: cargo check --features onnx
-        run: cargo check --workspace --features onnx
+        with:
+          key: onnx-${{ matrix.os }}
+      - uses: taiki-e/install-action@nextest
+      - name: cargo clippy --features onnx
+        run: cargo clippy --workspace --all-targets --features guardrail-cli/onnx -- -D warnings
+      - name: cargo nextest run --features onnx
+        run: cargo nextest run --workspace --features guardrail-cli/onnx --profile ci
 
   # ── MSRV ───────────────────────────────────────────────────────────────────
   msrv:

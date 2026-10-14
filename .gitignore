@@ -17,6 +17,9 @@ audit-logs/
 !/models/export_models.sh
 *.onnx
 tokenizer.json
+# ...except the tiny generated test fixtures (each under 4 KB).
+!/crates/guardrail-classifiers/tests/fixtures/onnx/*.onnx
+!/crates/guardrail-classifiers/tests/fixtures/onnx/tokenizer.json
 
 # Editor/IDE
 .idea/

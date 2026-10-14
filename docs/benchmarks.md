@@ -38,8 +38,10 @@ variance on shared runners is large enough to be misleading otherwise — see
 | `pii_redactor` (sync, `redact_text`) | 6.0 KB | 101 µs | 93.0 – 116.9 µs | — | |
 | `stage_evaluate_async` (real `Stage::evaluate`, incl. `Decision`/tracing) | ~1.0 KB, clean | 3.71 µs | 3.36 – 4.11 µs | — | |
 | `stage_evaluate_async` (real `Stage::evaluate`, incl. `Decision`/tracing) | ~742 B, w/ PII | 14.7 µs | 13.3 – 16.0 µs | — | |
-| `onnx_injection` (CPU) | — | *not yet benchmarked* | — | < 5 ms | ⬜ |
-| `toxicity` (CPU) | — | *not yet benchmarked* | — | < 5 ms | ⬜ |
+| `onnx_injection` (CPU, 1 thread) | 64 B | 52.9 ms † | — | < 5 ms | ❌ |
+| `onnx_injection` (CPU, 1 thread) | 1.0 KB | 426 ms † | — | — | |
+| `toxicity` (CPU, 1 thread) | 64 B | 33.6 ms † | — | < 5 ms | ❌ |
+| `toxicity` (CPU, 1 thread) | 1.0 KB | 437 ms † | — | — | |
 | Full pipeline (regex + PII), worst case (8 KB) | 8.2 KB | 158 µs | — | < 1 ms | ✅ [see detail](#full-pipeline-measured-gated-and-passing-single-run-snapshot) |
 
 **One real finding worth flagging:** in the CI rows above, `pii_redactor`
@@ -96,18 +98,51 @@ string, and emitting a `tracing::info!` event. Not a bug, just a reminder
 that the sync `pii_redactor` numbers above are a *lower bound* on what a
 real request actually costs, not the full picture.
 
-### ONNX classifiers: not yet benchmarked
+### ONNX classifiers: measured, and far over target
 
-`classifier_benchmarks.rs` has no benchmark group for `OnnxInjectionClassifier`
-or `ToxicityClassifier` at all — not "ran and slow," genuinely absent from
-the file, and the CI `bench` job doesn't pass `--features onnx` regardless.
-Getting real numbers here needs: (1) exported model files (`./models/export_models.sh`
-— not bundled in the repo, see `docs/onnx-models.md`), (2) a new
-`#[cfg(feature = "onnx")]`-gated benchmark group added to
-`classifier_benchmarks.rs`, and (3) a CI job (or a manually-run, locally
-reported number) that actually exercises it. Until then, the `< 5 ms`
-figures anywhere else in this repo's docs are the *design target* from the
-project guidelines, not a measurement — treat them accordingly.
+† Unlike the rest of the table, these rows are **not** from the CI dashboard.
+They come from one local run of the `onnx_injection` and `toxicity` groups
+in `classifier_benchmarks.rs` (Criterion, 30 samples each, median shown):
+
+- Machine: Intel Core Ultra 5 226V laptop (8 cores), 15.5 GB RAM, Windows 11,
+  Balanced power plan.
+- Toolchain and code: Rust 1.99.0, the code from the PR that added these
+  rows.
+- Models: `protectai/deberta-v3-base-prompt-injection-v2` at commit
+  `90c9989b`, using its published `onnx/model.onnx` (fp32). And
+  `unitary/unbiased-toxic-roberta` at `36295dd8`, exported with
+  `optimum-onnx` 0.1.0 (fp32).
+- What's timed: `score()`, i.e. tokenization plus one ONNX Runtime
+  inference with `intra_threads = 1`, which is how the stages configure
+  their sessions. The inputs are under 512 tokens, so each is a single
+  window.
+
+| Input | `onnx_injection` | `toxicity` |
+|------:|-----------------:|-----------:|
+| 64 B | 52.9 ms (47.5 – 58.9) | 33.6 ms (32.9 – 34.7) |
+| 1.0 KB | 426 ms (418 – 434) | 437 ms (397 – 482) |
+| 1.8 KB | 845 ms (824 – 872) | 1.25 s (1.23 – 1.26) |
+
+Ranges are Criterion's 95% confidence interval for that run.
+
+**Finding:** the `< 5 ms` design target is missed by 7–250×. Latency grows
+with input length, and a 1 KB prompt costs about 0.4 s per stage on one
+core. That makes the ONNX stages unsuitable for latency-sensitive traffic
+as currently configured. Each window of a long input is another inference
+of up to this cost, run sequentially, so a request near the 16-window limit
+costs many seconds. Likely improvements, none measured yet: more
+intra-op threads, int8-quantized models, smaller distilled models, and
+batching the windows of a long input into one inference.
+
+To reproduce (models laid out as in `docs/onnx-models.md`):
+
+```bash
+GUARDRAIL_BENCH_MODEL_DIR=models \
+  cargo bench -p guardrail-classifiers --features onnx --bench classifier_benchmarks -- 'onnx_injection|toxicity'
+```
+
+or run the manual `ONNX real models` workflow, which downloads and exports
+the same pinned model commits and uploads the Criterion output.
 
 ### Full pipeline: measured, gated, and passing (single-run snapshot)
 
@@ -240,12 +275,13 @@ For a typical chat-completion request (one system message + one user message,
   ≈ 120,000–150,000 req/s for the guardrail layer (latency dominated by
   upstream time in practice).
 
-- **With ONNX classifiers (CPU):** ~ 5 ms per request (inference-bound).
-  With `max_blocking_threads = 64` (default): ~ 12,800 concurrent inferences
-  in flight, ~ 12,800 req/s throughput at full ONNX saturation.
+- **With ONNX classifiers (CPU):** inference-bound. In the one local run
+  above, a 64 B prompt took 34–53 ms per stage and a 1 KB prompt about
+  0.4 s per stage, each on one core. Each inference occupies one Tokio
+  blocking-pool thread for that long. Throughput under load hasn't been
+  measured.
 
-- **With ONNX classifiers (CUDA A10G):** ~ 0.5 ms per inference (batching
-  not yet implemented). Estimated 60,000+ req/s.
+- **With ONNX classifiers (CUDA):** not measured.
 
 ---
 

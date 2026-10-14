@@ -13,8 +13,11 @@ set -euo pipefail
 
 OUT_DIR="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
-echo "==> Installing export dependencies (optimum[exporters])"
-pip install --quiet "optimum[exporters]"
+echo "==> Installing export dependencies (torch CPU, optimum-onnx)"
+# optimum 2.x moved ONNX export into the separate optimum-onnx package;
+# `optimum[exporters]` alone no longer provides `optimum-cli export onnx`.
+pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+pip install --quiet "optimum-onnx[onnxruntime]==0.1.0"
 
 echo "==> Exporting prompt-injection classifier"
 optimum-cli export onnx \
