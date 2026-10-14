@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`on_error` had no effect anywhere.** `Pipeline::run` turned every stage
+  error into `Allow` and never returned `Err`. So `pipeline.on_error =
+  "block"` and the per-stage `on_error` on `[stages.onnx_injection]` and
+  `[stages.toxicity]` were both ignored, and every deployment failed open
+  whatever it configured. Both settings now work. A stage error under
+  `"block"` returns `403` with code `stage_error`. The `403` reason names the
+  stage but not the internal error text.
+- The proxy's handler for a pipeline-level `Err` would have forwarded an
+  empty request upstream. It was unreachable, and now returns `500`.
+
+### Changed
+
+- **Behavior change:** if your config already sets `on_error = "block"`
+  (pipeline-wide or on an ONNX stage), stage errors now block requests. That
+  setting was silently ignored before.
+- Per-stage `on_error` is now optional and defaults to `pipeline.on_error`.
+  Before, it defaulted to `"allow"` on its own (and was never read). In
+  `guardrail-config`, `OnnxStageConfig::on_error` and
+  `ToxicityStageConfig::on_error` are now `Option<OnErrorBehavior>`.
+- `guardrail-core`: added `FailMode`, `PipelineBuilder::stage_with_fail_mode`
+  / `arc_stage_with_fail_mode`, and `Pipeline::run_with_events`, which reports
+  a `StageEvent` (with a `StageOutcome`) for every stage. Existing methods
+  keep their signatures and use `FailMode::Open`.
+
 ### Documentation
 
 - The README's "At a glance" table listed "PII leakage (in + out)" with no
@@ -17,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `X-Guardrail-Key` is now compared in constant time (`subtle`), and every
+  configured key is checked, so timing no longer reveals a matching prefix or
+  which key matched. Before, the comparison was a short-circuiting `==`.
 - Updated dependencies with published advisories: `h2` 0.4.15 → 0.4.20
   (RUSTSEC-2026-0258), `rustls` 0.23.41 → 0.23.46 (RUSTSEC-2026-0285,
   -0346, -0348, -0349; `rustls` is the TLS client used for upstream

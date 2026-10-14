@@ -164,6 +164,8 @@ fn apply_env_overrides(config: &mut Config) {
 /// Returns [`ConfigLoadError::StageBuild`] if a stage's patterns fail to compile.
 pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
     let mut builder = PipelineBuilder::default();
+    // Stages without their own `on_error` use the pipeline-wide setting.
+    let default_mode = config.pipeline.on_error.fail_mode();
 
     for stage_id in &config.pipeline.request_stages {
         match stage_id.as_str() {
@@ -203,7 +205,7 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                         },
                     )?
                 };
-                builder = builder.stage(scanner);
+                builder = builder.stage_with_fail_mode(scanner, default_mode);
             }
 
             #[cfg(feature = "onnx")]
@@ -219,12 +221,17 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                     stage: "onnx_injection".into(),
                     source,
                 })?;
-                builder = builder.stage(classifier);
+                let mode = crate::schema::OnErrorBehavior::resolve(
+                    config.stages.onnx_injection.on_error,
+                    config.pipeline.on_error,
+                )
+                .fail_mode();
+                builder = builder.stage_with_fail_mode(classifier, mode);
             }
 
             "pii_redactor" => {
                 if let Some(redactor) = build_pii_redactor(config)? {
-                    builder = builder.stage(redactor);
+                    builder = builder.stage_with_fail_mode(redactor, default_mode);
                 }
             }
 
@@ -241,12 +248,17 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                     stage: "toxicity".into(),
                     source,
                 })?;
-                builder = builder.stage(classifier);
+                let mode = crate::schema::OnErrorBehavior::resolve(
+                    config.stages.toxicity.on_error,
+                    config.pipeline.on_error,
+                )
+                .fail_mode();
+                builder = builder.stage_with_fail_mode(classifier, mode);
             }
 
             "policy" if !config.policy.rules.is_empty() => {
                 let rules = convert_policy_rules(&config.policy.rules);
-                builder = builder.stage(PolicyEngine::new(rules));
+                builder = builder.stage_with_fail_mode(PolicyEngine::new(rules), default_mode);
             }
 
             _ => {} // disabled or unknown stage — skip
@@ -731,6 +743,55 @@ message = "Not permitted."
         let pipeline = build_pipeline(&config).unwrap();
         // regex + pii + policy
         assert_eq!(pipeline.len(), 3);
+    }
+
+    // ── on_error ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_stage_on_error_unset_inherits_pipeline_setting() {
+        use crate::schema::OnErrorBehavior;
+
+        let toml_str = r#"
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[upstream]
+url = "https://api.openai.com"
+
+[pipeline]
+on_error = "block"
+
+[stages.toxicity]
+on_error = "allow"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.stages.onnx_injection.on_error, None);
+        assert_eq!(
+            config.stages.toxicity.on_error,
+            Some(OnErrorBehavior::Allow)
+        );
+
+        let pipeline_default = config.pipeline.on_error;
+        assert_eq!(
+            OnErrorBehavior::resolve(config.stages.onnx_injection.on_error, pipeline_default),
+            OnErrorBehavior::Block
+        );
+        assert_eq!(
+            OnErrorBehavior::resolve(config.stages.toxicity.on_error, pipeline_default),
+            OnErrorBehavior::Allow
+        );
+    }
+
+    #[test]
+    fn test_on_error_defaults_to_fail_open() {
+        let config: Config = toml::from_str(MINIMAL).unwrap();
+        assert_eq!(
+            config.pipeline.on_error.fail_mode(),
+            guardrail_core::FailMode::Open
+        );
+        assert_eq!(config.stages.onnx_injection.on_error, None);
+        assert_eq!(config.stages.toxicity.on_error, None);
     }
 
     // ── Environment variable overlay ────────────────────────────────────────

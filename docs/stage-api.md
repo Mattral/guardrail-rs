@@ -53,11 +53,28 @@ Stages must be `Send + Sync + 'static`. All per-stage state (compiled regexes,
 ONNX sessions, configuration) must be held behind `Arc` or be `Copy`. The same
 stage instance is shared across all concurrent requests.
 
-### 3. Fail-open errors
-On recoverable errors (e.g. a model returns an unexpected output shape),
-prefer returning `Ok(Decision::Allow)` with a `tracing::warn!` log. Only
-return `Err(GuardrailError)` for unrecoverable initialization failures that
-make the stage fundamentally non-functional.
+### 3. Report errors, don't decide them
+If the stage can't reach a decision (inference failed, the model returned
+an unexpected output shape), return `Err(GuardrailError)`. Don't turn the
+error into `Ok(Decision::Allow)` yourself. The pipeline applies the stage's
+`FailMode`: `FailMode::Open` (the default) logs a warning and continues as
+if the stage had allowed; `FailMode::Closed` blocks the request with code
+`stage_error`. Swallowing the error inside the stage would silently bypass a
+fail-closed configuration.
+
+Set the mode when adding the stage:
+
+```rust,ignore
+use guardrail_core::{FailMode, PipelineBuilder};
+
+let pipeline = PipelineBuilder::default()
+    .stage_with_fail_mode(MyStage::new(), FailMode::Closed)
+    .build();
+```
+
+`Pipeline::run_with_events` reports each stage's outcome
+(`StageOutcome::Completed`, `ErrorAllowed` or `ErrorBlocked`), so callers can
+count fail-open events.
 
 ### 4. Non-blocking async
 Never call blocking I/O or CPU-intensive code directly inside `evaluate`.
