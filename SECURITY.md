@@ -47,7 +47,8 @@ Please include:
 - **Bypass of detection stages:** if you find an input that should be
   blocked/redacted by a stage but isn't, this is a valid security report,
   especially for the bundled `injection.rules` and PII patterns.
-- **Fail-open behavior** (`pipeline.on_error = "allow"`, the default) is a
+- **Fail-open behavior** (`on_error = "allow"`, the default, set
+  pipeline-wide or per ONNX stage) is a
   documented design tradeoff, not a vulnerability in itself — but if you
   find a way to *force* a stage error as a bypass technique, that is in
   scope.
