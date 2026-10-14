@@ -92,10 +92,12 @@ pub enum BodyReadError {
 
 /// Read an incoming request body, enforcing `max_size` as a byte ceiling.
 ///
-/// Unlike checking `Content-Length` alone (which a client can omit, lie
-/// about, or stream past via chunked transfer-encoding), this collects the
-/// actual bytes and checks the real total — closing the gap a
-/// length-header-only check would leave open.
+/// The limit is enforced while reading: frames are accumulated only until
+/// the total would exceed `max_size`, then reading stops and the rest of the
+/// body is never pulled into memory. A body whose declared length
+/// (`Content-Length`) is already over the limit is rejected before reading
+/// anything. Counting actual bytes also covers clients that omit or
+/// understate `Content-Length` and stream with chunked encoding.
 ///
 /// # Examples
 ///
@@ -109,13 +111,37 @@ pub enum BodyReadError {
 /// # }
 /// ```
 pub async fn read_limited_body(body: Incoming, max_size: usize) -> Result<Bytes, BodyReadError> {
-    let collected = body.collect().await.map_err(BodyReadError::Io)?;
-    let bytes = collected.to_bytes();
-    if bytes.len() > max_size {
-        Err(BodyReadError::TooLarge)
-    } else {
-        Ok(bytes)
+    match collect_limited(body, max_size).await {
+        Ok(bytes) => Ok(bytes),
+        Err(None) => Err(BodyReadError::TooLarge),
+        Err(Some(e)) => Err(BodyReadError::Io(e)),
     }
+}
+
+/// Collect `body` into memory, stopping as soon as it's known to be longer
+/// than `max_size`. `Err(None)` means too large; `Err(Some(e))` is a
+/// transport error from the body.
+async fn collect_limited<B>(body: B, max_size: usize) -> Result<Bytes, Option<B::Error>>
+where
+    B: hyper::body::Body<Data = Bytes> + Unpin,
+{
+    let declared = body.size_hint().lower();
+    if declared > max_size as u64 {
+        return Err(None);
+    }
+
+    let mut body = body;
+    let mut buf = bytes::BytesMut::with_capacity(declared as usize);
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(Some)?;
+        if let Ok(data) = frame.into_data() {
+            if buf.len() + data.len() > max_size {
+                return Err(None);
+            }
+            buf.extend_from_slice(&data);
+        }
+    }
+    Ok(buf.freeze())
 }
 
 /// Classify a [`guardrail_core::GuardrailError::Upstream`] into a coarse
@@ -174,6 +200,54 @@ mod tests {
         let body = serde_json::json!({"custom": "shape", "n": 42});
         let resp = error_body_response(StatusCode::FORBIDDEN, &body);
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// A body that never ends. The old implementation collected the whole
+    /// body before checking its size, so it never returned (and a real
+    /// client could make the proxy buffer as much as it liked).
+    fn endless_body() -> http_body_util::StreamBody<
+        impl futures::Stream<Item = Result<hyper::body::Frame<Bytes>, std::convert::Infallible>>,
+    > {
+        let chunk = Bytes::from(vec![b'a'; 64 * 1024]);
+        http_body_util::StreamBody::new(futures::stream::repeat_with(move || {
+            Ok(hyper::body::Frame::data(chunk.clone()))
+        }))
+    }
+
+    #[tokio::test]
+    async fn test_body_limit_stops_reading_an_endless_body() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            collect_limited(endless_body(), 1024 * 1024),
+        )
+        .await
+        .expect("must stop at the limit instead of reading forever");
+        assert!(matches!(result, Err(None)));
+    }
+
+    #[tokio::test]
+    async fn test_body_limit_rejects_declared_length_without_reading() {
+        // Full<Bytes> reports its exact length as the size hint, like a
+        // request with Content-Length.
+        let body = Full::new(Bytes::from(vec![b'a'; 2048]));
+        assert!(matches!(collect_limited(body, 1024).await, Err(None)));
+    }
+
+    #[tokio::test]
+    async fn test_body_limit_allows_body_at_the_limit() {
+        let data = Bytes::from(vec![b'a'; 1024]);
+        let body = Full::new(data.clone());
+        assert_eq!(collect_limited(body, 1024).await.ok(), Some(data));
+
+        // A streamed body (no declared length) under the limit, in pieces.
+        let pieces = futures::stream::iter((0..4).map(|_| {
+            Ok::<_, std::convert::Infallible>(hyper::body::Frame::data(Bytes::from_static(b"abcd")))
+        }));
+        let body = http_body_util::StreamBody::new(pieces);
+        assert_eq!(
+            collect_limited(body, 16).await.ok(),
+            Some(Bytes::from_static(b"abcdabcdabcdabcd"))
+        );
     }
 
     #[tokio::test]

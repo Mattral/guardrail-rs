@@ -12,7 +12,7 @@ reference, matching `crates/guardrail-config/src/schema.rs` exactly.
 | `host` | string | `"127.0.0.1"` | Bind host. |
 | `port` | integer | `8080` | Bind port. |
 | `workers` | integer | `0` | Number of Tokio worker threads for `guardrail run`. `0` = one per logical CPU. Read once at startup; a SIGHUP reload doesn't change it. |
-| `max_body_size_bytes` | integer | `10485760` (10 MiB) | Maximum accepted client request body size. Larger bodies receive `413 Payload Too Large`. |
+| `max_body_size_bytes` | integer | `10485760` (10 MiB) | Maximum accepted client request body size. Larger bodies receive `413 Payload Too Large`. Enforced while reading: the proxy stops reading at the limit, and rejects a `Content-Length` over it without reading at all. |
 
 `server.host` and `server.port` are combined into a socket address via
 `ServerConfig::listen_addr()` (`"<host>:<port>"`).
