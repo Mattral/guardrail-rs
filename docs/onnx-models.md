@@ -165,7 +165,7 @@ false positives. To tune for your traffic:
 
 Both stages run inference inside `tokio::task::spawn_blocking`, so they don't
 block the async executor, but each call does occupy a blocking-pool thread
-for the length of the inference. In one local run (Intel Core Ultra 5 226V,
+for the length of the inference. In two local runs (Intel Core Ultra 5 226V,
 one inference thread per session), that was 34–53 ms for a 64 B prompt and
 about 0.4 s for 1 KB, per stage; see
 [`benchmarks.md`](benchmarks.md#onnx-classifiers-measured-and-far-over-target).
