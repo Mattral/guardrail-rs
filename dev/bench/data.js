@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791991561745,
+  "lastUpdate": 1791992231956,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -1983,6 +1983,90 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 14262,
             "range": "± 403",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "88831350+Mattral@users.noreply.github.com",
+            "name": "Min Htet Myet",
+            "username": "Mattral"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2741aadc299b9715c9d3a4d46ceea3900044527d",
+          "message": "Merge pull request #25 from Mattral/fix/onnx-tests\n\nfix(onnx): run the ONNX stages in CI and fix what that found (checklist #2)",
+          "timestamp": "2026-10-15T00:34:48+09:00",
+          "tree_id": "25d1e56a221ced48d62cc28d86b09358726ab94f",
+          "url": "https://github.com/Mattral/guardrail-rs/commit/2741aadc299b9715c9d3a4d46ceea3900044527d"
+        },
+        "date": 1791992231081,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 346,
+            "range": "± 12",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 3650,
+            "range": "± 63",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 14318,
+            "range": "± 43",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 28459,
+            "range": "± 404",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 1304,
+            "range": "± 9",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 12872,
+            "range": "± 36",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 49529,
+            "range": "± 620",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 98402,
+            "range": "± 1081",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 3685,
+            "range": "± 12",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 14578,
+            "range": "± 60",
             "unit": "ns/iter"
           }
         ]
