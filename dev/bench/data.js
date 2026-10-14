@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791992444294,
+  "lastUpdate": 1791992533735,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -2147,6 +2147,86 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 9812,
             "range": "± 193",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Mattral",
+            "username": "Mattral"
+          },
+          "committer": {
+            "name": "Mattral",
+            "username": "Mattral"
+          },
+          "id": "465d2534ba98ca8e9e80b1a66c53bb351d3634ed",
+          "message": "refactor: keep one copy of the bundled injection rules (checklist #11)",
+          "timestamp": "2026-10-14T15:34:57Z",
+          "url": "https://github.com/Mattral/guardrail-rs/pull/27/commits/465d2534ba98ca8e9e80b1a66c53bb351d3634ed"
+        },
+        "date": 1791992533163,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 374,
+            "range": "± 9",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 4094,
+            "range": "± 7",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 16049,
+            "range": "± 283",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 31948,
+            "range": "± 518",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 1417,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 14269,
+            "range": "± 24",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 55462,
+            "range": "± 433",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 110379,
+            "range": "± 338",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 4155,
+            "range": "± 77",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 15727,
+            "range": "± 159",
             "unit": "ns/iter"
           }
         ]
