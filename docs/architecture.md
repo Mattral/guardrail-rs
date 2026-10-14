@@ -183,16 +183,22 @@ on Unix, spawns a SIGHUP listener for automatic configuration hot-reload.
 
 ## Error handling: fail-open vs fail-closed
 
-Each `Stage::evaluate()` returns `Result<Decision, GuardrailError>`. The
-`Pipeline::run()` loop catches stage errors and, by default
-(`pipeline.on_error = "allow"`), converts them to `Decision::Allow` with a
-`tracing::warn!`. Setting `pipeline.on_error = "block"` instead converts
-top-level pipeline errors (e.g. an unexpected internal error in
-`proxy_request` itself) to a `403 policy_violation` response.
+Each `Stage::evaluate()` returns `Result<Decision, GuardrailError>`. When a
+stage returns `Err`, the pipeline applies that stage's `FailMode`:
 
-This two-level design means: **individual stage failures always fail open**
-(a broken ONNX model doesn't take down the proxy), while **catastrophic
-pipeline failures** are configurable per-deployment.
+- `FailMode::Open` (`on_error = "allow"`, the default): log a
+  `tracing::warn!`, treat the stage as having allowed, and continue with the
+  next stage. The request goes upstream without that stage's check.
+- `FailMode::Closed` (`on_error = "block"`): log a `tracing::error!` and stop
+  with `Decision::Block`, code `stage_error`. The caller gets a `403`.
+
+`guardrail-config` sets each stage's mode from its own `on_error` (the ONNX
+stages) or, if that's unset, from `pipeline.on_error`. The regex, PII and
+policy stages always use `pipeline.on_error`.
+
+This only covers errors while handling a request. A model or rule file that
+fails to load is a startup error: `guardrail run` exits, and a SIGHUP reload
+is rejected and keeps the previous configuration.
 
 ## Hot reload
 

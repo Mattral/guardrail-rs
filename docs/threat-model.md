@@ -185,10 +185,13 @@ recommended in public deployments.
 
 ### Fail-open by default (`pipeline.on_error = "allow"`)
 
-If a stage crashes or returns an error, the request is allowed through rather
-than blocked. This ensures that a broken ONNX model or transient regex engine
-issue does not take down production traffic. Set `pipeline.on_error = "block"`
-for high-security deployments where fail-closed behavior is preferred.
+If a stage returns an error while handling a request (for example, ONNX
+inference fails), the request continues as if that stage had allowed it, so
+it reaches the upstream without that stage's check. This keeps a failing
+model from taking down production traffic. Set `pipeline.on_error = "block"`
+to fail closed for every stage, or set `on_error = "block"` on an individual
+ONNX stage to fail closed only for that stage. Fail-closed errors are
+returned as `403` with code `stage_error`.
 
 ### No raw content in logs
 
