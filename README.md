@@ -146,14 +146,17 @@ pkill -HUP guardrail
 | Stage | What it does | Performance target |
 |-------|--------------|---------------------|
 | `regex_injection` | Fast regex scan for jailbreaks, prompt-extraction attempts, delimiter injection | < 50 µs / 8 KB |
-| `onnx_injection` *(optional)* | DeBERTa-based semantic injection detection | < 5 ms / 512 tokens |
+| `onnx_injection` *(optional)* | DeBERTa-based semantic injection detection | target < 5 ms; **measured 52.9 ms at 64 B, 426 ms at 1 KB** (one local run, 1 CPU thread — [details](docs/benchmarks.md#onnx-classifiers-measured-and-far-over-target)) |
 | `pii_redactor` | Detects & redacts emails, phone numbers, credit cards (Luhn-validated), SSNs, IPs, API keys | < 20 µs / 4 KB |
-| `toxicity` *(optional)* | RoBERTa-based toxicity/harassment detection | < 5 ms / 512 tokens |
+| `toxicity` *(optional)* | RoBERTa-based toxicity/harassment detection | target < 5 ms; **measured 33.6 ms at 64 B, 437 ms at 1 KB** (same run) |
 | `policy_engine` | Your custom rules: keyword blocks, token-count limits, required-system-prompt checks | negligible |
 
-The `onnx_injection` and `toxicity` stages require building with
-`--features onnx` and providing ONNX model files (see [`models/README.md`](models/README.md)).
-Everything else works with zero external dependencies.
+The `onnx_injection` and `toxicity` stages are **experimental**. They
+require building with `--features onnx` and providing ONNX model files (see
+[`docs/onnx-models.md`](docs/onnx-models.md)). CI runs them against tiny
+fixture models, which checks the code path but not detection quality. The
+real models are only smoke-tested, manually. Everything else works with zero
+external dependencies.
 
 ## CLI
 
