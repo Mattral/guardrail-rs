@@ -76,7 +76,7 @@ Unknown IDs are rejected by validation.
 | `action` | `"block"` \| `"redact"` \| `"log_only"` | `"redact"` | Action when PII is found. (Redact is the sensible default — blocking on PII detection is unusual but supported.) |
 | `validate_luhn` | bool | `true` | Apply Luhn checksum validation to 13–19 digit sequences before treating them as credit card numbers. |
 | `replacements` | table | see below | Custom replacement tokens per entity type. |
-| `redact_responses` | bool | `false` | Also scan and redact PII in non-streaming LLM **responses** before returning them to the caller. Streaming responses are never affected — see [`docs/architecture.md`](architecture.md). |
+| `redact_responses` | bool | `false` | Also scan and redact PII in non-streaming LLM **responses** before returning them to the caller. Streaming (`stream: true`) responses are never redacted, even with this on — see [Streaming responses](architecture.md#streaming-responses). |
 
 > **Note:** `[stages.pii_redaction]` (old name) is still accepted as a TOML
 > alias for `[stages.pii_redactor]` for backward compatibility, but new
