@@ -192,8 +192,9 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                         },
                     )?
                 } else {
-                    let bundled = include_str!("injection.rules");
-                    let mut bundled_rules = bundled.to_string();
+                    // The single bundled rule set lives in guardrail-classifiers.
+                    let mut bundled_rules =
+                        RegexInjectionScanner::bundled_rule_source().to_string();
                     for rule in &config.stages.regex_injection.extra_rules {
                         bundled_rules.push('\n');
                         bundled_rules.push_str(rule);
@@ -794,6 +795,111 @@ on_error = "allow"
         assert_eq!(config.stages.toxicity.on_error, None);
     }
 
+    /// End-to-end `on_error` tests: build a pipeline from TOML with an ONNX
+    /// stage whose model has the wrong output shape, so every inference
+    /// errors, and check that `on_error` decides the outcome. Before the
+    /// fix, all of these returned `Allow` regardless of configuration.
+    #[cfg(feature = "onnx")]
+    mod onnx_on_error {
+        use super::*;
+        use guardrail_core::{decision::Decision, pipeline::STAGE_ERROR_CODE};
+
+        fn fixture(name: &str) -> String {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../guardrail-classifiers/tests/fixtures/onnx")
+                .join(name)
+                .to_string_lossy()
+                .replace('\\', "/")
+        }
+
+        /// `stage` is `onnx_injection` or `toxicity`; `pipeline_on_error` and
+        /// `stage_on_error` are inserted as-is (`None` leaves the key out).
+        fn config(
+            stage: &str,
+            pipeline_on_error: Option<&str>,
+            stage_on_error: Option<&str>,
+        ) -> Config {
+            let mut s = String::from(
+                "[server]\nhost = \"127.0.0.1\"\nport = 8080\n\n\
+                 [upstream]\nurl = \"https://api.openai.com\"\n\n\
+                 [stages.regex_injection]\nenabled = false\n\n\
+                 [stages.pii_redactor]\nenabled = false\n\n",
+            );
+            s.push_str("[pipeline]\n");
+            s.push_str(&format!("request_stages = [\"{stage}\"]\n"));
+            if let Some(v) = pipeline_on_error {
+                s.push_str(&format!("on_error = \"{v}\"\n"));
+            }
+            s.push_str(&format!("\n[stages.{stage}]\nenabled = true\n"));
+            s.push_str(&format!(
+                "model_path = '{}'\n",
+                fixture("wrong_output.onnx")
+            ));
+            s.push_str(&format!(
+                "tokenizer_path = '{}'\n",
+                fixture("tokenizer.json")
+            ));
+            if let Some(v) = stage_on_error {
+                s.push_str(&format!("on_error = \"{v}\"\n"));
+            }
+            let config: Config = toml::from_str(&s).unwrap();
+            assert!(validate_config(&config).is_empty());
+            config
+        }
+
+        async fn decide(config: &Config) -> Decision {
+            let pipeline = build_pipeline(config).unwrap();
+            assert_eq!(pipeline.len(), 1);
+            let req = guardrail_core::test_helpers::clean_request();
+            pipeline.run(req).await.unwrap().0
+        }
+
+        fn assert_stage_error_block(decision: Decision) {
+            match decision {
+                Decision::Block { code, .. } => assert_eq!(code.as_str(), STAGE_ERROR_CODE),
+                other => panic!("expected Block(stage_error), got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn default_fails_open() {
+            for stage in ["onnx_injection", "toxicity"] {
+                assert_eq!(
+                    decide(&config(stage, None, None)).await,
+                    Decision::Allow,
+                    "{stage}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn pipeline_block_applies_to_onnx_stage() {
+            for stage in ["onnx_injection", "toxicity"] {
+                assert_stage_error_block(decide(&config(stage, Some("block"), None)).await);
+            }
+        }
+
+        #[tokio::test]
+        async fn stage_block_overrides_pipeline_allow() {
+            for stage in ["onnx_injection", "toxicity"] {
+                assert_stage_error_block(
+                    decide(&config(stage, Some("allow"), Some("block"))).await,
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn stage_allow_overrides_pipeline_block() {
+            for stage in ["onnx_injection", "toxicity"] {
+                assert_eq!(
+                    decide(&config(stage, Some("block"), Some("allow"))).await,
+                    Decision::Allow,
+                    "{stage}"
+                );
+            }
+        }
+    }
+
     // ── Environment variable overlay ────────────────────────────────────────
     // All five assertions live in a single test function rather than five
     // separate `#[test]` functions, because `std::env::set_var`/`remove_var`
@@ -838,53 +944,5 @@ on_error = "allow"
         let result = load_config(f.path());
         std::env::remove_var("GUARDRAIL_PORT");
         assert_eq!(result.unwrap().server.port, 8080);
-    }
-
-    /// `injection.rules` here and `guardrail-classifiers/src/rules/injection.rules`
-    /// are two physically separate files that are supposed to define the
-    /// *same* default rule set (see the module comment atop this crate's
-    /// own `injection.rules` for why they aren't shared via a single file).
-    /// They drifted silently once already — this test, plus the
-    /// `injection-rules-sync` CI job, are the two independent guards
-    /// against it happening again.
-    ///
-    /// Deliberately reads both files at runtime via `CARGO_MANIFEST_DIR`
-    /// rather than `include_str!`: the sibling crate's file lives outside
-    /// this crate's own package directory, so it won't exist if this crate
-    /// is ever built in isolation (e.g. from an extracted `cargo package`
-    /// tarball) — a scenario where `include_str!` would be a hard compile
-    /// error. This test instead skips itself in that case; the workspace
-    /// checkout used by `just test` / CI always has both files, so the
-    /// check still runs everywhere it matters.
-    #[test]
-    fn bundled_injection_rules_match_guardrail_classifiers_copy() {
-        let config_copy = include_str!("injection.rules");
-
-        let classifiers_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../guardrail-classifiers/src/rules/injection.rules");
-        let Ok(classifiers_copy) = std::fs::read_to_string(&classifiers_path) else {
-            eprintln!(
-                "skipping: {} not present (expected when this crate is built \
-                 outside the guardrail-rs workspace checkout)",
-                classifiers_path.display()
-            );
-            return;
-        };
-
-        fn strip_noise(s: &str) -> Vec<&str> {
-            s.lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty() && !l.starts_with('#'))
-                .collect()
-        }
-
-        assert_eq!(
-            strip_noise(config_copy),
-            strip_noise(&classifiers_copy),
-            "guardrail-config/src/injection.rules and \
-             guardrail-classifiers/src/rules/injection.rules have diverged — \
-             update whichever one is stale so both crates ship the same \
-             default prompt-injection rule set"
-        );
     }
 }

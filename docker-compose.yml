@@ -58,6 +58,7 @@ services:
       - "9091:9090"
     volumes:
       - ./contrib/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./contrib/prometheus-alerts.yml:/etc/prometheus/guardrail-alerts.yml:ro
     depends_on:
       - guardrail-rs
     restart: unless-stopped
