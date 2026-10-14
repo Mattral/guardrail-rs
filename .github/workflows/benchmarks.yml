@@ -1,7 +1,8 @@
 name: Benchmarks
 
 permissions:
-  contents: write
+  contents: write       # benchmark-action pushes results to gh-pages
+  pull-requests: write  # ...and posts its regression-alert comment on PRs
 
 on:
   push:
@@ -45,8 +46,15 @@ jobs:
         # cargo ever reaches the Criterion binary that would understand it.
         # `pipeline-latency-gate` below already does this correctly with
         # `--bench pipeline`; this job was just missing its equivalent.
+        #
+        # `rm -rf target/criterion` first: the rust-cache restored from an
+        # earlier run can bring back Criterion's per-benchmark directories
+        # without their `base/sample.json`, and Criterion then fails every
+        # benchmark with "Failed to access file .../base/sample.json".
+        # Regression tracking lives in gh-pages, not in this directory.
         run: |
           set -o pipefail
+          rm -rf target/criterion
           cargo bench -p guardrail-classifiers --bench classifier_benchmarks -- --output-format bencher | tee output.txt
 
       - name: Store benchmark result
@@ -76,8 +84,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run full-pipeline benchmark
+        # Same stale-cache problem as the `bench` job above.
         run: |
           set -o pipefail
+          rm -rf target/criterion
           cargo bench -p guardrail-test-suite --bench pipeline -- --output-format bencher \
             | tee pipeline-output.txt
 
