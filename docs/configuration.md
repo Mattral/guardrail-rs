@@ -11,7 +11,7 @@ reference, matching `crates/guardrail-config/src/schema.rs` exactly.
 |-------|------|---------|-------------|
 | `host` | string | `"127.0.0.1"` | Bind host. |
 | `port` | integer | `8080` | Bind port. |
-| `workers` | integer | `0` | Number of Tokio worker threads. `0` = number of logical CPUs. |
+| `workers` | integer | `0` | Number of Tokio worker threads for `guardrail run`. `0` = one per logical CPU. Read once at startup; a SIGHUP reload doesn't change it. |
 | `max_body_size_bytes` | integer | `10485760` (10 MiB) | Maximum accepted client request body size. Larger bodies receive `413 Payload Too Large`. |
 
 `server.host` and `server.port` are combined into a socket address via
@@ -51,7 +51,7 @@ keys = ["grk-your-generated-key-here"]
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `request_stages` | array of strings | `["regex_injection", "onnx_injection", "pii_redactor", "toxicity", "policy"]` | Ordered list of stage IDs to run on the request side. Removing an ID disables that stage regardless of its own `enabled` flag. Order is significant. |
-| `response_stages` | array of strings | `["output_pii_redactor"]` | Ordered list of stage IDs to run on the response side. |
+| `response_stages` | array of strings | `["output_pii_redactor"]` | Response-side stages. `output_pii_redactor` is the only one, and it runs only when `stages.pii_redactor.redact_responses = true`. Removing it from this list turns response redaction off. |
 | `on_error` | `"allow"` \| `"block"` | `"allow"` | What to do when a stage errors instead of returning a decision (e.g. ONNX inference fails). `"allow"` skips that stage's check and continues (fail-open); `"block"` rejects the request with `403` and code `stage_error` (fail-closed). Applies to every request stage that doesn't set its own `on_error`. |
 
 Valid request stage IDs: `regex_injection`, `onnx_injection`, `pii_redactor`,
@@ -65,7 +65,7 @@ Unknown IDs are rejected by validation.
 | `enabled` | bool | `true` | Enable/disable this stage. |
 | `rules_file` | string | `""` | Path to a custom rule file (one regex per line; `#` for comments). Empty string = use the bundled rule set. |
 | `extra_rules` | array of strings | `[]` | Additional regex patterns appended to whichever rule set is active (bundled or `rules_file`). |
-| `action` | `"block"` \| `"redact"` \| `"log_only"` | `"block"` | What to do on a match. `"log_only"` logs via `tracing::warn!` but allows the request — use this to dry-run new rules. |
+| `action` | `"block"` \| `"log_only"` | `"block"` | What to do on a match. `"log_only"` logs via `tracing::warn!` but allows the request — use this to dry-run new rules. `"redact"` is accepted for backward compatibility but behaves like `"block"`, with a warning at load. |
 
 ## `[stages.pii_redactor]`
 
@@ -73,9 +73,9 @@ Unknown IDs are rejected by validation.
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable this stage. |
 | `entities` | array of strings | all seven types (see below) | Which entity types to detect and redact. |
-| `action` | `"block"` \| `"redact"` \| `"log_only"` | `"redact"` | Action when PII is found. (Redact is the sensible default — blocking on PII detection is unusual but supported.) |
+| `action` | `"block"` \| `"redact"` \| `"log_only"` | `"redact"` | Action when PII is found in a request. `"redact"` replaces it and forwards the request. `"block"` rejects the request with `403` and code `pii_detected`; the reason names entity types only, never the values. `"log_only"` logs the entity types and forwards the request unchanged. Response redaction (`redact_responses`) always redacts, whatever this is set to. |
 | `validate_luhn` | bool | `true` | Apply Luhn checksum validation to 13–19 digit sequences before treating them as credit card numbers. |
-| `replacements` | table | see below | Custom replacement tokens per entity type. |
+| `replacements` | table | see below | Custom replacement tokens per entity type. Used for both request and response redaction. |
 | `redact_responses` | bool | `false` | Also scan and redact PII in non-streaming LLM **responses** before returning them to the caller. Streaming (`stream: true`) responses are never redacted, even with this on — see [Streaming responses](architecture.md#streaming-responses). |
 
 > **Note:** `[stages.pii_redaction]` (old name) is still accepted as a TOML
@@ -114,14 +114,14 @@ see [`docs/onnx-models.md`](onnx-models.md).
 | `model_path` | string | `""` | Path to the `.onnx` model file. **Required if `enabled = true`.** |
 | `tokenizer_path` | string | `""` | Path to the HuggingFace `tokenizer.json`. **Required if `enabled = true`.** |
 | `threshold` | float | `0.85` (injection) / `0.90` (toxicity) | Decision threshold in `[0.0, 1.0]`. Scores at or above this value result in the configured `action`. |
-| `action` | `"block"` \| `"redact"` \| `"log_only"` | `"block"` | What to do on a positive classification. |
+| `action` | `"block"` \| `"log_only"` | `"block"` | What to do on a positive classification. `"log_only"` logs the score via `tracing::warn!` and allows the request (dry-run). `"redact"` behaves like `"block"`, with a warning at load. |
 | `on_error` | `"allow"` \| `"block"` | unset (uses `pipeline.on_error`) | What to do if inference fails on a request. Overrides `pipeline.on_error` for this stage only. A model that fails to *load* is a startup error, not an inference error: the proxy refuses to start (or a reload is rejected) regardless of this setting. |
 
 `[stages.toxicity]` additionally supports:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `scan_roles` | array of strings | `["user"]` | Which message roles to run through the classifier. |
+| `scan_roles` | array of strings | `["user"]` | Which message roles to score: any of `"system"`, `"user"`, `"assistant"`, `"tool"`. The text of matching messages is joined in order and scored together. An unknown role or an empty list is a validation error. (`onnx_injection` always scores user messages.) |
 
 ## `[[policy.rules]]`
 
@@ -266,6 +266,7 @@ including:
 - `pipeline.request_stages` / `response_stages` entries must be recognized stage IDs.
 - `stages.pii_redactor.entities` must be non-empty (if enabled) and contain only recognized entity names.
 - `stages.onnx_injection` / `stages.toxicity`, if enabled: `model_path` (if set) must exist on disk, and `threshold` must be in `[0.0, 1.0]`.
+- `stages.toxicity.scan_roles`, if the stage is enabled, must be non-empty and contain only `system`, `user`, `assistant` or `tool`.
 - Each `policy.rules[i].name` must be non-empty.
 - Each policy rule's `when` table must set at least one condition field.
 - `observability.log_level` must be one of the five valid levels.

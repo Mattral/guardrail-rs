@@ -60,8 +60,8 @@ rules_file = ""
 # Additional patterns appended to whichever rule set is active.
 extra_rules = []
 
-# What to do on a match: "block" (default), "redact" (not meaningful for this
-# stage), or "log_only" (dry-run mode — logs but allows the request).
+# What to do on a match: "block" (default) or "log_only" (dry-run mode — logs
+# but allows the request). "redact" is accepted but behaves like "block".
 action = "block"
 
 # ── Stage 2: ONNX semantic injection classifier (optional) ────────────────────
@@ -72,6 +72,7 @@ enabled = false
 model_path = ""
 tokenizer_path = ""
 threshold = 0.85
+# "block" (default) or "log_only" (log the score, allow the request).
 action = "block"
 # Optional: overrides [pipeline].on_error for this stage only.
 # on_error = "block"
@@ -86,6 +87,8 @@ enabled = true
 #   "email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key"
 entities = ["email", "phone", "credit_card", "ssn", "ip_address", "api_key", "aws_key"]
 
+# "redact" (default: replace and forward), "block" (reject with 403
+# pii_detected), or "log_only" (log the entity types, forward unchanged).
 action = "redact"
 
 # Apply Luhn checksum validation to candidate credit-card numbers before
@@ -114,6 +117,7 @@ model_path = ""
 tokenizer_path = ""
 threshold = 0.90
 action = "block"
+# Message roles to score: any of "system", "user", "assistant", "tool".
 scan_roles = ["user"]
 # Optional: overrides [pipeline].on_error for this stage only.
 # on_error = "block"

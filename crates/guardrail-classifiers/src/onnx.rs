@@ -19,7 +19,7 @@ use guardrail_core::{
     decision::{BlockCode, Decision},
     error::GuardrailError,
     pipeline::Stage,
-    request::GuardrailRequest,
+    request::{GuardrailRequest, Role},
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -200,6 +200,8 @@ pub struct OnnxInjectionClassifier {
     tokenizer: Arc<tokenizers::Tokenizer>,
     /// Decision threshold: inputs scoring at or above this are blocked. Default: 0.85.
     threshold: f32,
+    /// Log positives instead of blocking them (`action = "log_only"`).
+    log_only: bool,
 }
 
 impl std::fmt::Debug for OnnxInjectionClassifier {
@@ -239,7 +241,16 @@ impl OnnxInjectionClassifier {
             session,
             tokenizer,
             threshold,
+            log_only: false,
         })
+    }
+
+    /// When `true`, a score at or above the threshold is logged with
+    /// `tracing::warn!` and the request is allowed (dry-run mode).
+    #[must_use]
+    pub fn with_log_only(mut self, log_only: bool) -> Self {
+        self.log_only = log_only;
+        self
     }
 
     /// Run inference on `text` and return the injection probability in
@@ -290,15 +301,23 @@ impl Stage for OnnxInjectionClassifier {
             "inference complete"
         );
 
-        if score >= threshold {
+        if score < threshold {
+            Ok(Decision::Allow)
+        } else if self.log_only {
+            tracing::warn!(
+                score,
+                threshold,
+                stage = "onnx_injection",
+                "prompt injection detected (log_only: request allowed)"
+            );
+            Ok(Decision::Allow)
+        } else {
             Ok(Decision::Block {
                 reason: format!(
                     "ONNX injection classifier score {score:.3} >= threshold {threshold:.3}"
                 ),
                 code: BlockCode::PromptInjection,
             })
-        } else {
-            Ok(Decision::Allow)
         }
     }
 }
@@ -319,6 +338,10 @@ pub struct ToxicityClassifier {
     tokenizer: Arc<tokenizers::Tokenizer>,
     /// Decision threshold. Default: 0.90.
     threshold: f32,
+    /// Log positives instead of blocking them (`action = "log_only"`).
+    log_only: bool,
+    /// Message roles whose text is scored. Default: user messages only.
+    scan_roles: Vec<Role>,
 }
 
 impl std::fmt::Debug for ToxicityClassifier {
@@ -346,7 +369,25 @@ impl ToxicityClassifier {
             session,
             tokenizer,
             threshold,
+            log_only: false,
+            scan_roles: vec![Role::User],
         })
+    }
+
+    /// When `true`, a score at or above the threshold is logged with
+    /// `tracing::warn!` and the request is allowed (dry-run mode).
+    #[must_use]
+    pub fn with_log_only(mut self, log_only: bool) -> Self {
+        self.log_only = log_only;
+        self
+    }
+
+    /// Score the text of messages with these roles (joined in message
+    /// order) instead of only user messages.
+    #[must_use]
+    pub fn with_scan_roles(mut self, roles: Vec<Role>) -> Self {
+        self.scan_roles = roles;
+        self
     }
 
     /// Run inference on `text` and return the toxicity probability in
@@ -368,7 +409,7 @@ impl Stage for ToxicityClassifier {
     }
 
     async fn evaluate(&self, req: &GuardrailRequest) -> Result<Decision, GuardrailError> {
-        let text = req.user_text();
+        let text = req.text_for_roles(&self.scan_roles);
         if text.trim().is_empty() {
             return Ok(Decision::Allow);
         }
@@ -385,13 +426,21 @@ impl Stage for ToxicityClassifier {
 
         tracing::debug!(score, threshold, stage = "toxicity", "inference complete");
 
-        if score >= threshold {
+        if score < threshold {
+            Ok(Decision::Allow)
+        } else if self.log_only {
+            tracing::warn!(
+                score,
+                threshold,
+                stage = "toxicity",
+                "toxic content detected (log_only: request allowed)"
+            );
+            Ok(Decision::Allow)
+        } else {
             Ok(Decision::Block {
                 reason: format!("Toxicity score {score:.3} >= threshold {threshold:.3}"),
                 code: BlockCode::Toxicity,
             })
-        } else {
-            Ok(Decision::Allow)
         }
     }
 }
