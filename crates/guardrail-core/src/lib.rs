@@ -1,7 +1,7 @@
 //! # guardrail-core
 //!
-//! Core types, pipeline, and stage trait for `guardrail-rs` — a zero-Python,
-//! production-grade LLM security layer written in Rust.
+//! Core types, pipeline, and stage trait for `guardrail-rs` — a zero-Python
+//! LLM security proxy written in Rust.
 //!
 //! This crate contains no I/O and no async runtime. It is purely the data model
 //! and the pipeline abstraction that all other crates build upon.
