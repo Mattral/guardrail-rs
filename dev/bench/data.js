@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791991054886,
+  "lastUpdate": 1791991184887,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -1579,6 +1579,86 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 9979,
             "range": "± 132",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Mattral",
+            "username": "Mattral"
+          },
+          "committer": {
+            "name": "Mattral",
+            "username": "Mattral"
+          },
+          "id": "cc8d62842832e1f3b79cc2d1fe7c72afba6b5fa6",
+          "message": "fix(ci): declare the real MSRV (1.88) and make the MSRV job actually test it",
+          "timestamp": "2026-10-14T15:14:24Z",
+          "url": "https://github.com/Mattral/guardrail-rs/pull/23/commits/cc8d62842832e1f3b79cc2d1fe7c72afba6b5fa6"
+        },
+        "date": 1791991184492,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 364,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 3640,
+            "range": "± 28",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 14277,
+            "range": "± 122",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 28405,
+            "range": "± 64",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 1289,
+            "range": "± 15",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 12897,
+            "range": "± 152",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 49624,
+            "range": "± 203",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 98668,
+            "range": "± 284",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 3676,
+            "range": "± 9",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 14316,
+            "range": "± 55",
             "unit": "ns/iter"
           }
         ]
