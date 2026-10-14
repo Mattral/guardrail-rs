@@ -1,0 +1,72 @@
+name: ONNX real models
+
+# Smoke tests and latency benchmarks against the real recommended models.
+# Manual only: the models are ~1.2 GB together and are not part of the
+# required CI gate (that uses tiny fixture models; see ci.yml `test-onnx`).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Model repo commits, pinned so the cache key and results are reproducible.
+  PI_MODEL: protectai/deberta-v3-base-prompt-injection-v2
+  PI_REVISION: 90c9989b1a342275dd0d1a95aad283c04e075671
+  TOX_MODEL: unitary/unbiased-toxic-roberta
+  TOX_REVISION: 36295dd80b422dc49f40052021430dae76241adc
+
+jobs:
+  real-models:
+    name: smoke tests + benchmarks (real models)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: onnx-real-models
+
+      - name: Cache model files
+        id: models-cache
+        uses: actions/cache@v4
+        with:
+          path: models-cache
+          key: onnx-models-${{ env.PI_REVISION }}-${{ env.TOX_REVISION }}
+
+      - name: Download prompt-injection model (published ONNX export)
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models-cache/prompt-injection
+          base="https://huggingface.co/${PI_MODEL}/resolve/${PI_REVISION}/onnx"
+          curl -fsSL --retry 3 -o models-cache/prompt-injection/model.onnx "$base/model.onnx"
+          curl -fsSL --retry 3 -o models-cache/prompt-injection/tokenizer.json "$base/tokenizer.json"
+
+      - name: Export toxicity model to ONNX
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          python3 -m pip install --quiet "optimum-onnx[onnxruntime]==0.1.0"
+          # optimum-cli has no --revision flag, so fetch the pinned commit first.
+          python3 -c "import os; from huggingface_hub import snapshot_download as d; d(os.environ['TOX_MODEL'], revision=os.environ['TOX_REVISION'], local_dir='tox-src')"
+          optimum-cli export onnx --model tox-src --task text-classification models-cache/toxicity/
+
+      - name: Smoke tests
+        env:
+          GUARDRAIL_TEST_MODEL_DIR: ${{ github.workspace }}/models-cache
+        run: >
+          cargo test -p guardrail-classifiers --features onnx --test onnx_real_models
+          -- --ignored --nocapture
+
+      - name: Benchmarks
+        env:
+          GUARDRAIL_BENCH_MODEL_DIR: ${{ github.workspace }}/models-cache
+        run: >
+          cargo bench -p guardrail-classifiers --features onnx --bench classifier_benchmarks
+          -- 'onnx_injection|toxicity' 2>&1 | tee onnx-bench.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onnx-bench
+          path: onnx-bench.txt
