@@ -1,8 +1,57 @@
 //! The pipeline abstraction: `Stage` trait, `Pipeline`, and `PipelineBuilder`.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use crate::{decision::Decision, error::GuardrailError, request::GuardrailRequest};
+use crate::{
+    decision::{BlockCode, Decision},
+    error::GuardrailError,
+    request::GuardrailRequest,
+};
+
+/// Block code returned when a stage configured with [`FailMode::Closed`]
+/// errors instead of producing a decision.
+pub const STAGE_ERROR_CODE: &str = "stage_error";
+
+/// What the pipeline does when a stage returns `Err` instead of a decision.
+///
+/// Set per stage with [`PipelineBuilder::stage_with_fail_mode`]. Stages added
+/// with [`PipelineBuilder::stage`] use [`FailMode::Open`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FailMode {
+    /// Treat the error as `Decision::Allow` and keep evaluating later
+    /// stages (fail-open). The default.
+    #[default]
+    Open,
+    /// Stop and return `Decision::Block` with code [`STAGE_ERROR_CODE`]
+    /// (fail-closed).
+    Closed,
+}
+
+/// How one stage evaluation ended. Reported to the observer passed to
+/// [`Pipeline::run_with_events`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StageOutcome {
+    /// The stage returned a decision (allow, redact, or block).
+    Completed,
+    /// The stage errored and the request continued unchecked by it
+    /// ([`FailMode::Open`]).
+    ErrorAllowed,
+    /// The stage errored and the request was blocked ([`FailMode::Closed`]).
+    ErrorBlocked,
+}
+
+/// One stage evaluation, as reported to [`Pipeline::run_with_events`].
+#[derive(Debug, Clone, Copy)]
+pub struct StageEvent {
+    /// The stage's [`Stage::name`].
+    pub stage: &'static str,
+    /// Wall-clock time the stage's `evaluate` call took.
+    pub elapsed: Duration,
+    /// How the evaluation ended.
+    pub outcome: StageOutcome,
+}
 
 /// Every processing unit in the pipeline implements this trait.
 ///
@@ -17,9 +66,11 @@ use crate::{decision::Decision, error::GuardrailError, request::GuardrailRequest
 ///   mutations by returning `Decision::Redact` with a new `GuardrailRequest`.
 /// - A stage **must** be `Send + Sync + 'static` so it can be used in a
 ///   multi-threaded Tokio runtime.
-/// - On error, stages should prefer returning `Ok(Decision::Allow)` over
-///   propagating the error (fail-open). Propagate the error only for
-///   configuration issues that make the stage fundamentally broken.
+/// - On error (e.g. a failed model inference), return `Err` rather than
+///   choosing an outcome yourself. The pipeline applies the stage's
+///   [`FailMode`]: allow and continue by default, or block if the stage was
+///   added with [`FailMode::Closed`]. Swallowing the error inside the stage
+///   would silently bypass a fail-closed configuration.
 // `async_trait` marks the generated method `#[must_use]` even though its
 // boxed-future return type already is; clippy 1.99+ flags the redundancy
 // inside the macro expansion, which we can't change from here.
@@ -33,9 +84,9 @@ pub trait Stage: Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// Returns `GuardrailError::StageFailed` if the stage encounters an
-    /// unrecoverable error. Recoverable errors (e.g., a model returning an
-    /// unexpected shape) should be logged and result in `Ok(Decision::Allow)`.
+    /// Returns an error if the stage could not reach a decision (for
+    /// example, model inference failed). The pipeline turns the error into
+    /// `Allow` or `Block` according to the stage's [`FailMode`].
     async fn evaluate(&self, req: &GuardrailRequest) -> Result<Decision, GuardrailError>;
 }
 
@@ -57,13 +108,18 @@ pub trait Stage: Send + Sync + 'static {
 /// # });
 /// ```
 pub struct Pipeline {
-    stages: Vec<Arc<dyn Stage>>,
+    stages: Vec<(Arc<dyn Stage>, FailMode)>,
 }
 
 impl Pipeline {
-    /// Create a pipeline from a list of stages.
+    /// Create a pipeline from a list of stages, all using [`FailMode::Open`].
+    ///
+    /// Use [`PipelineBuilder::stage_with_fail_mode`] to set a different
+    /// fail mode per stage.
     pub fn new(stages: Vec<Arc<dyn Stage>>) -> Self {
-        Self { stages }
+        Self {
+            stages: stages.into_iter().map(|s| (s, FailMode::Open)).collect(),
+        }
     }
 
     /// Start building a pipeline fluently.
@@ -113,11 +169,17 @@ impl Pipeline {
     /// stage's entity list. Only if no stage redacted *and* no stage
     /// blocked does the pipeline return `Decision::Allow`.
     ///
+    /// A stage that returns `Err` is handled by its [`FailMode`]: with
+    /// [`FailMode::Open`] (the default) evaluation continues as if it had
+    /// allowed; with [`FailMode::Closed`] the pipeline stops and returns
+    /// `Decision::Block` with code [`STAGE_ERROR_CODE`]. Use
+    /// [`Pipeline::run_with_events`] to find out whether that happened.
+    ///
     /// # Errors
     ///
-    /// Returns `GuardrailError::StageFailed` if any stage returns an error.
-    /// By default, stage errors are treated as `Allow` (fail-open). This can be
-    /// changed via `config.pipeline.on_error`.
+    /// Currently never returns `Err`: stage errors are resolved by each
+    /// stage's [`FailMode`] as described above. The `Result` is kept so
+    /// future pipeline-level failures can be reported without an API break.
     ///
     /// # Examples
     ///
@@ -199,11 +261,57 @@ impl Pipeline {
     /// ```
     pub async fn run_with_observer<F>(
         &self,
-        mut req: GuardrailRequest,
+        req: GuardrailRequest,
         mut observer: F,
     ) -> Result<(Decision, GuardrailRequest), GuardrailError>
     where
         F: FnMut(&str, std::time::Duration),
+    {
+        self.run_with_events(req, |event| observer(event.stage, event.elapsed))
+            .await
+    }
+
+    /// Like [`Pipeline::run`], but invokes `observer` with a [`StageEvent`]
+    /// after each stage evaluation, including whether the stage errored and
+    /// how its [`FailMode`] resolved the error.
+    ///
+    /// This is how callers make fail-open events visible: count
+    /// [`StageOutcome::ErrorAllowed`] to see requests that went through
+    /// without a stage's check.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Pipeline::run`]: currently never returns `Err`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_core::pipeline::{FailMode, StageOutcome};
+    /// use guardrail_core::test_helpers::{clean_request, ErrorStage};
+    /// use guardrail_core::{Decision, PipelineBuilder};
+    ///
+    /// # tokio_test::block_on(async {
+    /// let pipeline = PipelineBuilder::default()
+    ///     .stage_with_fail_mode(ErrorStage, FailMode::Closed)
+    ///     .build();
+    ///
+    /// let mut outcomes = Vec::new();
+    /// let (decision, _req) = pipeline
+    ///     .run_with_events(clean_request(), |event| outcomes.push(event.outcome))
+    ///     .await
+    ///     .unwrap();
+    ///
+    /// assert!(matches!(decision, Decision::Block { .. }));
+    /// assert_eq!(outcomes, vec![StageOutcome::ErrorBlocked]);
+    /// # });
+    /// ```
+    pub async fn run_with_events<F>(
+        &self,
+        mut req: GuardrailRequest,
+        mut observer: F,
+    ) -> Result<(Decision, GuardrailRequest), GuardrailError>
+    where
+        F: FnMut(&StageEvent),
     {
         // Accumulated across all stages that redact (not just the first or
         // last). A pipeline with both `pii_redactor` and a custom
@@ -217,24 +325,59 @@ impl Pipeline {
         let mut redaction_reasons: Vec<String> = Vec::new();
         let mut redaction_entities: Vec<String> = Vec::new();
 
-        for stage in &self.stages {
+        for (stage, fail_mode) in &self.stages {
             let stage_name = stage.name();
             tracing::debug!(stage = stage_name, "evaluating stage");
 
             let stage_start = std::time::Instant::now();
             let result = stage.evaluate(&req).await;
-            observer(stage_name, stage_start.elapsed());
+            let elapsed = stage_start.elapsed();
 
             let decision = match result {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(
-                        stage = stage_name,
-                        error = %e,
-                        "stage failed; failing open (allow)"
-                    );
-                    Decision::Allow
+                Ok(d) => {
+                    observer(&StageEvent {
+                        stage: stage_name,
+                        elapsed,
+                        outcome: StageOutcome::Completed,
+                    });
+                    d
                 }
+                Err(e) => match fail_mode {
+                    FailMode::Open => {
+                        tracing::warn!(
+                            stage = stage_name,
+                            error = %e,
+                            "stage failed; failing open (allow)"
+                        );
+                        observer(&StageEvent {
+                            stage: stage_name,
+                            elapsed,
+                            outcome: StageOutcome::ErrorAllowed,
+                        });
+                        Decision::Allow
+                    }
+                    FailMode::Closed => {
+                        tracing::error!(
+                            stage = stage_name,
+                            error = %e,
+                            "stage failed; failing closed (block)"
+                        );
+                        observer(&StageEvent {
+                            stage: stage_name,
+                            elapsed,
+                            outcome: StageOutcome::ErrorBlocked,
+                        });
+                        // The error text stays in the log: it can name model
+                        // paths and other internals, and this reason is
+                        // returned to the caller in the 403 body.
+                        Decision::Block {
+                            reason: format!(
+                                "stage '{stage_name}' failed and is configured to fail closed"
+                            ),
+                            code: BlockCode::Custom(STAGE_ERROR_CODE.into()),
+                        }
+                    }
+                },
             };
 
             tracing::debug!(
@@ -301,25 +444,57 @@ impl Pipeline {
 /// ```
 #[derive(Default)]
 pub struct PipelineBuilder {
-    stages: Vec<Arc<dyn Stage>>,
+    stages: Vec<(Arc<dyn Stage>, FailMode)>,
 }
 
 impl PipelineBuilder {
-    /// Add a stage to the pipeline. Stages are evaluated in the order they are added.
-    pub fn stage(mut self, s: impl Stage) -> Self {
-        self.stages.push(Arc::new(s));
-        self
+    /// Add a stage to the pipeline with [`FailMode::Open`]. Stages are
+    /// evaluated in the order they are added.
+    pub fn stage(self, s: impl Stage) -> Self {
+        self.stage_with_fail_mode(s, FailMode::Open)
     }
 
-    /// Add a pre-boxed stage (useful when the stage is already behind an `Arc`).
-    pub fn arc_stage(mut self, s: Arc<dyn Stage>) -> Self {
-        self.stages.push(s);
+    /// Add a pre-boxed stage (useful when the stage is already behind an
+    /// `Arc`) with [`FailMode::Open`].
+    pub fn arc_stage(self, s: Arc<dyn Stage>) -> Self {
+        self.arc_stage_with_fail_mode(s, FailMode::Open)
+    }
+
+    /// Add a stage with an explicit [`FailMode`] for when it returns `Err`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_core::pipeline::{FailMode, STAGE_ERROR_CODE};
+    /// use guardrail_core::test_helpers::{clean_request, ErrorStage};
+    /// use guardrail_core::{Decision, PipelineBuilder};
+    ///
+    /// # tokio_test::block_on(async {
+    /// let pipeline = PipelineBuilder::default()
+    ///     .stage_with_fail_mode(ErrorStage, FailMode::Closed)
+    ///     .build();
+    /// let (decision, _req) = pipeline.run(clean_request()).await.unwrap();
+    /// match decision {
+    ///     Decision::Block { code, .. } => assert_eq!(code.as_str(), STAGE_ERROR_CODE),
+    ///     other => panic!("expected Block, got {other:?}"),
+    /// }
+    /// # });
+    /// ```
+    pub fn stage_with_fail_mode(self, s: impl Stage, fail_mode: FailMode) -> Self {
+        self.arc_stage_with_fail_mode(Arc::new(s), fail_mode)
+    }
+
+    /// Add a pre-boxed stage with an explicit [`FailMode`].
+    pub fn arc_stage_with_fail_mode(mut self, s: Arc<dyn Stage>, fail_mode: FailMode) -> Self {
+        self.stages.push((s, fail_mode));
         self
     }
 
     /// Consume the builder and return a configured `Pipeline`.
     pub fn build(self) -> Pipeline {
-        Pipeline::new(self.stages)
+        Pipeline {
+            stages: self.stages,
+        }
     }
 }
 
@@ -520,6 +695,83 @@ mod tests {
         assert_eq!(decision, Decision::Allow);
         assert_eq!(observed.len(), 2);
         assert!(observed.iter().all(|(name, _)| name == "passthrough"));
+    }
+
+    #[tokio::test]
+    async fn test_erroring_stage_fails_open_by_default_and_continues() {
+        use crate::test_helpers::ErrorStage;
+
+        let pipeline = PipelineBuilder::default()
+            .stage(ErrorStage)
+            .stage(BlockingStage)
+            .build();
+
+        let mut outcomes = Vec::new();
+        let (decision, _) = pipeline
+            .run_with_events(clean_request(), |e| outcomes.push((e.stage, e.outcome)))
+            .await
+            .unwrap();
+
+        // The error is treated as Allow, so the next stage still runs.
+        assert!(matches!(decision, Decision::Block { .. }));
+        assert_eq!(
+            outcomes,
+            vec![
+                ("error_stage", StageOutcome::ErrorAllowed),
+                ("blocking", StageOutcome::Completed),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_erroring_stage_with_fail_closed_blocks_and_short_circuits() {
+        use crate::test_helpers::ErrorStage;
+
+        let pipeline = PipelineBuilder::default()
+            .stage_with_fail_mode(ErrorStage, FailMode::Closed)
+            .stage(PassthroughStage)
+            .build();
+
+        let mut outcomes = Vec::new();
+        let (decision, _) = pipeline
+            .run_with_events(clean_request(), |e| outcomes.push((e.stage, e.outcome)))
+            .await
+            .unwrap();
+
+        match decision {
+            Decision::Block { code, reason } => {
+                assert_eq!(code.as_str(), STAGE_ERROR_CODE);
+                assert!(reason.contains("error_stage"));
+                // The internal error text must not reach the caller.
+                assert!(!reason.contains("simulated stage failure"));
+            }
+            other => panic!("expected Block, got {other:?}"),
+        }
+        assert_eq!(outcomes, vec![("error_stage", StageOutcome::ErrorBlocked)]);
+    }
+
+    #[tokio::test]
+    async fn test_fail_mode_is_per_stage() {
+        use crate::test_helpers::ErrorStage;
+
+        // A fail-open erroring stage followed by a fail-closed healthy one:
+        // only the stage that errors has its fail mode applied.
+        let pipeline = PipelineBuilder::default()
+            .stage_with_fail_mode(ErrorStage, FailMode::Open)
+            .stage_with_fail_mode(PassthroughStage, FailMode::Closed)
+            .build();
+
+        let (decision, _) = pipeline.run(clean_request()).await.unwrap();
+        assert_eq!(decision, Decision::Allow);
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_new_uses_fail_open() {
+        use crate::test_helpers::ErrorStage;
+
+        let pipeline = Pipeline::new(vec![Arc::new(ErrorStage)]);
+        let (decision, _) = pipeline.run(clean_request()).await.unwrap();
+        assert_eq!(decision, Decision::Allow);
     }
 
     #[tokio::test]
