@@ -1,0 +1,2 @@
+# ONNX test fixtures are binary protobuf; never apply line-ending conversion.
+*.onnx binary

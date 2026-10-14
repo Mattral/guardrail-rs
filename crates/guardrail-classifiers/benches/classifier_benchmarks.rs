@@ -118,10 +118,76 @@ fn bench_full_pipeline_async(c: &mut Criterion) {
     group.finish();
 }
 
+/// ONNX classifier latency with the real models. Needs `--features onnx` and
+/// `GUARDRAIL_BENCH_MODEL_DIR` pointing at a directory containing
+/// `prompt-injection/{model.onnx,tokenizer.json}` and/or
+/// `toxicity/{model.onnx,tokenizer.json}` (see docs/onnx-models.md). Each
+/// model that isn't present is skipped with a message.
+///
+/// Measures `score()`, i.e. tokenization plus one ONNX Runtime inference on a
+/// single CPU thread (`intra_threads = 1`, as the stages are configured).
+#[cfg(feature = "onnx")]
+fn bench_onnx(c: &mut Criterion) {
+    use guardrail_classifiers::{OnnxInjectionClassifier, ToxicityClassifier};
+    use std::path::PathBuf;
+
+    let Some(dir) = std::env::var_os("GUARDRAIL_BENCH_MODEL_DIR").map(PathBuf::from) else {
+        eprintln!("skipping ONNX benchmarks: GUARDRAIL_BENCH_MODEL_DIR is not set");
+        return;
+    };
+
+    // ~65 B, ~1 KB and ~1.8 KB of English text: roughly 15, 210 and 380
+    // tokens, all under the 512-token limit of both recommended models.
+    let inputs: Vec<String> = [1usize, 16, 28]
+        .iter()
+        .map(|&n| build_request(n).user_text())
+        .collect();
+
+    type Scorer = Box<dyn Fn(&str) -> f32>;
+    let mut models: Vec<(&str, Scorer)> = Vec::new();
+
+    let pi = dir.join("prompt-injection");
+    if pi.join("model.onnx").exists() {
+        let m =
+            OnnxInjectionClassifier::load(pi.join("model.onnx"), pi.join("tokenizer.json"), 0.85)
+                .expect("load prompt-injection model");
+        models.push(("onnx_injection", Box::new(move |t| m.score(t).unwrap())));
+    } else {
+        eprintln!("skipping onnx_injection: {} not found", pi.display());
+    }
+
+    let tox = dir.join("toxicity");
+    if tox.join("model.onnx").exists() {
+        let m = ToxicityClassifier::load(tox.join("model.onnx"), tox.join("tokenizer.json"), 0.90)
+            .expect("load toxicity model");
+        models.push(("toxicity", Box::new(move |t| m.score(t).unwrap())));
+    } else {
+        eprintln!("skipping toxicity: {} not found", tox.display());
+    }
+
+    for (name, score) in &models {
+        let mut group = c.benchmark_group(*name);
+        group.sample_size(30);
+        for text in &inputs {
+            group.throughput(Throughput::Bytes(text.len() as u64));
+            group.bench_with_input(
+                BenchmarkId::from_parameter(format!("{}B", text.len())),
+                text,
+                |b, text| b.iter(|| score(text)),
+            );
+        }
+        group.finish();
+    }
+}
+
+#[cfg(not(feature = "onnx"))]
+fn bench_onnx(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_regex_injection,
     bench_pii_redaction,
-    bench_full_pipeline_async
+    bench_full_pipeline_async,
+    bench_onnx
 );
 criterion_main!(benches);
