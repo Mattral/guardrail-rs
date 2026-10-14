@@ -79,7 +79,8 @@ fn bench_pii_redaction(c: &mut Criterion) {
     let redactor = PiiRedactor::default();
     let mut group = c.benchmark_group("pii_redactor");
 
-    for &repeats in &[1usize, 16, 64, 128] {
+    // 87 repeats is ~4 KB, the size the < 20 µs target is stated for.
+    for &repeats in &[1usize, 16, 64, 87, 128] {
         let req = build_pii_request(repeats);
         let text = req.user_text();
         let size_bytes = text.len();
