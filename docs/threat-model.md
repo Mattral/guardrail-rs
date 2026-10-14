@@ -71,7 +71,11 @@ provider, creating a data-governance and compliance risk.
 
 - Regex-only approach cannot detect names, addresses, or organization names
   (NER-based detection is planned via `onnx-pii` feature).
-- Response redaction does not apply to streaming (`stream: true`) responses.
+- Response redaction is off by default, and when enabled it does not apply
+  to streaming (`stream: true`) responses, which most chat applications
+  use. For streaming traffic, assume PII the model writes reaches the
+  caller unredacted. See
+  [`architecture.md`](architecture.md#streaming-responses).
 - Luhn validation reduces false positives for credit card numbers, but cannot
   catch all edge cases of arbitrary numeric strings.
 - Redaction is one-way: the original value is not stored and cannot be

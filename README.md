@@ -61,7 +61,7 @@ walks through blocking a prompt injection and redacting PII live.
 
 | | |
 |---|---|
-| **Threat model scope** | Prompt injection, PII leakage (in + out), toxic content, custom policy violations. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
+| **Threat model scope** | Prompt injection, PII leakage, toxic content, custom policy violations. PII is redacted from requests by default. Redacting PII from model *responses* is opt-in (`redact_responses = true`) and **only covers non-streaming responses**: `stream: true` responses pass through unredacted. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
 | **Latency** | Regex + PII pipeline: low tens of microseconds per request. Full pipeline with ONNX classifiers: single-digit milliseconds. These are the project's design targets — see [`docs/benchmarks.md`](docs/benchmarks.md) for methodology and CI-enforced latency gates. |
 | **Fails open** | A misbehaving stage (e.g. a corrupt ONNX model file) never takes down production traffic by default; configurable per-stage via `on_error = "allow" \| "block"`. |
 | **Observability** | Prometheus metrics at `:9090/metrics`, OpenTelemetry traces (OTLP), and an NDJSON audit log — which never contains message content or API keys, only decision metadata. |
