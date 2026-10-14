@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- `PiiRedactor` is about 2× faster: −48% to −55% across 46 B–6 KB inputs,
+  measured back to back on one machine. It used to scan the text twice per
+  entity pattern (records, then replacement). It now scans once per pattern,
+  and skips patterns that a combined `RegexSet` says can't match the current
+  text. Output and audit records are unchanged, which property tests check
+  against the old implementation. At 4 KB it measures 19–23 µs, so the
+  `< 20 µs / 4 KB` target is still not reliably met (see
+  `docs/benchmarks.md`).
+
 ### Fixed
 
 - **`on_error` had no effect anywhere.** `Pipeline::run` turned every stage
