@@ -66,6 +66,34 @@ impl GuardrailRequest {
             .join("\n")
     }
 
+    /// Extract the text of every message whose role is in `roles`, joined
+    /// with newlines, in message order.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_core::request::{ChatMessage, GuardrailRequest, MessageContent, Provider, Role};
+    ///
+    /// let req = GuardrailRequest::new(
+    ///     vec![
+    ///         ChatMessage { role: Role::System, content: MessageContent::Text("be nice".into()) },
+    ///         ChatMessage { role: Role::User, content: MessageContent::Text("hi".into()) },
+    ///     ],
+    ///     "gpt-4o".into(),
+    ///     Provider::OpenAI,
+    /// );
+    /// assert_eq!(req.text_for_roles(&[Role::User]), "hi");
+    /// assert_eq!(req.text_for_roles(&[Role::System, Role::User]), "be nice\nhi");
+    /// ```
+    pub fn text_for_roles(&self, roles: &[Role]) -> String {
+        self.messages
+            .iter()
+            .filter(|m| roles.contains(&m.role))
+            .map(|m| m.content.as_text())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Extract all text content from all messages.
     pub fn all_text(&self) -> String {
         self.messages
