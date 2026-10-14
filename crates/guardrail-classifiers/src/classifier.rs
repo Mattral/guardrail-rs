@@ -239,8 +239,7 @@ impl Classifier for OnnxCpuBackend {
         let tokenizer = self.tokenizer.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut s = session.lock().expect("session mutex poisoned");
-            run_onnx_binary_classification(&mut *s, &tokenizer, &input)
+            run_onnx_binary_classification(&session, &tokenizer, &input)
         })
         .await
         .map_err(|e| GuardrailError::Internal(e.to_string()))?
@@ -283,8 +282,7 @@ impl Classifier for OnnxCudaBackend {
         let tokenizer = self.tokenizer.clone();
 
         tokio::task::spawn_blocking(move || {
-            let mut s = session.lock().expect("session mutex poisoned");
-            run_onnx_binary_classification(&mut *s, &tokenizer, &input)
+            run_onnx_binary_classification(&session, &tokenizer, &input)
         })
         .await
         .map_err(|e| GuardrailError::Internal(e.to_string()))?
@@ -296,48 +294,16 @@ impl Classifier for OnnxCudaBackend {
 /// Run binary classification inference synchronously.
 ///
 /// This is called inside `spawn_blocking`; it must not use `await`.
-/// Returns a [`ClassifierScore`] with the positive-class probability.
+/// Returns a [`ClassifierScore`] with the positive-class probability, or an
+/// error if inference fails or the model doesn't return exactly two logits.
 #[cfg(feature = "onnx")]
 fn run_onnx_binary_classification(
-    session: &mut ort::session::Session,
+    session: &std::sync::Mutex<ort::session::Session>,
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
 ) -> Result<ClassifierScore, GuardrailError> {
-    // inputs macro is referenced fully-qualified as `ort::inputs!` below.
-
-    let encoding = tokenizer
-        .encode(text, true)
-        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-
-    let ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-    let mask: Vec<i64> = encoding
-        .get_attention_mask()
-        .iter()
-        .map(|&m| m as i64)
-        .collect();
-
-    let len = ids.len();
-
-    let ids_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], ids))
-        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-    let mask_tensor = ort::value::Tensor::from_array((vec![1_i64, len as i64], mask))
-        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-
-    let outputs = session
-        .run(ort::inputs! {
-            "input_ids" => ids_tensor,
-            "attention_mask" => mask_tensor
-        })
-        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-
-    let (_shape, data) = outputs[0]
-        .try_extract_tensor::<f32>()
-        .map_err(|e| GuardrailError::Internal(e.to_string()))?;
-
-    // Softmax over 2 classes: index 0 = safe, index 1 = positive (injection/toxic)
-    let exp0 = data[0].exp();
-    let exp1 = data[1].exp();
-    let positive_score = exp1 / (exp0 + exp1);
+    let positive_score =
+        crate::onnx::max_window_score(session, tokenizer, text, crate::onnx::two_class_score)?;
 
     let label = if positive_score >= 0.5 {
         "positive"
