@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `guardrail_request_duration_seconds` is documented as labeled by decision,
+  but every observation was recorded with `decision="total"`. It's now
+  labeled `allow`, `redact` or `block`. The bundled Grafana dashboard sums
+  over the label, so it's unaffected; queries that filtered on
+  `decision="total"` need to drop that filter.
 - **More documented settings that did nothing now work:**
   - `stages.pii_redactor.replacements`: custom tokens were ignored, so the
     output always showed `[EMAIL]` and the like. They now apply to request
