@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791987603522,
+  "lastUpdate": 1791988936271,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -1171,6 +1171,90 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 14373,
             "range": "± 98",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "88831350+Mattral@users.noreply.github.com",
+            "name": "Min Htet Myet",
+            "username": "Mattral"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2f98b60cb956d6ab5245f58cf03c6fdfe592b1d7",
+          "message": "Merge pull request #18 from Mattral/fix/ci-green\n\nfix(ci): patch vulnerable deps, fix clippy 1.99 lints, make nightly audit fail",
+          "timestamp": "2026-10-14T23:39:35+09:00",
+          "tree_id": "9cbe950bc2de72eed4daf82eed14b50400907a70",
+          "url": "https://github.com/Mattral/guardrail-rs/commit/2f98b60cb956d6ab5245f58cf03c6fdfe592b1d7"
+        },
+        "date": 1791988935633,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 210,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 2425,
+            "range": "± 136",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 9547,
+            "range": "± 576",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 18831,
+            "range": "± 1134",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 796,
+            "range": "± 36",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 9365,
+            "range": "± 1018",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 36323,
+            "range": "± 1057",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 74620,
+            "range": "± 4650",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 2502,
+            "range": "± 36",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 10360,
+            "range": "± 277",
             "unit": "ns/iter"
           }
         ]
