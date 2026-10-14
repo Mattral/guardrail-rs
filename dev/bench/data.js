@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791992533735,
+  "lastUpdate": 1791992672256,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -2227,6 +2227,92 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 15727,
             "range": "± 159",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Mattral",
+            "username": "Mattral"
+          },
+          "committer": {
+            "name": "Mattral",
+            "username": "Mattral"
+          },
+          "id": "baaa7abfe28594938434af02262aa96b9b929874",
+          "message": "perf(pii): ~2x faster redaction, scan once per pattern (checklist #7)",
+          "timestamp": "2026-10-14T15:34:57Z",
+          "url": "https://github.com/Mattral/guardrail-rs/pull/28/commits/baaa7abfe28594938434af02262aa96b9b929874"
+        },
+        "date": 1791992671330,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 324,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 3458,
+            "range": "± 138",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 13516,
+            "range": "± 114",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 26786,
+            "range": "± 37",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 447,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 5147,
+            "range": "± 15",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 19946,
+            "range": "± 39",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/4079B",
+            "value": 27128,
+            "range": "± 285",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 39696,
+            "range": "± 56",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 3536,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 6357,
+            "range": "± 14",
             "unit": "ns/iter"
           }
         ]
