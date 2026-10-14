@@ -44,15 +44,46 @@ variance on shared runners is large enough to be misleading otherwise — see
 | `toxicity` (CPU, 1 thread) | 1.0 KB | 437 ms † | — | — | |
 | Full pipeline (regex + PII), worst case (8 KB) | 8.2 KB | 158 µs | — | < 1 ms | ✅ [see detail](#full-pipeline-measured-gated-and-passing-single-run-snapshot) |
 
-**One real finding worth flagging:** `pii_redactor` misses its own
-documented `< 20 µs / 4 KB` target once the input actually contains PII at
-a few KB — 50.8 µs at 3.0 KB, 101 µs at 6.0 KB, roughly 2.5–5× over budget.
-It's nowhere close to threatening the pipeline's overall 5 ms hard ceiling
-(see below), so this isn't a functional problem today, but if sub-100 µs
-tail latency on large, PII-dense payloads matters for your deployment,
-it's the one stage worth profiling first. (`RegexInjectionScanner`, by
-contrast, comes in at roughly half its budget even at the worst-case 8 KB
-input.)
+**One real finding worth flagging:** in the CI rows above, `pii_redactor`
+misses its own documented `< 20 µs / 4 KB` target once the input actually
+contains PII at a few KB: 50.8 µs at 3.0 KB and 101 µs at 6.0 KB, roughly
+2.5–5× over budget. (`RegexInjectionScanner`, by contrast, comes in at
+roughly half its budget even at the worst-case 8 KB input.)
+
+**Update, single-pass rewrite.** Those CI rows predate a rewrite of
+`PiiRedactor::redact_text_with_records`. It used to scan the text twice per
+pattern (once for audit records, once to replace). Now it scans once per
+pattern, and skips patterns that a combined `RegexSet` scan says can't
+match. The output is identical, which is checked by property tests against
+the old implementation. Measured back to back in one session on one machine
+(Intel Core Ultra 5 226V, Rust 1.99.0, Windows 11; Criterion point
+estimates):
+
+| Input | Before | After | Change |
+|------:|-------:|------:|-------:|
+| 46 B | 810 ns | 363 ns | −55% |
+| 742 B | 8.36 µs | 3.77 µs | −55% |
+| 3.0 KB | 33.6 µs | 15.7 µs | −55% |
+| 4.1 KB | 44.4 µs | 23.2 µs | −48% |
+| 6.0 KB | 66.0 µs | 29.6 µs | −54% |
+
+**Target status: still not reliably met.** Three runs of the new code at
+4.1 KB on this machine gave 19.2, 19.7 and 23.2 µs, so it sits right at the
+20 µs line on a fast laptop, and CI's shared runners are slower in every
+other row. The CI row stays ❌ until the dashboard shows otherwise. The next
+step would be to avoid re-running the `RegexSet` after every pattern that
+changes the text. The 4.1 KB size (`pii_redactor/4079B`) was added to the
+benchmark for this, since the target is stated at 4 KB and no benchmark
+measured that size.
+
+To reproduce the comparison:
+
+```bash
+git stash push crates/guardrail-classifiers/src/pii.rs   # or check out the parent commit
+cargo bench -p guardrail-classifiers --bench classifier_benchmarks -- pii_redactor --save-baseline before
+git stash pop
+cargo bench -p guardrail-classifiers --bench classifier_benchmarks -- pii_redactor --baseline before
+```
 
 **A second, smaller, real finding:** the actual production code path
 (`Stage::evaluate`, async, benchmarked as `stage_evaluate_async`) tracks
