@@ -131,8 +131,8 @@ everything-in-one-place dumping ground as the proxy grows:
 - [`response`](../crates/guardrail-proxy/src/response.rs) — output-side PII
   redaction. `redact_response_body` walks OpenAI `choices[].message.content`
   and Anthropic `content[]` text blocks. Gated by `is_redactable_response`
-  (non-streaming, `application/json` only). Streaming responses are not yet
-  scanned — see `docs/architecture.md` streaming roadmap note.
+  (non-streaming, `application/json` only). Streaming responses are not
+  scanned — see [Streaming responses](#streaming-responses).
 - [`forward`](../crates/guardrail-proxy/src/forward.rs) — sends the
   (possibly redacted) request upstream via a pooled `reqwest::Client`,
   forwarding the original `Authorization` header. Records
@@ -180,6 +180,31 @@ on Unix, spawns a SIGHUP listener for automatic configuration hot-reload.
 5. **`policy_engine`** — user-defined rules run last, after the request has
    been sanitized, so policy conditions like `content_contains` operate on
    (e.g.) the redacted text rather than raw PII.
+
+## Streaming responses
+
+Requests with `"stream": true` go through the full request pipeline like
+any other request. The response side differs:
+
+- **No output redaction.** `response::is_redactable_response` returns
+  `false` for streaming requests and for `text/event-stream` bodies, so
+  `redact_responses = true` has no effect on them. PII the model writes in a
+  streamed answer reaches the caller as-is.
+- **Not streamed incrementally.** `forward::read_body` reads the whole
+  upstream body before the proxy responds (the handler builds a single
+  `Full` body), so the client receives every SSE event at once when the
+  upstream finishes, not token by token. Clients still parse it as a normal
+  SSE stream, but time-to-first-token equals total generation time.
+
+Options, none implemented yet:
+
+1. A setting that rejects `stream: true` requests, or rewrites them to
+   `stream: false`, when `redact_responses` is on, so the redaction promise
+   holds for all traffic.
+2. Since the body is already fully buffered, redact the text deltas inside
+   the buffered SSE events before returning them.
+3. Real streaming passthrough, with redaction applied per chunk and a small
+   carry-over buffer for matches that span chunk boundaries.
 
 ## Error handling: fail-open vs fail-closed
 

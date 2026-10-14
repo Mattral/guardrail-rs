@@ -104,15 +104,24 @@ jobs:
 
   # ── MSRV ───────────────────────────────────────────────────────────────────
   msrv:
-    name: MSRV (1.75)
+    name: MSRV (1.88)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.75"
+          toolchain: "1.88"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace
+      # rust-toolchain.toml pins `stable`, and it beats the toolchain the
+      # action installs. Without this override the job silently built with
+      # stable and never tested the declared MSRV.
+      - name: cargo check on the MSRV toolchain
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: |
+          rustc --version
+          rustc --version | grep -q '^rustc 1\.88\.'
+          cargo check --workspace --all-targets
 
   # ── Code coverage ──────────────────────────────────────────────────────────
   coverage:

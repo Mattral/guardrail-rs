@@ -6,7 +6,7 @@
 [![Crates.io](https://img.shields.io/crates/v/guardrail-cli?style=for-the-badge&logo=rust&logoColor=white)](https://crates.io/crates/guardrail-cli)
 [![docs.rs](https://img.shields.io/docsrs/guardrail-core?style=for-the-badge&logo=read-the-docs&logoColor=white)](https://docs.rs/guardrail-core)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](https://github.com/Mattral/guardrail-rs/blob/main/LICENSE-APACHE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?style=for-the-badge&logo=rust&logoColor=white)](https://github.com/Mattral/guardrail-rs/blob/main/rust-toolchain.toml)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange?style=for-the-badge&logo=rust&logoColor=white)](https://github.com/Mattral/guardrail-rs/blob/main/rust-toolchain.toml)
 [![Visitors](https://img.shields.io/badge/Visitors-1-blue?style=for-the-badge&logo=github&logoColor=white)](https://visitor-badge.laobi.icu/badge?page_id=Mattral.guardrail-rs)
 [![Open in Colab](https://img.shields.io/badge/Open%20in%20Colab-Notebook-yellow?style=for-the-badge&logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Mattral/guardrail-rs/blob/main/examples/notebooks/quickstart_colab.ipynb)
 
@@ -27,7 +27,7 @@ cargo install guardrail-cli
 ```
 
 This builds and installs the `guardrail` binary from
-[crates.io](https://crates.io/crates/guardrail-cli) (Rust 1.75+ required).
+[crates.io](https://crates.io/crates/guardrail-cli) (Rust 1.88+ required).
 Every crate in this workspace — [`guardrail-core`](https://crates.io/crates/guardrail-core),
 [`guardrail-classifiers`](https://crates.io/crates/guardrail-classifiers),
 [`guardrail-config`](https://crates.io/crates/guardrail-config),
@@ -61,7 +61,7 @@ walks through blocking a prompt injection and redacting PII live.
 
 | | |
 |---|---|
-| **Threat model scope** | Prompt injection, PII leakage (in + out), toxic content, custom policy violations. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
+| **Threat model scope** | Prompt injection, PII leakage, toxic content, custom policy violations. PII is redacted from requests by default. Redacting PII from model *responses* is opt-in (`redact_responses = true`) and **only covers non-streaming responses**: `stream: true` responses pass through unredacted. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
 | **Latency** | Regex + PII pipeline: low tens of microseconds per request. Full pipeline with ONNX classifiers: single-digit milliseconds. These are the project's design targets — see [`docs/benchmarks.md`](docs/benchmarks.md) for methodology and CI-enforced latency gates. |
 | **Fails open** | By default, a stage that errors on a request (e.g. ONNX inference fails) is skipped and the request continues without that check. Set `pipeline.on_error = "block"`, or `on_error` on an individual ONNX stage, to block instead. A model that fails to load stops startup rather than failing open. |
 | **Observability** | Prometheus metrics at `:9090/metrics`, OpenTelemetry traces (OTLP), and an NDJSON audit log — which never contains message content or API keys, only decision metadata. |
