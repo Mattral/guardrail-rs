@@ -57,9 +57,26 @@ pub fn is_authorized(config: &AuthConfig, path: &str, headers: &HeaderMap) -> bo
     let presented_key = headers.get(AUTH_HEADER_NAME).and_then(|v| v.to_str().ok());
 
     match presented_key {
-        Some(key) => config.keys.iter().any(|k| k == key),
+        Some(key) => matches_any_key(&config.keys, key),
         None => false,
     }
+}
+
+/// Compare `presented` against every configured key without leaking, through
+/// timing, how many leading bytes matched or which key matched.
+///
+/// Each comparison is constant-time in the key contents (`subtle`), and every
+/// key is checked even after a match. Key *lengths* can still be observed, as
+/// with any comparison that doesn't hash first; keys are meant to be long
+/// random strings, so their length isn't the secret part.
+fn matches_any_key(keys: &[String], presented: &str) -> bool {
+    use subtle::{Choice, ConstantTimeEq};
+
+    let presented = presented.as_bytes();
+    let matched = keys.iter().fold(Choice::from(0), |acc, k| {
+        acc | k.as_bytes().ct_eq(presented)
+    });
+    matched.into()
 }
 
 #[cfg(test)]
@@ -156,6 +173,32 @@ mod tests {
             keys: vec!["secret".into()],
         };
         assert!(!is_authorized(&config, "/v1/messages", &HeaderMap::new()));
+    }
+
+    #[test]
+    fn test_matches_any_key() {
+        let keys = vec!["key-a".to_string(), "key-b".to_string()];
+        assert!(matches_any_key(&keys, "key-a"));
+        assert!(matches_any_key(&keys, "key-b"));
+        assert!(!matches_any_key(&keys, "key-c"));
+        // Prefixes, extensions and empty strings never match.
+        assert!(!matches_any_key(&keys, "key-"));
+        assert!(!matches_any_key(&keys, "key-a2"));
+        assert!(!matches_any_key(&keys, ""));
+        assert!(!matches_any_key(&[], "key-a"));
+    }
+
+    #[test]
+    fn test_key_comparison_does_not_use_eq() {
+        // Guards against reintroducing a short-circuiting `==` on the secret.
+        let src = include_str!("auth.rs").replace("\r\n", "\n");
+        let body = src
+            .split("fn matches_any_key")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("matches_any_key body");
+        assert!(body.contains("ct_eq"), "key comparison must use ct_eq");
+        assert!(!body.contains("=="), "key comparison must not use ==");
     }
 
     #[test]
