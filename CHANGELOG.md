@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `guardrail_pipeline_errors_total{stage, outcome}` counts every stage
+  error. `outcome="allowed"` means the request failed open and went upstream
+  without that stage's check; `outcome="blocked"` means it failed closed.
+  Before this, a fail-open was visible only as a `tracing::warn!` line.
+- Audit records list the stages that failed open on that request in
+  `failed_open_stages` (omitted when empty).
+- `contrib/prometheus-alerts.yml` has example `GuardrailStageFailingOpen` and
+  `GuardrailStageFailingClosed` alerts, loaded by the docker-compose
+  Prometheus.
+
 ### Fixed
 
 - **`on_error` had no effect anywhere.** `Pipeline::run` turned every stage
