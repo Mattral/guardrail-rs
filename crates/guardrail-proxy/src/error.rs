@@ -181,20 +181,29 @@ mod tests {
         use guardrail_core::GuardrailError;
         use std::time::Duration;
 
+        // A local server that accepts the connection but never answers, so
+        // the only way the request can end is the client's timeout. No real
+        // network is involved (this previously targeted 10.255.255.1 and
+        // depended on nothing answering there).
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            // Hold the connection open without reading or writing.
+            std::future::pending::<()>().await;
+        });
+
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(50))
+            .timeout(Duration::from_millis(200))
             .build()
             .unwrap();
 
-        let result = client.get("http://10.255.255.1/").send().await;
-        let err = result.expect_err("request to non-routable address must fail");
+        let result = client.get(format!("http://{addr}/")).send().await;
+        server.abort();
+        let err = result.expect_err("a server that never responds must time out");
         let guardrail_err = GuardrailError::from(err);
 
-        let class = classify_upstream_error(&guardrail_err);
-        assert!(
-            class == "timeout" || class == "connect",
-            "unexpected classification: {class}"
-        );
+        assert_eq!(classify_upstream_error(&guardrail_err), "timeout");
     }
 
     #[tokio::test]

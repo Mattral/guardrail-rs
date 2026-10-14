@@ -43,6 +43,8 @@ opentelemetry_sdk    = { workspace = true }
 opentelemetry-otlp   = { workspace = true }
 prometheus          = { workspace = true }
 uuid                = { workspace = true }
+# Constant-time comparison of caller API keys (auth.rs).
+subtle              = "2.6"
 chrono              = { version = "0.4", features = ["alloc"] }
 
 [dev-dependencies]
