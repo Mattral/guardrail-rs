@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791992231956,
+  "lastUpdate": 1791992444294,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -2067,6 +2067,86 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 14578,
             "range": "± 60",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Mattral",
+            "username": "Mattral"
+          },
+          "committer": {
+            "name": "Mattral",
+            "username": "Mattral"
+          },
+          "id": "44aa04c87ced1309ee44760ba57c276b1481ecfe",
+          "message": "feat(proxy): count stage errors and record fail-open in the audit log (checklist #4)",
+          "timestamp": "2026-10-14T15:34:57Z",
+          "url": "https://github.com/Mattral/guardrail-rs/pull/26/commits/44aa04c87ced1309ee44760ba57c276b1481ecfe"
+        },
+        "date": 1791992443580,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 201,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 2386,
+            "range": "± 130",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 9535,
+            "range": "± 225",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 19153,
+            "range": "± 390",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 765,
+            "range": "± 24",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 8981,
+            "range": "± 201",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 34754,
+            "range": "± 879",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 69218,
+            "range": "± 889",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 2405,
+            "range": "± 96",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 9812,
+            "range": "± 193",
             "unit": "ns/iter"
           }
         ]
