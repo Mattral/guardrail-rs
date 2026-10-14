@@ -1,5 +1,11 @@
 //! Configuration loading, hot-reload, and pipeline construction.
 
+// `ConfigLoadError::Parse` carries a `toml::de::Error` by value, which newer
+// clippy considers too large for an `Err` variant. These functions run at
+// startup and on reload, never per request, so the size doesn't matter, and
+// boxing the source would change the public error type.
+#![allow(clippy::result_large_err)]
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

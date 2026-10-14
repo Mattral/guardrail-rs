@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Updated dependencies with published advisories: `h2` 0.4.15 → 0.4.20
+  (RUSTSEC-2026-0258), `rustls` 0.23.41 → 0.23.46 (RUSTSEC-2026-0285,
+  -0346, -0348, -0349; `rustls` is the TLS client used for upstream
+  connections), `quinn-proto` 0.11.15 → 0.11.19 (RUSTSEC-2026-0338 to
+  -0342).
+- The nightly `Security Audit` workflow could never fail: it merged
+  cargo-audit's stderr into its JSON report, couldn't parse the result, and
+  counted that as zero vulnerabilities. It now parses stdout only, treats a
+  parse failure as a failure, and fails the run when anything is found.
+
 ## [0.1.1] - 2026-07-03
 
 ### Fixed
