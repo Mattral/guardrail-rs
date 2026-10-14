@@ -32,9 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   / `arc_stage_with_fail_mode`, and `Pipeline::run_with_events`, which reports
   a `StageEvent` (with a `StageOutcome`) for every stage. Existing methods
   keep their signatures and use `FailMode::Open`.
-
-### Changed
-
 - **MSRV is now 1.88** (`rust-version`, the README badge and `clippy.toml`).
   The declared 1.75 was never true for the current dependency set:
   `time-macros` 0.2.31 needs edition 2024 (Rust 1.85), `icu_*` 2.2 needs
