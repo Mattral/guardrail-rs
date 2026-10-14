@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `StageEvent` (with a `StageOutcome`) for every stage. Existing methods
   keep their signatures and use `FailMode::Open`.
 
+### Documentation
+
+- The README's "At a glance" table listed "PII leakage (in + out)" with no
+  caveat. It now says response redaction is opt-in and doesn't cover
+  `stream: true` responses. `docs/architecture.md` has a new "Streaming
+  responses" section covering that, and the fact that streaming responses
+  are buffered in full before reaching the client.
+
 ### Security
 
 - `X-Guardrail-Key` is now compared in constant time (`subtle`), and every
