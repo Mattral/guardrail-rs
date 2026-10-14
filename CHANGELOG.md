@@ -77,6 +77,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this because `rust-toolchain.toml` (`stable`) overrode the toolchain it
   installed. The job now forces `RUSTUP_TOOLCHAIN=1.88` and fails if
   `rustc --version` is anything else.
+- There is now one copy of the bundled prompt-injection rules,
+  `crates/guardrail-classifiers/src/rules/injection.rules`. `guardrail-config`
+  reads it through `RegexInjectionScanner::bundled_rule_source()`, which
+  already existed, instead of embedding its own duplicate. The duplicate,
+  its sync test and the `injection-rules-sync` CI job are gone. No behavior
+  change: the two files were identical.
 
 ### Documentation
 
