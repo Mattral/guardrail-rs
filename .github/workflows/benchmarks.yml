@@ -1,7 +1,8 @@
 name: Benchmarks
 
 permissions:
-  contents: write
+  contents: write       # benchmark-action pushes results to gh-pages
+  pull-requests: write  # ...and posts its regression-alert comment on PRs
 
 on:
   push:
