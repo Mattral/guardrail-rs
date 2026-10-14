@@ -136,9 +136,11 @@ provider using whatever credentials the caller supplies).
   without a key. `X-Guardrail-Key` is stripped before forwarding upstream —
   the LLM provider never sees it.
 
-**Residual risk:** this is a simple shared-secret check, not OAuth/JWT/mTLS,
-and key comparison is not constant-time — don't rely on it against a
-timing-attack-capable adversary on the same network segment. There is no key
+**Residual risk:** this is a simple shared-secret check, not OAuth/JWT/mTLS.
+Keys are compared in constant time (`subtle::ConstantTimeEq`, checking every
+configured key), so response timing doesn't reveal how much of a guess was
+right or which key matched. A key's *length* can still be inferred, so use
+long random keys. There is no key
 revocation list or expiry; rotating a compromised key requires editing
 `auth.keys` and reloading (SIGHUP) or restarting. For internet-facing
 deployments, pair this with a proper API gateway or WAF.
