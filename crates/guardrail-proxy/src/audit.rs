@@ -75,6 +75,11 @@ pub struct AuditRecord {
     pub latency_pipeline_ms: f64,
     /// End-to-end request latency including upstream, in milliseconds.
     pub latency_total_ms: f64,
+    /// Stages that errored on this request and failed open (`on_error =
+    /// "allow"`): the request went on without their check. Empty when every
+    /// stage ran normally. Omitted from JSON when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub failed_open_stages: Vec<String>,
 }
 
 impl AuditRecord {
@@ -146,7 +151,27 @@ impl AuditRecord {
             pii_entities_found: pii_entities,
             latency_pipeline_ms,
             latency_total_ms,
+            failed_open_stages: Vec::new(),
         }
+    }
+
+    /// Record the stages that errored and failed open on this request.
+    /// Returns `self` for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_proxy::audit::AuditRecord;
+    /// use guardrail_core::{decision::Decision, test_helpers::clean_request};
+    ///
+    /// let record = AuditRecord::from_decision(&clean_request(), &Decision::Allow, 0.1, 50.0)
+    ///     .with_failed_open_stages(vec!["toxicity".to_string()]);
+    /// assert_eq!(record.failed_open_stages, vec!["toxicity"]);
+    /// ```
+    #[must_use]
+    pub fn with_failed_open_stages(mut self, stages: Vec<String>) -> Self {
+        self.failed_open_stages = stages;
+        self
     }
 
     /// Set the ONNX classifier score on a record already constructed with
@@ -207,6 +232,7 @@ impl AuditRecord {
             pii_entities_found = ?self.pii_entities_found,
             latency_pipeline_ms = self.latency_pipeline_ms,
             latency_total_ms  = self.latency_total_ms,
+            failed_open_stages = ?self.failed_open_stages,
             "pipeline decision"
         );
     }

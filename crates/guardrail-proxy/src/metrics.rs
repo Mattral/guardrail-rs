@@ -35,6 +35,10 @@ pub struct Metrics {
     /// Total number of failed upstream requests, labeled by a coarse error
     /// class (`"timeout"`, `"connect"`, `"other"`).
     pub upstream_errors_total: IntCounterVec,
+    /// Total number of pipeline stage errors, labeled by stage and by how the
+    /// stage's `on_error` resolved them: `"allowed"` (fail-open: the request
+    /// continued without that stage's check) or `"blocked"` (fail-closed).
+    pub pipeline_errors_total: IntCounterVec,
     /// Current number of in-flight HTTP connections being served.
     pub active_connections: Gauge,
     /// The registry these metrics are registered in.
@@ -135,6 +139,16 @@ impl Metrics {
         )
         .expect("valid metric definition");
 
+        let pipeline_errors_total = IntCounterVec::new(
+            Opts::new(
+                "guardrail_pipeline_errors_total",
+                "Total number of pipeline stage errors, labeled by stage and outcome \
+                 (allowed = failed open, blocked = failed closed).",
+            ),
+            &["stage", "outcome"],
+        )
+        .expect("valid metric definition");
+
         let active_connections = Gauge::new(
             "guardrail_active_connections",
             "Current number of in-flight HTTP connections being served.",
@@ -166,6 +180,9 @@ impl Metrics {
             .register(Box::new(upstream_errors_total.clone()))
             .expect("register upstream_errors_total");
         registry
+            .register(Box::new(pipeline_errors_total.clone()))
+            .expect("register pipeline_errors_total");
+        registry
             .register(Box::new(active_connections.clone()))
             .expect("register active_connections");
 
@@ -178,6 +195,7 @@ impl Metrics {
             stage_duration_seconds,
             request_duration_seconds,
             upstream_errors_total,
+            pipeline_errors_total,
             active_connections,
             registry,
         }

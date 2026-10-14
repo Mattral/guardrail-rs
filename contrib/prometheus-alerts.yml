@@ -1,0 +1,33 @@
+# Example Prometheus alerting rules for guardrail-rs.
+#
+# Loaded by contrib/prometheus.yml (rule_files) in the docker-compose stack.
+# Route the alerts with your own Alertmanager configuration.
+
+groups:
+  - name: guardrail-rs
+    rules:
+      # A stage errored and, because its on_error is "allow" (the default),
+      # requests went upstream without that stage's check. Any occurrence is
+      # worth a look: the guardrail is not guarding.
+      - alert: GuardrailStageFailingOpen
+        expr: sum by (stage) (increase(guardrail_pipeline_errors_total{outcome="allowed"}[5m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "guardrail-rs stage {{ $labels.stage }} is failing open"
+          description: >-
+            {{ $value | humanize }} requests in the last 5 minutes skipped the
+            {{ $labels.stage }} check because the stage errored (on_error = "allow").
+            Check the proxy logs for "stage failed; failing open".
+
+      # Same errors under on_error = "block": traffic is protected but being
+      # rejected with 403 stage_error.
+      - alert: GuardrailStageFailingClosed
+        expr: sum by (stage) (increase(guardrail_pipeline_errors_total{outcome="blocked"}[5m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "guardrail-rs stage {{ $labels.stage }} is erroring and blocking requests"
+          description: >-
+            {{ $value | humanize }} requests in the last 5 minutes were blocked with
+            code stage_error because {{ $labels.stage }} errored (on_error = "block").
