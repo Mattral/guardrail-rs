@@ -18,6 +18,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stage but not the internal error text.
 - The proxy's handler for a pipeline-level `Err` would have forwarded an
   empty request upstream. It was unreachable, and now returns `500`.
+- **The `toxicity` stage almost never blocked anything with the recommended
+  model.** `unitary/unbiased-toxic-roberta` is a 16-label multi-label model,
+  but the stage took a 2-class softmax over labels 0 and 1, which scored
+  P(`severe_toxicity` over `toxicity`). On that model, "You are a worthless
+  idiot and everyone hates you." scored 0.0000; it now scores 0.9973. The
+  score is now the sigmoid of label 0 for models with more than two outputs.
+  2-class models still use softmax.
+- **Padding a message past the model's length skipped the ONNX check.**
+  RoBERTa fails inference past 514 positions, so a toxic message padded with
+  2.9 KB of filler made the toxicity stage error and, with the default
+  `on_error = "allow"`, go through unchecked. Both ONNX stages now score
+  overlapping 512-token windows and take the maximum. Input that needs more
+  than 16 windows is an inference error, handled by `on_error`.
+- ONNX stages no longer panic on a model with an unexpected output shape. An
+  out-of-bounds index used to panic while holding the session lock,
+  poisoning it so that every later request panicked too. It's now an error,
+  and a poisoned lock is recovered.
+- `onnx_injection` no longer runs inference on requests with no user text.
+  That errored, and would block every such request under `on_error =
+  "block"`.
+- The `onnx` feature failed to link on Windows (`LNK2038` RuntimeLibrary
+  mismatch between `tokenizers`' `esaxx` C++ code and ONNX Runtime).
+  `tokenizers` is now built without default features.
+- `tokenizer.json` files written by current Hugging Face tooling (BPE merges
+  stored as pairs) failed to load with `tokenizers` 0.19. Upgraded to 0.22.
+- `models/export_models.sh` and `docs/onnx-models.md` installed
+  `optimum[exporters]`, which no longer provides `optimum-cli export onnx` in
+  optimum 2.x. They now install `optimum-onnx`.
+
+### Added
+
+- CI now runs real ONNX Runtime inference: a `test-onnx` job (Linux and
+  Windows) replaces `cargo check --features onnx`. It runs clippy and the
+  full test suite with the feature against tiny generated fixture models in
+  `crates/guardrail-classifiers/tests/fixtures/onnx/`.
+- Manual `ONNX real models` workflow, plus `onnx_real_models` smoke tests
+  (ignored by default) and an ONNX benchmark group, for the two recommended
+  models.
 
 ### Changed
 
@@ -32,12 +70,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   / `arc_stage_with_fail_mode`, and `Pipeline::run_with_events`, which reports
   a `StageEvent` (with a `StageOutcome`) for every stage. Existing methods
   keep their signatures and use `FailMode::Open`.
+- **MSRV is now 1.88** (`rust-version`, the README badge and `clippy.toml`).
+  The declared 1.75 was never true for the current dependency set:
+  `time-macros` 0.2.31 needs edition 2024 (Rust 1.85), `icu_*` 2.2 needs
+  1.86, and other locked dependencies need 1.88. CI's MSRV job didn't catch
+  this because `rust-toolchain.toml` (`stable`) overrode the toolchain it
+  installed. The job now forces `RUSTUP_TOOLCHAIN=1.88` and fails if
+  `rustc --version` is anything else.
 - There is now one copy of the bundled prompt-injection rules,
   `crates/guardrail-classifiers/src/rules/injection.rules`. `guardrail-config`
   reads it through `RegexInjectionScanner::bundled_rule_source()`, which
   already existed, instead of embedding its own duplicate. The duplicate,
   its sync test and the `injection-rules-sync` CI job are gone. No behavior
   change: the two files were identical.
+
+### Documentation
+
+- The README's "At a glance" table listed "PII leakage (in + out)" with no
+  caveat. It now says response redaction is opt-in and doesn't cover
+  `stream: true` responses. `docs/architecture.md` has a new "Streaming
+  responses" section covering that, and the fact that streaming responses
+  are buffered in full before reaching the client.
 
 ### Security
 
