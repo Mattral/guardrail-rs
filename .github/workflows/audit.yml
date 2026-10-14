@@ -23,25 +23,26 @@ jobs:
       - name: Run cargo audit
         id: audit
         continue-on-error: true
-        run: cargo audit --json > audit-report.json 2>&1 || true
+        # Only stdout goes into the report: cargo-audit prints progress
+        # ("Fetching advisory database...") on stderr, and mixing it into the
+        # file made it invalid JSON, which the old parser silently read as
+        # "0 vulnerabilities".
+        run: cargo audit --json > audit-report.json
 
       - name: Check for vulnerabilities
         id: check
         run: |
+          # A report that can't be parsed is a failure, never "0 found".
           VULN_COUNT=$(python3 -c "
-          import json, sys
-          try:
-            with open('audit-report.json') as f:
-              data = json.load(f)
-            vulns = data.get('vulnerabilities', {}).get('list', [])
-            print(len(vulns))
-          except Exception:
-            print(0)
+          import json
+          with open('audit-report.json') as f:
+            data = json.load(f)
+          print(len(data['vulnerabilities']['list']))
           ")
           echo "vuln_count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
           echo "Found $VULN_COUNT vulnerabilities"
           if [ "$VULN_COUNT" -gt 0 ]; then
-            cat audit-report.json | python3 -m json.tool || cat audit-report.json
+            python3 -m json.tool audit-report.json || cat audit-report.json
           fi
 
       - name: Open GitHub issue on failure
@@ -74,3 +75,9 @@ jobs:
                 labels: ['security', 'dependencies'],
               });
             }
+
+      - name: Fail the run when vulnerabilities are found
+        if: steps.check.outputs.vuln_count != '0'
+        run: |
+          echo "cargo audit found ${{ steps.check.outputs.vuln_count }} vulnerabilities"
+          exit 1

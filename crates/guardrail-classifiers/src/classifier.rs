@@ -56,6 +56,9 @@ use guardrail_core::GuardrailError;
 /// - [`RegexBackend`] — always available, zero dependencies.
 /// - `OnnxCpuBackend` — behind the `onnx` feature.
 /// - `OnnxCudaBackend` — behind the `onnx-cuda` feature.
+// See the matching allow on `guardrail_core::Stage`: the redundant
+// `#[must_use]` comes from the `async_trait` expansion, not from this code.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait Classifier: Send + Sync + 'static {
     /// The type of input the classifier accepts.

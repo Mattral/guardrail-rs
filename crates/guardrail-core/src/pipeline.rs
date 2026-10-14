@@ -20,6 +20,10 @@ use crate::{decision::Decision, error::GuardrailError, request::GuardrailRequest
 /// - On error, stages should prefer returning `Ok(Decision::Allow)` over
 ///   propagating the error (fail-open). Propagate the error only for
 ///   configuration issues that make the stage fundamentally broken.
+// `async_trait` marks the generated method `#[must_use]` even though its
+// boxed-future return type already is; clippy 1.99+ flags the redundancy
+// inside the macro expansion, which we can't change from here.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait Stage: Send + Sync + 'static {
     /// Human-readable identifier used in logs, metrics, and traces.
