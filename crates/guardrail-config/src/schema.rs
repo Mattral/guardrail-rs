@@ -208,10 +208,11 @@ pub struct PipelineConfig {
     #[serde(default = "default_response_stages")]
     pub response_stages: Vec<String>,
 
-    /// What to do when a stage returns an error.
+    /// What to do when a stage returns an error instead of a decision.
+    /// Applies to every request stage that doesn't set its own `on_error`.
     ///
     /// - `"allow"` (default): treat the error as `Decision::Allow` (fail-open).
-    /// - `"block"`: treat the error as `Decision::Block` (fail-closed).
+    /// - `"block"`: block the request with code `stage_error` (fail-closed).
     #[serde(default)]
     pub on_error: OnErrorBehavior,
 }
@@ -249,6 +250,34 @@ pub enum OnErrorBehavior {
     Allow,
     /// Fail closed: treat stage errors as `Block`.
     Block,
+}
+
+impl OnErrorBehavior {
+    /// The [`guardrail_core::FailMode`] this setting maps to.
+    pub fn fail_mode(self) -> guardrail_core::FailMode {
+        match self {
+            Self::Allow => guardrail_core::FailMode::Open,
+            Self::Block => guardrail_core::FailMode::Closed,
+        }
+    }
+
+    /// Resolve a stage's optional `on_error` against the pipeline default.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_config::OnErrorBehavior;
+    ///
+    /// let pipeline_default = OnErrorBehavior::Block;
+    /// assert_eq!(OnErrorBehavior::resolve(None, pipeline_default), OnErrorBehavior::Block);
+    /// assert_eq!(
+    ///     OnErrorBehavior::resolve(Some(OnErrorBehavior::Allow), pipeline_default),
+    ///     OnErrorBehavior::Allow,
+    /// );
+    /// ```
+    pub fn resolve(stage: Option<Self>, pipeline_default: Self) -> Self {
+        stage.unwrap_or(pipeline_default)
+    }
 }
 
 // ── Stages ────────────────────────────────────────────────────────────────────
@@ -443,9 +472,10 @@ pub struct OnnxStageConfig {
     /// Action on positive classification. Default: `"block"`.
     #[serde(default)]
     pub action: StageAction,
-    /// What to do if inference fails. Default: `"allow"` (fail-open).
+    /// What to do if inference fails. Unset (the default) means use
+    /// `pipeline.on_error`.
     #[serde(default)]
-    pub on_error: OnErrorBehavior,
+    pub on_error: Option<OnErrorBehavior>,
 }
 
 impl Default for OnnxStageConfig {
@@ -456,7 +486,7 @@ impl Default for OnnxStageConfig {
             tokenizer_path: String::new(),
             threshold: default_threshold(),
             action: StageAction::Block,
-            on_error: OnErrorBehavior::Allow,
+            on_error: None,
         }
     }
 }
@@ -482,9 +512,10 @@ pub struct ToxicityStageConfig {
     /// Which message roles to scan. Default: `["user"]`.
     #[serde(default = "default_scan_roles")]
     pub scan_roles: Vec<String>,
-    /// On-error behavior.
+    /// What to do if inference fails. Unset (the default) means use
+    /// `pipeline.on_error`.
     #[serde(default)]
-    pub on_error: OnErrorBehavior,
+    pub on_error: Option<OnErrorBehavior>,
 }
 
 impl Default for ToxicityStageConfig {
@@ -496,7 +527,7 @@ impl Default for ToxicityStageConfig {
             threshold: default_toxicity_threshold(),
             action: StageAction::Block,
             scan_roles: default_scan_roles(),
-            on_error: OnErrorBehavior::Allow,
+            on_error: None,
         }
     }
 }
