@@ -7,15 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- There is now one copy of the bundled prompt-injection rules,
-  `crates/guardrail-classifiers/src/rules/injection.rules`. `guardrail-config`
-  reads it through `RegexInjectionScanner::bundled_rule_source()`, which
-  already existed, instead of embedding its own duplicate. The duplicate,
-  its sync test and the `injection-rules-sync` CI job are gone. No behavior
-  change: the two files were identical.
-
 ### Fixed
 
 - **`on_error` had no effect anywhere.** `Pipeline::run` turned every stage
@@ -41,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   / `arc_stage_with_fail_mode`, and `Pipeline::run_with_events`, which reports
   a `StageEvent` (with a `StageOutcome`) for every stage. Existing methods
   keep their signatures and use `FailMode::Open`.
+- There is now one copy of the bundled prompt-injection rules,
+  `crates/guardrail-classifiers/src/rules/injection.rules`. `guardrail-config`
+  reads it through `RegexInjectionScanner::bundled_rule_source()`, which
+  already existed, instead of embedding its own duplicate. The duplicate,
+  its sync test and the `injection-rules-sync` CI job are gone. No behavior
+  change: the two files were identical.
 
 ### Security
 
