@@ -43,8 +43,10 @@ request_stages = ["regex_injection", "onnx_injection", "pii_redactor", "toxicity
 # Ordered list of response-side stages.
 response_stages = ["output_pii_redactor"]
 
-# Behavior when the pipeline itself errors unexpectedly (not the same as a
-# stage's own Block decision): "allow" (fail-open, default) or "block".
+# What to do when a stage errors instead of returning a decision (e.g. ONNX
+# inference fails): "allow" (fail-open, default) skips that stage's check;
+# "block" rejects the request with 403 / stage_error. Stages without their
+# own on_error use this value.
 on_error = "allow"
 
 # ── Stage 1: regex-based prompt injection detection ───────────────────────────
@@ -71,7 +73,8 @@ model_path = ""
 tokenizer_path = ""
 threshold = 0.85
 action = "block"
-on_error = "allow"
+# Optional: overrides [pipeline].on_error for this stage only.
+# on_error = "block"
 
 # ── Stage 3: PII detection and redaction ──────────────────────────────────────
 # Detects and replaces PII before it reaches the upstream LLM or the
@@ -112,7 +115,8 @@ tokenizer_path = ""
 threshold = 0.90
 action = "block"
 scan_roles = ["user"]
-on_error = "allow"
+# Optional: overrides [pipeline].on_error for this stage only.
+# on_error = "block"
 
 # ── Stage 5: user-defined policy rules ─────────────────────────────────────────
 # Evaluated last, in order. The first enabled rule whose `when` condition
