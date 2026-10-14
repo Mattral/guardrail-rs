@@ -147,6 +147,23 @@ pub fn validate_config(config: &Config) -> Vec<String> {
         }
     }
 
+    if config.stages.toxicity.enabled {
+        let roles = &config.stages.toxicity.scan_roles;
+        if roles.is_empty() {
+            errors.push(
+                "stages.toxicity.scan_roles is empty; the stage would never scan anything".into(),
+            );
+        }
+        for role in roles {
+            if crate::schema::parse_role(role).is_none() {
+                errors.push(format!(
+                    "stages.toxicity.scan_roles: unknown role '{role}'. \
+                     Valid: system, user, assistant, tool"
+                ));
+            }
+        }
+    }
+
     // ── Policy rules ──────────────────────────────────────────────────────
     for (i, rule) in config.policy.rules.iter().enumerate() {
         if rule.name.trim().is_empty() {
