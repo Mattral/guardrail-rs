@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `X-Guardrail-Key` is now compared in constant time (`subtle`), and every
+  configured key is checked, so timing no longer reveals a matching prefix or
+  which key matched. Before, the comparison was a short-circuiting `==`.
 - Updated dependencies with published advisories: `h2` 0.4.15 → 0.4.20
   (RUSTSEC-2026-0258), `rustls` 0.23.41 → 0.23.46 (RUSTSEC-2026-0285,
   -0346, -0348, -0349; `rustls` is the TLS client used for upstream
