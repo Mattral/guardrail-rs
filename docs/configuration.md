@@ -52,7 +52,7 @@ keys = ["grk-your-generated-key-here"]
 |-------|------|---------|-------------|
 | `request_stages` | array of strings | `["regex_injection", "onnx_injection", "pii_redactor", "toxicity", "policy"]` | Ordered list of stage IDs to run on the request side. Removing an ID disables that stage regardless of its own `enabled` flag. Order is significant. |
 | `response_stages` | array of strings | `["output_pii_redactor"]` | Ordered list of stage IDs to run on the response side. |
-| `on_error` | `"allow"` \| `"block"` | `"allow"` | Behavior when the pipeline itself errors unexpectedly (distinct from a stage's own `Decision::Block`). |
+| `on_error` | `"allow"` \| `"block"` | `"allow"` | What to do when a stage errors instead of returning a decision (e.g. ONNX inference fails). `"allow"` skips that stage's check and continues (fail-open); `"block"` rejects the request with `403` and code `stage_error` (fail-closed). Applies to every request stage that doesn't set its own `on_error`. |
 
 Valid request stage IDs: `regex_injection`, `onnx_injection`, `pii_redactor`,
 `toxicity`, `policy`. Valid response stage IDs: `output_pii_redactor`.
@@ -115,7 +115,7 @@ see [`docs/onnx-models.md`](onnx-models.md).
 | `tokenizer_path` | string | `""` | Path to the HuggingFace `tokenizer.json`. **Required if `enabled = true`.** |
 | `threshold` | float | `0.85` (injection) / `0.90` (toxicity) | Decision threshold in `[0.0, 1.0]`. Scores at or above this value result in the configured `action`. |
 | `action` | `"block"` \| `"redact"` \| `"log_only"` | `"block"` | What to do on a positive classification. |
-| `on_error` | `"allow"` \| `"block"` | `"allow"` | What to do if inference itself fails (model load error, malformed input). |
+| `on_error` | `"allow"` \| `"block"` | unset (uses `pipeline.on_error`) | What to do if inference fails on a request. Overrides `pipeline.on_error` for this stage only. A model that fails to *load* is a startup error, not an inference error: the proxy refuses to start (or a reload is rejected) regardless of this setting. |
 
 `[stages.toxicity]` additionally supports:
 

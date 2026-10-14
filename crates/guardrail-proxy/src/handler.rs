@@ -147,21 +147,13 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
     {
         Ok(result) => result,
         Err(e) => {
+            // Stage errors never get here: the pipeline resolves them with
+            // each stage's fail mode (`on_error`) and returns a decision.
+            // `Pipeline::run_with_observer` doesn't return `Err` today; if it
+            // ever does, the request was consumed and can't be forwarded, so
+            // the only safe answer is an error response.
             tracing::error!(error = %e, "pipeline evaluation failed unexpectedly");
-            // Fail-open by default unless configured otherwise.
-            match config.pipeline.on_error {
-                guardrail_config::schema::OnErrorBehavior::Block => {
-                    return error_response(
-                        StatusCode::FORBIDDEN,
-                        "request blocked due to internal evaluation error",
-                        "policy_violation",
-                    );
-                }
-                guardrail_config::schema::OnErrorBehavior::Allow => (
-                    Decision::Allow,
-                    GuardrailRequest::new(vec![], String::new(), provider.clone()),
-                ),
-            }
+            return internal_error_response();
         }
     };
     let pipeline_elapsed_ms = pipeline_start.elapsed().as_secs_f64() * 1000.0;
