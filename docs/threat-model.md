@@ -71,7 +71,11 @@ provider, creating a data-governance and compliance risk.
 
 - Regex-only approach cannot detect names, addresses, or organization names
   (NER-based detection is planned via `onnx-pii` feature).
-- Response redaction does not apply to streaming (`stream: true`) responses.
+- Response redaction is off by default, and when enabled it does not apply
+  to streaming (`stream: true`) responses, which most chat applications
+  use. For streaming traffic, assume PII the model writes reaches the
+  caller unredacted. See
+  [`architecture.md`](architecture.md#streaming-responses).
 - Luhn validation reduces false positives for credit card numbers, but cannot
   catch all edge cases of arbitrary numeric strings.
 - Redaction is one-way: the original value is not stored and cannot be
@@ -194,6 +198,13 @@ model from taking down production traffic. Set `pipeline.on_error = "block"`
 to fail closed for every stage, or set `on_error = "block"` on an individual
 ONNX stage to fail closed only for that stage. Fail-closed errors are
 returned as `403` with code `stage_error`.
+
+Fail-open is only a defensible default if you can see it happening. Every
+stage error increments
+`guardrail_pipeline_errors_total{stage, outcome="allowed"|"blocked"}`, and
+the request's audit record lists the stages that failed open in
+`failed_open_stages`. [`contrib/prometheus-alerts.yml`](../contrib/prometheus-alerts.yml)
+has an example alert that fires on any fail-open in the last 5 minutes.
 
 ### No raw content in logs
 

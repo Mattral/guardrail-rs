@@ -22,7 +22,8 @@
 //! does **not** parse or redact SSE chunks — streaming responses are passed
 //! through byte-for-byte unmodified. [`is_redactable_response`] returns
 //! `false` for such responses so callers can skip this stage entirely. See
-//! `docs/architecture.md` for the planned streaming redaction design.
+//! "Streaming responses" in `docs/architecture.md` for the current behavior
+//! and the options for closing this gap.
 
 use guardrail_classifiers::PiiRedactor;
 use serde_json::Value;

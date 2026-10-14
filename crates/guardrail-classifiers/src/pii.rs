@@ -13,7 +13,7 @@ use guardrail_core::{
     pipeline::Stage,
     request::{ChatMessage, GuardrailRequest, MessageContent},
 };
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use std::borrow::Cow;
 
 // ── Entity types ─────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ fn luhn_valid(digits: &str) -> bool {
         })
         .sum();
 
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 // ── PiiRedactor ───────────────────────────────────────────────────────────────
@@ -144,6 +144,9 @@ fn luhn_valid(digits: &str) -> bool {
 /// ```
 pub struct PiiRedactor {
     patterns: Vec<PatternEntry>,
+    /// All of `patterns` in one set, index-aligned, used to skip patterns
+    /// that can't match the current text with one combined scan.
+    set: RegexSet,
     /// Whether to apply Luhn validation to candidate credit card numbers.
     validate_luhn: bool,
 }
@@ -199,8 +202,10 @@ impl PiiRedactor {
                 replacement,
             });
         }
+        let set = RegexSet::new(patterns.iter().map(|p| p.regex.as_str()))?;
         Ok(Self {
             patterns,
+            set,
             validate_luhn,
         })
     }
@@ -243,18 +248,32 @@ impl PiiRedactor {
     /// assert_eq!(records[0].entity_type, PiiEntityType::Email);
     /// ```
     pub fn redact_text_with_records(&self, input: &str) -> (String, Vec<RedactionRecord>) {
-        let mut result = Cow::Borrowed(input);
+        let mut text = Cow::Borrowed(input);
         let mut records = Vec::new();
+        // Which patterns match the current text, from one combined scan.
+        // Recomputed only after a pass actually changes the text, because a
+        // replacement can create or destroy a later pattern's match (e.g. a
+        // word boundary next to "[EMAIL]").
+        let mut candidates: Option<regex::SetMatches> = None;
 
-        for entry in &self.patterns {
-            // Record matches against the *current* (possibly already-redacted)
-            // text before this entry's pass. Offsets are best-effort: once an
-            // earlier pattern has changed the text, later offsets are relative
-            // to the post-earlier-pass text, not the original input. This is
-            // acceptable for audit purposes (entity type + count matter most);
-            // see `RedactionRecord` docs.
-            for m in entry.regex.find_iter(&result) {
-                if entry.entity_type == PiiEntityType::CreditCard && self.validate_luhn {
+        // Patterns run in order, each on the output of the previous one, so
+        // e.g. the phone pattern never sees digits that were part of an
+        // email. Offsets are therefore relative to the text as that pattern
+        // saw it; see `RedactionRecord`.
+        for (i, entry) in self.patterns.iter().enumerate() {
+            if !candidates
+                .get_or_insert_with(|| self.set.matches(&text))
+                .matched(i)
+            {
+                continue;
+            }
+
+            let check_luhn = entry.entity_type == PiiEntityType::CreditCard && self.validate_luhn;
+            let mut out = String::new();
+            let mut last = 0;
+            let mut changed = false;
+            for m in entry.regex.find_iter(&text) {
+                if check_luhn {
                     let digits_only: String =
                         m.as_str().chars().filter(|c| c.is_ascii_digit()).collect();
                     if !luhn_valid(&digits_only) {
@@ -266,32 +285,22 @@ impl PiiRedactor {
                     offset: m.start(),
                     length: m.len(),
                 });
-            }
-
-            // Special handling for credit cards: apply Luhn check.
-            if entry.entity_type == PiiEntityType::CreditCard && self.validate_luhn {
-                let replaced = entry
-                    .regex
-                    .replace_all(&result, |caps: &regex::Captures<'_>| {
-                        let matched = caps.get(0).map_or("", |m| m.as_str());
-                        let digits_only: String =
-                            matched.chars().filter(|c| c.is_ascii_digit()).collect();
-                        if luhn_valid(&digits_only) {
-                            entry.replacement.clone()
-                        } else {
-                            matched.to_string()
-                        }
-                    });
-                result = Cow::Owned(replaced.into_owned());
-            } else {
-                let replaced = entry.regex.replace_all(&result, entry.replacement.as_str());
-                if let Cow::Owned(s) = replaced {
-                    result = Cow::Owned(s);
+                if !changed {
+                    out.reserve(text.len());
+                    changed = true;
                 }
+                out.push_str(&text[last..m.start()]);
+                out.push_str(&entry.replacement);
+                last = m.end();
+            }
+            if changed {
+                out.push_str(&text[last..]);
+                text = Cow::Owned(out);
+                candidates = None;
             }
         }
 
-        (result.into_owned(), records)
+        (text.into_owned(), records)
     }
 
     /// Redact PII in all messages of a request.
@@ -608,6 +617,137 @@ mod tests {
             let second = r.redact_text(&first);
             assert_eq!(first, second);
         }
+
+        /// The single-pass + RegexSet implementation must produce exactly
+        /// what the original two-pass implementation produced: same text,
+        /// same records in the same order.
+        #[test]
+        fn matches_reference_on_random_text(s in "[a-zA-Z0-9@._%+\\-:()\\[\\] ]{0,300}") {
+            for luhn in [true, false] {
+                let r = PiiRedactor::new(all_entities(), luhn).unwrap();
+                assert_same(&r, &s);
+            }
+        }
+
+        #[test]
+        fn matches_reference_on_pii_fragments(
+            parts in proptest::collection::vec(proptest::sample::select(FRAGMENTS), 0..24)
+        ) {
+            let s: String = parts.concat();
+            for luhn in [true, false] {
+                let r = PiiRedactor::new(all_entities(), luhn).unwrap();
+                assert_same(&r, &s);
+            }
+        }
+    }
+
+    /// Pieces that hit every pattern, Luhn-valid and invalid cards, and
+    /// separators with and without word boundaries, so concatenations
+    /// exercise overlaps and matches created or destroyed by an earlier
+    /// pattern's replacement.
+    const FRAGMENTS: &[&str] = &[
+        "user@example.com",
+        "a@b.co",
+        "x",
+        "4111111111111111",
+        "4111111111111112",
+        "4111-1111-1111-1111",
+        "555-867-5309",
+        "(555) 867-5309",
+        "+1 555.867.5309",
+        "123-45-6789",
+        "192.168.1.1",
+        "fe80:0:0:0:200:f8ff:fe21:67cf",
+        "sk-abcdefghijklmnopqrstuvwxyz",
+        "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        "Bearer abcdefghijklmnopqrstuvwxyz",
+        "AKIAABCDEFGHIJKLMNOP",
+        " ",
+        "-",
+        ".",
+        "@",
+        "1",
+        "12",
+        "[EMAIL]",
+    ];
+
+    fn all_entities() -> Vec<PiiEntityType> {
+        vec![
+            PiiEntityType::Email,
+            PiiEntityType::CreditCard,
+            PiiEntityType::Phone,
+            PiiEntityType::Ssn,
+            PiiEntityType::IpAddress,
+            PiiEntityType::ApiKey,
+            PiiEntityType::AwsKey,
+        ]
+    }
+
+    fn assert_same(r: &PiiRedactor, s: &str) {
+        let (text, records) = r.redact_text_with_records(s);
+        let (ref_text, ref_records) = reference_redact(r, s);
+        assert_eq!(text, ref_text, "input: {s:?}");
+        let key = |v: &[RedactionRecord]| {
+            v.iter()
+                .map(|x| (x.entity_type.clone(), x.offset, x.length))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(key(&records), key(&ref_records), "input: {s:?}");
+    }
+
+    /// The original implementation (before the single-pass rewrite): for
+    /// each pattern, `find_iter` for records, then `replace_all` for text.
+    fn reference_redact(r: &PiiRedactor, input: &str) -> (String, Vec<RedactionRecord>) {
+        let mut result = Cow::Borrowed(input);
+        let mut records = Vec::new();
+        for entry in &r.patterns {
+            let check_luhn = entry.entity_type == PiiEntityType::CreditCard && r.validate_luhn;
+            for m in entry.regex.find_iter(&result) {
+                if check_luhn {
+                    let d: String = m.as_str().chars().filter(|c| c.is_ascii_digit()).collect();
+                    if !luhn_valid(&d) {
+                        continue;
+                    }
+                }
+                records.push(RedactionRecord {
+                    entity_type: entry.entity_type.clone(),
+                    offset: m.start(),
+                    length: m.len(),
+                });
+            }
+            if check_luhn {
+                let replaced = entry
+                    .regex
+                    .replace_all(&result, |caps: &regex::Captures<'_>| {
+                        let matched = caps.get(0).map_or("", |m| m.as_str());
+                        let d: String = matched.chars().filter(|c| c.is_ascii_digit()).collect();
+                        if luhn_valid(&d) {
+                            entry.replacement.clone()
+                        } else {
+                            matched.to_string()
+                        }
+                    });
+                result = Cow::Owned(replaced.into_owned());
+            } else {
+                let replaced = entry.regex.replace_all(&result, entry.replacement.as_str());
+                if let Cow::Owned(s) = replaced {
+                    result = Cow::Owned(s);
+                }
+            }
+        }
+        (result.into_owned(), records)
+    }
+
+    #[test]
+    fn replacement_that_creates_a_later_match_is_still_redacted() {
+        // "ef4111..." has no word boundary before the card digits, so the
+        // card pattern can't match the original text. Once the email is
+        // replaced, "]4111..." does have one. Skipping patterns based only
+        // on the original text would miss this card.
+        let r = PiiRedactor::default();
+        let input = "abc@d.ef4111111111111111";
+        assert_same(&r, input);
+        assert_eq!(r.redact_text(input), "[EMAIL][CARD]");
     }
 
     // ── Luhn helper ──────────────────────────────────────────────────────────

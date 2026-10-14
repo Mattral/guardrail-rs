@@ -161,6 +161,113 @@ mod tests {
         handle.shutdown();
     }
 
+    /// End-to-end fail-open/fail-closed visibility: a real server whose only
+    /// stage is an ONNX classifier with a model that fails every inference
+    /// (`wrong_output.onnx`), a mock upstream, and a scrape of `/metrics`.
+    #[cfg(feature = "onnx")]
+    mod onnx_stage_errors {
+        use super::*;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        fn fixture(name: &str) -> String {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../guardrail-classifiers/tests/fixtures/onnx")
+                .join(name)
+                .to_string_lossy()
+                .replace('\\', "/")
+        }
+
+        async fn send_one(on_error: &str) -> (u16, serde_json::Value, String, usize) {
+            let upstream = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices": [{"message": {"role": "assistant", "content": "hi"}}]
+                })))
+                .mount(&upstream)
+                .await;
+
+            let toml_str = format!(
+                r#"
+                [server]
+                host = "127.0.0.1"
+                port = 0
+
+                [upstream]
+                url = "{upstream}"
+
+                [pipeline]
+                request_stages = ["onnx_injection"]
+                on_error = "{on_error}"
+
+                [stages.onnx_injection]
+                enabled = true
+                model_path = '{model}'
+                tokenizer_path = '{tokenizer}'
+                "#,
+                upstream = upstream.uri(),
+                model = fixture("wrong_output.onnx"),
+                tokenizer = fixture("tokenizer.json"),
+            );
+            let f = write_temp_config(&toml_str);
+            let config = Arc::new(ConfigHandle::load(f.path()).unwrap());
+            let handle = run_server(config).await.unwrap();
+            let addr = handle.local_addr();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let client = reqwest::Client::new();
+            let resp = client
+                .post(format!("http://{addr}/v1/chat/completions"))
+                .json(&serde_json::json!({
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hello world"}]
+                }))
+                .send()
+                .await
+                .unwrap();
+            let status = resp.status().as_u16();
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let metrics = client
+                .get(format!("http://{addr}/metrics"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            let upstream_calls = upstream.received_requests().await.unwrap().len();
+            handle.shutdown();
+            (status, body, metrics, upstream_calls)
+        }
+
+        #[tokio::test]
+        async fn fail_open_is_forwarded_and_counted() {
+            let (status, _, metrics, upstream_calls) = send_one("allow").await;
+            assert_eq!(status, 200);
+            assert_eq!(upstream_calls, 1, "fail-open forwards the request upstream");
+            assert!(
+                metrics.contains(
+                    r#"guardrail_pipeline_errors_total{outcome="allowed",stage="onnx_injection"} 1"#
+                ),
+                "{metrics}"
+            );
+        }
+
+        #[tokio::test]
+        async fn fail_closed_is_blocked_and_counted() {
+            let (status, body, metrics, upstream_calls) = send_one("block").await;
+            assert_eq!(status, 403);
+            assert_eq!(body["error"]["code"], "stage_error");
+            assert_eq!(upstream_calls, 0, "fail-closed never reaches upstream");
+            assert!(
+                metrics.contains(
+                    r#"guardrail_pipeline_errors_total{outcome="blocked",stage="onnx_injection"} 1"#
+                ),
+                "{metrics}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_server_blocks_injection_request() {
         let toml_str = r#"

@@ -34,9 +34,9 @@ version     = "0.1.1"
 # is a single-line change recommended as the *first* step once a toolchain
 # is available: run `cargo fix --edition` per crate, then `cargo test --workspace`.
 edition     = "2021"
-# Keep in sync with the "MSRV (1.75)" job in .github/workflows/ci.yml and
+# Keep in sync with the "MSRV (1.88)" job in .github/workflows/ci.yml and
 # the MSRV badge in README.md — all three should always agree.
-rust-version = "1.75"
+rust-version = "1.88"
 authors     = ["Mattral <mattralminn@gmail.com>"]
 license     = "Apache-2.0 OR MIT"
 repository  = "https://github.com/Mattral/guardrail-rs"

@@ -6,7 +6,7 @@
 [![Crates.io](https://img.shields.io/crates/v/guardrail-cli?style=for-the-badge&logo=rust&logoColor=white)](https://crates.io/crates/guardrail-cli)
 [![docs.rs](https://img.shields.io/docsrs/guardrail-core?style=for-the-badge&logo=read-the-docs&logoColor=white)](https://docs.rs/guardrail-core)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](https://github.com/Mattral/guardrail-rs/blob/main/LICENSE-APACHE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?style=for-the-badge&logo=rust&logoColor=white)](https://github.com/Mattral/guardrail-rs/blob/main/rust-toolchain.toml)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange?style=for-the-badge&logo=rust&logoColor=white)](https://github.com/Mattral/guardrail-rs/blob/main/rust-toolchain.toml)
 [![Open in Colab](https://img.shields.io/badge/Open%20in%20Colab-Notebook-yellow?style=for-the-badge&logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Mattral/guardrail-rs/blob/main/examples/notebooks/quickstart_colab.ipynb)
 
 </div>
@@ -27,7 +27,7 @@ cargo install guardrail-cli
 ```
 
 This builds and installs the `guardrail` binary from
-[crates.io](https://crates.io/crates/guardrail-cli) (Rust 1.75+ required).
+[crates.io](https://crates.io/crates/guardrail-cli) (Rust 1.88+ required).
 Every crate in this workspace — [`guardrail-core`](https://crates.io/crates/guardrail-core),
 [`guardrail-classifiers`](https://crates.io/crates/guardrail-classifiers),
 [`guardrail-config`](https://crates.io/crates/guardrail-config),
@@ -61,7 +61,7 @@ walks through blocking a prompt injection and redacting PII live.
 
 | | |
 |---|---|
-| **Threat model scope** | Prompt injection, PII leakage (in + out), toxic content, custom policy violations. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
+| **Threat model scope** | Prompt injection, PII leakage, toxic content, custom policy violations. PII is redacted from requests by default. Redacting PII from model *responses* is opt-in (`redact_responses = true`) and **only covers non-streaming responses**: `stream: true` responses pass through unredacted. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
 | **Latency** | Default regex + PII pipeline, measured end to end (`Pipeline::run`): 11.8 µs at 512 B, 67.8 µs at 4 KB, 139 µs at 8 KB. The optional ONNX stages are far slower: 34–53 ms per stage for a 64 B prompt, ~0.4 s at 1 KB. These figures are Criterion means from one local run (Intel Core Ultra 5 226V, Rust 1.99, Windows 11); CI's shared-runner medians are in [`docs/benchmarks.md`](docs/benchmarks.md), along with how to reproduce both. CI hard-fails if the regex + PII pipeline exceeds 5 ms. |
 | **Fails open** | By default, a stage that errors on a request (e.g. ONNX inference fails) is skipped and the request continues without that check. Set `pipeline.on_error = "block"`, or `on_error` on an individual ONNX stage, to block instead. A model that fails to load stops startup rather than failing open. |
 | **Observability** | Prometheus metrics at `/metrics` on the proxy's own port, OpenTelemetry traces (OTLP), and an NDJSON audit log — which never contains message content or API keys, only decision metadata. |
@@ -148,14 +148,17 @@ pkill -HUP guardrail
 | Stage | What it does | Performance target |
 |-------|--------------|---------------------|
 | `regex_injection` | Fast regex scan for jailbreaks, prompt-extraction attempts, delimiter injection | < 50 µs / 8 KB |
-| `onnx_injection` *(optional)* | DeBERTa-based semantic injection detection | < 5 ms / 512 tokens |
+| `onnx_injection` *(optional)* | DeBERTa-based semantic injection detection | target < 5 ms; **measured 52.9 ms at 64 B, 426 ms at 1 KB** (one local run, 1 CPU thread — [details](docs/benchmarks.md#onnx-classifiers-measured-and-far-over-target)) |
 | `pii_redactor` | Detects & redacts emails, phone numbers, credit cards (Luhn-validated), SSNs, IPs, API keys | < 20 µs / 4 KB |
-| `toxicity` *(optional)* | RoBERTa-based toxicity/harassment detection | < 5 ms / 512 tokens |
+| `toxicity` *(optional)* | RoBERTa-based toxicity/harassment detection | target < 5 ms; **measured 33.6 ms at 64 B, 437 ms at 1 KB** (same run) |
 | `policy_engine` | Your custom rules: keyword blocks, token-count limits, required-system-prompt checks | negligible |
 
-The `onnx_injection` and `toxicity` stages require building with
-`--features onnx` and providing ONNX model files (see [`models/README.md`](models/README.md)).
-Everything else works with zero external dependencies.
+The `onnx_injection` and `toxicity` stages are **experimental**. They
+require building with `--features onnx` and providing ONNX model files (see
+[`docs/onnx-models.md`](docs/onnx-models.md)). CI runs them against tiny
+fixture models, which checks the code path but not detection quality. The
+real models are only smoke-tested, manually. Everything else works with zero
+external dependencies.
 
 ## CLI
 
