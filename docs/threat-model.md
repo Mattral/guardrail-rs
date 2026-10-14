@@ -195,6 +195,13 @@ to fail closed for every stage, or set `on_error = "block"` on an individual
 ONNX stage to fail closed only for that stage. Fail-closed errors are
 returned as `403` with code `stage_error`.
 
+Fail-open is only a defensible default if you can see it happening. Every
+stage error increments
+`guardrail_pipeline_errors_total{stage, outcome="allowed"|"blocked"}`, and
+the request's audit record lists the stages that failed open in
+`failed_open_stages`. [`contrib/prometheus-alerts.yml`](../contrib/prometheus-alerts.yml)
+has an example alert that fires on any fail-open in the last 5 minutes.
+
 ### No raw content in logs
 
 Audit records (both `tracing` events and NDJSON file) never contain message

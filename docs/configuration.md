@@ -246,6 +246,11 @@ and [`docs/threat-model.md`](threat-model.md)):
 }
 ```
 
+When a stage errored and failed open (`on_error = "allow"`), the record also
+has `"failed_open_stages": ["toxicity"]`: the request went upstream without
+that stage's check. The field is omitted when every stage ran normally. See
+also the `guardrail_pipeline_errors_total` metric.
+
 ## Validation errors
 
 `guardrail validate --config guardrail.toml` (and `ConfigHandle::load`) run

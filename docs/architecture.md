@@ -196,6 +196,11 @@ stage returns `Err`, the pipeline applies that stage's `FailMode`:
 stages) or, if that's unset, from `pipeline.on_error`. The regex, PII and
 policy stages always use `pipeline.on_error`.
 
+The proxy counts every stage error in
+`guardrail_pipeline_errors_total{stage, outcome}` (`outcome` is `allowed` or
+`blocked`) and lists fail-open stages in the audit record's
+`failed_open_stages`. It reads both from `Pipeline::run_with_events`.
+
 This only covers errors while handling a request. A model or rule file that
 fails to load is a startup error: `guardrail run` exits, and a SIGHUP reload
 is rejected and keeps the previous configuration.

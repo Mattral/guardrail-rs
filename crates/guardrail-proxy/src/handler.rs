@@ -17,6 +17,7 @@ use hyper::{Method, Request, Response, StatusCode};
 
 use guardrail_core::{
     decision::Decision,
+    pipeline::{StageEvent, StageOutcome},
     request::{GuardrailRequest, Provider},
 };
 
@@ -25,6 +26,7 @@ use crate::error::{
     classify_upstream_error, error_body_response, error_response, internal_error_response,
     read_limited_body, BodyReadError,
 };
+use crate::metrics::Metrics;
 use crate::state::AppState;
 use crate::{audit::AuditRecord, forward, translate};
 
@@ -133,15 +135,13 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
 
     let request_id = guardrail_req.id.to_string();
 
-    // Run the pipeline, recording per-stage latency histograms.
+    // Run the pipeline, recording per-stage latency and stage errors.
     let pipeline_start = Instant::now();
     let metrics_for_observer = state.metrics.clone();
+    let mut failed_open_stages: Vec<String> = Vec::new();
     let (decision, final_req) = match pipeline
-        .run_with_observer(guardrail_req, |stage_name, elapsed| {
-            metrics_for_observer
-                .stage_duration_seconds
-                .with_label_values(&[stage_name])
-                .observe(elapsed.as_secs_f64());
+        .run_with_events(guardrail_req, |event| {
+            observe_stage_event(&metrics_for_observer, event, &mut failed_open_stages);
         })
         .await
     {
@@ -149,7 +149,7 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
         Err(e) => {
             // Stage errors never get here: the pipeline resolves them with
             // each stage's fail mode (`on_error`) and returns a decision.
-            // `Pipeline::run_with_observer` doesn't return `Err` today; if it
+            // `Pipeline::run_with_events` doesn't return `Err` today; if it
             // ever does, the request was consumed and can't be forwarded, so
             // the only safe answer is an error response.
             tracing::error!(error = %e, "pipeline evaluation failed unexpectedly");
@@ -178,6 +178,7 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
                 pipeline_elapsed_ms,
                 total_elapsed_ms,
             )
+            .with_failed_open_stages(failed_open_stages)
             .emit();
 
             state
@@ -217,6 +218,7 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
                 pipeline_elapsed_ms,
                 total_elapsed_ms,
             )
+            .with_failed_open_stages(failed_open_stages)
             .emit();
 
             if is_redact {
@@ -369,6 +371,30 @@ fn maybe_redact_response(
     }
 }
 
+/// Record one stage evaluation: its latency, and, if it errored, a
+/// `guardrail_pipeline_errors_total` increment labeled with how `on_error`
+/// resolved it. Stages that failed open are appended to `failed_open` for
+/// the request's audit record.
+fn observe_stage_event(metrics: &Metrics, event: &StageEvent, failed_open: &mut Vec<String>) {
+    metrics
+        .stage_duration_seconds
+        .with_label_values(&[event.stage])
+        .observe(event.elapsed.as_secs_f64());
+
+    let outcome = match event.outcome {
+        StageOutcome::ErrorAllowed => {
+            failed_open.push(event.stage.to_string());
+            "allowed"
+        }
+        StageOutcome::ErrorBlocked => "blocked",
+        _ => return,
+    };
+    metrics
+        .pipeline_errors_total
+        .with_label_values(&[event.stage, outcome])
+        .inc();
+}
+
 fn provider_for_path(path: &str) -> Provider {
     if path.starts_with("/v1/messages") {
         Provider::Anthropic
@@ -417,6 +443,79 @@ mod tests {
         assert_eq!(provider_label(&Provider::Anthropic), "anthropic");
         assert_eq!(provider_label(&Provider::Azure), "azure");
         assert_eq!(provider_label(&Provider::Other("custom".into())), "other");
+    }
+
+    #[tokio::test]
+    async fn test_fail_open_stage_error_is_counted_and_reported() {
+        use guardrail_core::pipeline::{FailMode, PipelineBuilder};
+        use guardrail_core::test_helpers::{clean_request, ErrorStage};
+
+        let metrics = Metrics::new();
+        let pipeline = PipelineBuilder::default()
+            .stage_with_fail_mode(ErrorStage, FailMode::Open)
+            .build();
+
+        let mut failed_open = Vec::new();
+        let (decision, _) = pipeline
+            .run_with_events(clean_request(), |e| {
+                observe_stage_event(&metrics, e, &mut failed_open)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(decision, Decision::Allow);
+        assert_eq!(failed_open, vec!["error_stage".to_string()]);
+        let allowed = metrics
+            .pipeline_errors_total
+            .with_label_values(&["error_stage", "allowed"]);
+        assert_eq!(allowed.get(), 1);
+        assert!(metrics.render().unwrap().contains(
+            r#"guardrail_pipeline_errors_total{outcome="allowed",stage="error_stage"} 1"#
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_fail_closed_stage_error_is_counted_but_not_failed_open() {
+        use guardrail_core::pipeline::{FailMode, PipelineBuilder};
+        use guardrail_core::test_helpers::{clean_request, ErrorStage, PassthroughStage};
+
+        let metrics = Metrics::new();
+        let pipeline = PipelineBuilder::default()
+            .stage(PassthroughStage)
+            .stage_with_fail_mode(ErrorStage, FailMode::Closed)
+            .build();
+
+        let mut failed_open = Vec::new();
+        let (decision, _) = pipeline
+            .run_with_events(clean_request(), |e| {
+                observe_stage_event(&metrics, e, &mut failed_open)
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(decision, Decision::Block { .. }));
+        assert!(failed_open.is_empty());
+        let counter = &metrics.pipeline_errors_total;
+        assert_eq!(
+            counter.with_label_values(&["error_stage", "blocked"]).get(),
+            1
+        );
+        assert_eq!(
+            counter.with_label_values(&["error_stage", "allowed"]).get(),
+            0
+        );
+        // Healthy stages record latency only.
+        assert_eq!(
+            counter.with_label_values(&["passthrough", "allowed"]).get(),
+            0
+        );
+        assert_eq!(
+            metrics
+                .stage_duration_seconds
+                .with_label_values(&["passthrough"])
+                .get_sample_count(),
+            1
+        );
     }
 
     #[test]
