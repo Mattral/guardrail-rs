@@ -115,6 +115,42 @@ second `benchmark-action/github-action-benchmark` step to
 would start publishing this to `gh-pages` on every push, same as the
 classifier microbenchmarks — happy to wire that up on request.
 
+### Local reference run (the README's figures)
+
+The latency numbers quoted in the README come from this one local run, not
+from CI. The CI figures above are medians over shared runners; this run is a
+quieter machine, so it reads somewhat faster.
+
+- Machine: Intel Core Ultra 5 226V laptop (8 cores), 15.5 GB RAM, Windows 11,
+  Balanced power plan.
+- Toolchain: Rust 1.99.0, with the regex and PII code unchanged from
+  `525ec3b`.
+- Date: 2026-10-14.
+- Values are Criterion's point estimate (mean), with the 95% confidence
+  interval in parentheses.
+
+| Benchmark | Input | Time |
+|-----------|------:|-----:|
+| `full_pipeline_regex_only` (regex + PII, short request with an email) | short | 2.65 µs (2.52 – 2.78) |
+| `full_pipeline_by_size/clean_with_pii` | 512 B | 11.8 µs (11.6 – 12.2) |
+| `full_pipeline_by_size/clean_with_pii` | 4 KB | 67.8 µs (66.9 – 69.2) |
+| `full_pipeline_by_size/clean_with_pii` | 8 KB | 139 µs (138 – 142) |
+| `full_pipeline_blocked_short_circuit` | short | 1.32 µs (1.30 – 1.35) |
+| `regex_injection_scanner` (sync) | 8.2 KB | 24.9 µs (24.5 – 25.3) |
+| `pii_redactor` (sync, `redact_text`) | 742 B | 10.7 µs (10.6 – 10.9) |
+| `pii_redactor` (sync, `redact_text`) | 3.0 KB | 43.3 µs (42.7 – 43.9) |
+| `pii_redactor` (sync, `redact_text`) | 6.0 KB | 84.6 µs (80.5 – 89.8) |
+
+The ONNX figures in the README are from the same session; see
+[ONNX classifiers](#onnx-classifiers-measured-and-far-over-target).
+
+To reproduce:
+
+```bash
+cargo bench -p guardrail-test-suite --bench pipeline
+cargo bench -p guardrail-classifiers --bench classifier_benchmarks
+```
+
 ---
 
 ## Observed CI variance (why median, not "latest")
