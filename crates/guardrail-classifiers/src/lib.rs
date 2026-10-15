@@ -53,6 +53,7 @@
 pub mod classifier;
 pub mod injection;
 pub mod pii;
+pub mod pii_stream;
 
 #[cfg(feature = "onnx")]
 pub mod onnx;
@@ -60,6 +61,7 @@ pub mod onnx;
 pub use classifier::{Classifier, ClassifierScore, RegexBackend, RegexMatchResult};
 pub use injection::RegexInjectionScanner;
 pub use pii::{PiiAction, PiiEntityType, PiiRedactor, RedactionRecord, PII_BLOCK_CODE};
+pub use pii_stream::StreamingPiiRedactor;
 
 #[cfg(feature = "onnx")]
 pub use onnx::{OnnxInjectionClassifier, ToxicityClassifier};

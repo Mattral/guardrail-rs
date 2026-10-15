@@ -10,8 +10,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use http_body_util::Full;
-use hyper::body::Incoming;
+use futures::StreamExt;
+use http_body_util::combinators::UnsyncBoxBody;
+use http_body_util::{BodyExt, Full, StreamBody};
+use hyper::body::{Frame, Incoming};
 use hyper::header::{HeaderName, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
 
@@ -30,16 +32,25 @@ use crate::metrics::Metrics;
 use crate::state::AppState;
 use crate::{audit::AuditRecord, forward, translate};
 
+/// Response body type for everything the proxy serves: either a complete
+/// buffer or a stream forwarded (and possibly rewritten) from the upstream.
+pub(crate) type ProxyBody = UnsyncBoxBody<Bytes, std::io::Error>;
+
+/// Wrap a complete response in [`ProxyBody`].
+fn reply(resp: Response<Full<Bytes>>) -> Response<ProxyBody> {
+    resp.map(|body| body.map_err(|never| match never {}).boxed_unsync())
+}
+
 /// Top-level request handler: routes to `/metrics`, `/healthz`, or the proxy logic.
 pub(crate) async fn handle_request(
     state: Arc<AppState>,
     req: Request<Incoming>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Result<Response<ProxyBody>, Infallible> {
     let path = req.uri().path();
 
     let response = match (req.method(), path) {
-        (&Method::GET, "/healthz") => healthz(),
-        (&Method::GET, "/metrics") => metrics_endpoint(&state),
+        (&Method::GET, "/healthz") => reply(healthz()),
+        (&Method::GET, "/metrics") => reply(metrics_endpoint(&state)),
         _ => proxy_request(state, req).await,
     };
 
@@ -69,7 +80,7 @@ fn metrics_endpoint(state: &Arc<AppState>) -> Response<Full<Bytes>> {
 }
 
 /// The core proxy flow: authenticate → parse → run pipeline → forward or block.
-async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response<Full<Bytes>> {
+async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response<ProxyBody> {
     let start = Instant::now();
     let config = state.config.config();
     let pipeline = state.config.pipeline();
@@ -79,11 +90,11 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
 
     if !is_authorized(&config.auth, &path, req.headers()) {
         tracing::warn!(path = %path, "rejected request: missing or invalid X-Guardrail-Key");
-        return error_response(
+        return reply(error_response(
             StatusCode::UNAUTHORIZED,
             "missing or invalid X-Guardrail-Key header",
             "unauthorized",
-        );
+        ));
     }
 
     // Collect headers to forward (everything except hop-by-hop / sensitive
@@ -104,19 +115,19 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
     let body_bytes = match read_limited_body(req.into_body(), max_body).await {
         Ok(b) => b,
         Err(BodyReadError::TooLarge) => {
-            return error_response(
+            return reply(error_response(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "request body exceeds maximum allowed size",
                 "payload_too_large",
-            );
+            ));
         }
         Err(BodyReadError::Io(e)) => {
             tracing::warn!(error = %e, "failed to read request body");
-            return error_response(
+            return reply(error_response(
                 StatusCode::BAD_REQUEST,
                 "failed to read request body",
                 "bad_request",
-            );
+            ));
         }
     };
 
@@ -125,15 +136,30 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
         Ok(r) => r,
         Err(e) => {
             tracing::debug!(error = %e, "failed to parse request body");
-            return error_response(
+            return reply(error_response(
                 StatusCode::BAD_REQUEST,
                 &format!("invalid request body: {e}"),
                 "bad_request",
-            );
+            ));
         }
     };
 
     let request_id = guardrail_req.id.to_string();
+
+    // `streaming_responses = "reject"`: refuse streamed requests outright
+    // while response redaction is on, before spending anything on them.
+    if guardrail_req.stream
+        && state.config.response_redactor().is_some()
+        && config.stages.pii_redactor.streaming_responses
+            == guardrail_config::schema::StreamingResponses::Reject
+    {
+        return reply(error_response(
+            StatusCode::BAD_REQUEST,
+            "streaming responses are disabled while response PII redaction is on \
+             (stages.pii_redactor.streaming_responses = \"reject\"); send stream: false",
+            "streaming_not_allowed",
+        ));
+    }
 
     // Run the pipeline, recording per-stage latency and stage errors.
     let pipeline_start = Instant::now();
@@ -153,7 +179,7 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
             // ever does, the request was consumed and can't be forwarded, so
             // the only safe answer is an error response.
             tracing::error!(error = %e, "pipeline evaluation failed unexpectedly");
-            return internal_error_response();
+            return reply(internal_error_response());
         }
     };
     let pipeline_elapsed_ms = pipeline_start.elapsed().as_secs_f64() * 1000.0;
@@ -192,7 +218,7 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
                 .with_label_values(&["block", provider_label(&provider)])
                 .inc();
 
-            (block_response, "block")
+            (reply(block_response), "block")
         }
         Decision::Allow | Decision::Redact { .. } => {
             let is_redact = matches!(&decision, Decision::Redact { .. });
@@ -259,7 +285,7 @@ async fn forward_to_upstream(
     req: &GuardrailRequest,
     request_id: &str,
     headers: Vec<(String, String)>,
-) -> Response<Full<Bytes>> {
+) -> Response<ProxyBody> {
     let timeout = std::time::Duration::from_secs(config.upstream.timeout_secs);
 
     match forward::forward_request(
@@ -297,25 +323,53 @@ async fn forward_to_upstream(
                 }
             }
 
-            match forward::read_body(upstream_resp).await {
-                Ok(body) => {
-                    let body = maybe_redact_response(
-                        state,
-                        request_id,
-                        &body,
-                        content_type.as_deref(),
-                        req.stream,
-                    );
+            let redactor = state.config.response_redactor();
+            let is_sse = content_type
+                .as_deref()
+                .is_some_and(|ct| ct.starts_with("text/event-stream"));
+            let is_json = content_type
+                .as_deref()
+                .is_some_and(|ct| ct.starts_with("application/json"));
 
-                    builder
-                        .body(Full::new(body))
-                        .unwrap_or_else(|_| internal_error_response())
+            let body = if redactor.is_some() && is_sse {
+                // Streamed response with redaction on: rewrite text deltas
+                // as they flow.
+                redacting_sse_body(
+                    state.clone(),
+                    redactor,
+                    req.provider.clone(),
+                    request_id.to_string(),
+                    upstream_resp,
+                )
+            } else if redactor.is_some() && is_json {
+                // Complete JSON document: buffer, redact, send.
+                match forward::read_body(upstream_resp).await {
+                    Ok(body) => {
+                        let body = maybe_redact_response(
+                            state,
+                            request_id,
+                            &body,
+                            content_type.as_deref(),
+                            false,
+                        );
+                        Full::new(body)
+                            .map_err(|never| match never {})
+                            .boxed_unsync()
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "failed to read upstream response body");
+                        return reply(internal_error_response());
+                    }
                 }
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to read upstream response body");
-                    internal_error_response()
-                }
-            }
+            } else {
+                // Nothing to rewrite: forward bytes as they arrive, so
+                // streamed responses reach the client token by token.
+                passthrough_body(upstream_resp)
+            };
+
+            builder
+                .body(body)
+                .unwrap_or_else(|_| reply(internal_error_response()))
         }
         Err(e) => {
             tracing::error!(error = %e, "upstream request failed");
@@ -324,13 +378,96 @@ async fn forward_to_upstream(
                 .upstream_errors_total
                 .with_label_values(&[classify_upstream_error(&e)])
                 .inc();
-            error_response(
+            reply(error_response(
                 StatusCode::BAD_GATEWAY,
                 "upstream request failed",
                 "upstream_error",
-            )
+            ))
         }
     }
+}
+
+/// Forward the upstream body chunk by chunk, unmodified.
+fn passthrough_body(upstream: reqwest::Response) -> ProxyBody {
+    let frames = upstream
+        .bytes_stream()
+        .map(|chunk| chunk.map(Frame::data).map_err(std::io::Error::other));
+    StreamBody::new(frames).boxed_unsync()
+}
+
+/// Forward a `text/event-stream` body while redacting PII in its text
+/// deltas (see [`crate::sse`]). When the stream ends, any redactions are
+/// counted in `guardrail_response_redacted_total` and logged as a
+/// `response_redact` audit event, as for non-streamed responses.
+fn redacting_sse_body(
+    state: Arc<AppState>,
+    redactor: Arc<Option<guardrail_classifiers::PiiRedactor>>,
+    provider: Provider,
+    request_id: String,
+    upstream: reqwest::Response,
+) -> ProxyBody {
+    struct Ctx {
+        upstream: futures::stream::BoxStream<'static, reqwest::Result<Bytes>>,
+        sse: crate::sse::SseRedactor,
+        redactor: Arc<Option<guardrail_classifiers::PiiRedactor>>,
+        state: Arc<AppState>,
+        request_id: String,
+        done: bool,
+    }
+
+    let ctx = Ctx {
+        upstream: upstream.bytes_stream().boxed(),
+        sse: crate::sse::SseRedactor::new(&provider),
+        redactor,
+        state,
+        request_id,
+        done: false,
+    };
+
+    let frames = futures::stream::unfold(ctx, |mut ctx| async move {
+        loop {
+            if ctx.done {
+                return None;
+            }
+            let redactor = ctx.redactor.as_ref().as_ref()?;
+            match ctx.upstream.next().await {
+                Some(Ok(bytes)) => {
+                    let out = ctx.sse.push(redactor, &bytes);
+                    // Skip empty writes; wait for more upstream bytes.
+                    if !out.is_empty() {
+                        return Some((Ok(Frame::data(Bytes::from(out))), ctx));
+                    }
+                }
+                Some(Err(e)) => {
+                    ctx.done = true;
+                    tracing::error!(error = %e, "upstream stream failed");
+                    return Some((Err(std::io::Error::other(e)), ctx));
+                }
+                None => {
+                    ctx.done = true;
+                    let out = ctx.sse.finish(redactor);
+                    if ctx.sse.redactions() > 0 {
+                        ctx.state.metrics.response_redacted_total.inc();
+                        tracing::info!(
+                            target: "guardrail::audit",
+                            request_id = %ctx.request_id,
+                            decision = "response_redact",
+                            total_redactions = ctx.sse.redactions(),
+                            entity_types = ?ctx.sse.entity_types(),
+                            streamed = true,
+                            "response PII redacted"
+                        );
+                    }
+                    if !out.is_empty() {
+                        return Some((Ok(Frame::data(Bytes::from(out))), ctx));
+                    }
+                    return None;
+                }
+            }
+        }
+    });
+
+    StreamBody::new(frames).boxed_unsync()
 }
 
 /// If response-side PII redaction is enabled and the response is a

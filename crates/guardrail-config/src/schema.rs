@@ -420,9 +420,25 @@ pub struct PiiRedactorConfig {
     /// Custom replacement tokens.
     #[serde(default)]
     pub replacements: PiiReplacements,
-    /// Whether to also scan and redact PII in non-streaming responses. Default: `false`.
+    /// Whether to also scan and redact PII in model responses. Default: `false`.
     #[serde(default)]
     pub redact_responses: bool,
+    /// With `redact_responses = true`, what to do with `stream: true`
+    /// requests: redact the stream as it flows (default), or reject them.
+    #[serde(default)]
+    pub streaming_responses: StreamingResponses,
+}
+
+/// Handling of streamed responses when response redaction is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingResponses {
+    /// Redact text deltas incrementally while streaming (the default).
+    #[default]
+    Redact,
+    /// Reject `stream: true` requests with `400`, for deployments that only
+    /// accept redaction applied to a complete response.
+    Reject,
 }
 
 impl Default for PiiRedactorConfig {
@@ -434,6 +450,7 @@ impl Default for PiiRedactorConfig {
             validate_luhn: true,
             replacements: PiiReplacements::default(),
             redact_responses: false,
+            streaming_responses: StreamingResponses::Redact,
         }
     }
 }

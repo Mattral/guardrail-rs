@@ -95,10 +95,14 @@ action = "redact"
 # redacting, to reduce false positives on arbitrary 16-digit numbers.
 validate_luhn = true
 
-# Whether to also scan non-streaming LLM *responses* for PII before
-# returning them to the caller. Streaming responses (stream: true) are
-# never scanned — see docs/architecture.md.
+# Whether to also scan LLM *responses* for PII before returning them to the
+# caller. Complete responses are redacted as a whole; streamed responses
+# (stream: true) are redacted incrementally and still stream.
 redact_responses = false
+
+# With redact_responses = true: "redact" (default) streams and redacts as
+# tokens flow; "reject" refuses stream: true requests with 400.
+streaming_responses = "redact"
 
 # Custom replacement tokens (all optional; shown values are the defaults).
 [stages.pii_redactor.replacements]

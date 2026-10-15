@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Streamed responses now stream, and are redacted.**
+  - Responses used to be buffered in full before reaching the client, so
+    with `stream: true` time-to-first-token equaled total generation time.
+    The proxy now forwards response bytes as they arrive.
+  - With `redact_responses = true`, `text/event-stream` responses go through
+    an incremental redactor. OpenAI-compatible `choices[].delta.content` and
+    Anthropic `text_delta` text are redacted as they flow, including PII
+    split across deltas. Before, streamed responses were never redacted.
+  - The redactor holds back the most recent words until they're known to be
+    safe. Property tests check that its output equals redacting the whole
+    text at once, for any split.
+  - Cost: 180 µs in total for a 2 KB answer in 4-byte deltas (one local
+    run).
+- `stages.pii_redactor.streaming_responses = "redact" | "reject"` (default
+  `"redact"`). `"reject"` answers `stream: true` requests with `400
+  streaming_not_allowed` while response redaction is on, for deployments that
+  only accept redaction of complete responses.
+- `guardrail-classifiers`: `StreamingPiiRedactor`. `guardrail-proxy`:
+  `sse::SseRedactor`.
+
+### Changed
+
+- Responses with no redaction to apply, including all non-streamed
+  responses when `redact_responses = false`, are now forwarded chunk by
+  chunk instead of being read into memory first.
+
 ## [0.2.0] - 2026-10-15
 
 ### Upgrading from 0.1.x
