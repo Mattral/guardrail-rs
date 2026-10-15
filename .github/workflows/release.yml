@@ -295,6 +295,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+          # Only the binary archives. The run also holds a `*.dockerbuild`
+          # build record uploaded by docker/build-push-action, which fails to
+          # extract here; downloading it broke this job for v0.2.0.
+          pattern: guardrail-rs-*
 
       - name: Generate SHA256 checksums
         run: |
