@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **More documented settings that did nothing now work:**
+  - `stages.pii_redactor.replacements`: custom tokens were ignored, so the
+    output always showed `[EMAIL]` and the like. They now apply to request
+    and response redaction.
+  - `stages.pii_redactor.action`: `"block"` now rejects with `403
+    pii_detected`, and `"log_only"` forwards unchanged. Both used to redact.
+  - `action = "log_only"` on `onnx_injection` and `toxicity` now logs and
+    allows. It used to block.
+  - `stages.toxicity.scan_roles` now selects which messages are scored. Only
+    user messages were scored before. Unknown roles and empty lists are now
+    validation errors.
+  - `pipeline.response_stages`: leaving out `output_pii_redactor` now turns
+    response redaction off.
+  - `server.workers` now sets the Tokio worker-thread count for `guardrail
+    run`.
+  - `action = "redact"` on detection stages still behaves like `"block"`,
+    but now logs a warning at load instead of doing that silently.
 - **`on_error` had no effect anywhere.** `Pipeline::run` turned every stage
   error into `Allow` and never returned `Err`. So `pipeline.on_error =
   "block"` and the per-stage `on_error` on `[stages.onnx_injection]` and

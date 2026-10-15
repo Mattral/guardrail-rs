@@ -153,10 +153,10 @@ running inference).
 Both `threshold` values default conservatively (`0.85` / `0.90`) to minimize
 false positives. To tune for your traffic:
 
-1. Temporarily set the threshold to `1.0` (values above `1.0` are rejected
-   by validation), so that only a fully saturated score blocks, and review
-   the `tracing::debug!` score logs (set `observability.log_level = "debug"`).
-   `action = "log_only"` is not applied by the ONNX stages yet.
+1. Set `action = "log_only"` on the stage. Positives are then logged with
+   `tracing::warn!` (score and threshold) and allowed. Review those logs,
+   plus the per-request `tracing::debug!` score logs (set
+   `observability.log_level = "debug"`).
 2. Collect a sample of scores on representative traffic.
 3. Choose a threshold that separates your known-bad and known-good samples
    with acceptable false-positive/false-negative tradeoffs for your use case.

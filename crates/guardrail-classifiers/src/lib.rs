@@ -59,7 +59,7 @@ pub mod onnx;
 
 pub use classifier::{Classifier, ClassifierScore, RegexBackend, RegexMatchResult};
 pub use injection::RegexInjectionScanner;
-pub use pii::{PiiEntityType, PiiRedactor, RedactionRecord};
+pub use pii::{PiiAction, PiiEntityType, PiiRedactor, RedactionRecord, PII_BLOCK_CODE};
 
 #[cfg(feature = "onnx")]
 pub use onnx::{OnnxInjectionClassifier, ToxicityClassifier};
