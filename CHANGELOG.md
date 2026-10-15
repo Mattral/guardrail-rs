@@ -143,6 +143,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `server.max_body_size_bytes` didn't limit memory: the whole request body
+  was collected before its size was checked, so a client could stream an
+  unbounded chunked body and the proxy buffered all of it. Reading now stops
+  as soon as the limit is passed, and a declared `Content-Length` over the
+  limit is rejected before anything is read.
 - `X-Guardrail-Key` is now compared in constant time (`subtle`), and every
   configured key is checked, so timing no longer reveals a matching prefix or
   which key matched. Before, the comparison was a short-circuiting `==`.
