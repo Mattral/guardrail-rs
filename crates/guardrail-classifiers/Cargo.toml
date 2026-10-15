@@ -22,7 +22,7 @@ onnx-pii = ["onnx"]
 onnx-cuda = ["onnx", "ort/cuda"]
 
 [dependencies]
-guardrail-core = { path = "../guardrail-core", version = "0.1.1" }
+guardrail-core = { path = "../guardrail-core", version = "0.2.0" }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 thiserror      = { workspace = true }
