@@ -1,6 +1,6 @@
 [book]
 title       = "guardrail-rs"
-description = "Sub-millisecond LLM security proxy: detect prompt injection, redact PII, block toxic content."
+description = "LLM security proxy in Rust: detect prompt injection, redact PII, block toxic content."
 authors     = ["Mattral"]
 language    = "en"
 src         = "docs"

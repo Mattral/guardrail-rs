@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-/// guardrail-rs: a zero-Python, production-grade LLM security proxy.
+/// guardrail-rs: a zero-Python LLM security proxy.
 #[derive(Debug, Parser)]
 #[command(name = "guardrail", version, about, long_about = None)]
 pub struct Cli {
