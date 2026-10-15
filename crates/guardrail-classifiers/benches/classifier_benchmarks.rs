@@ -97,6 +97,47 @@ fn bench_pii_redaction(c: &mut Criterion) {
     group.finish();
 }
 
+/// Streaming response redaction: a ~2 KB answer with PII, fed in 4-byte
+/// deltas (about one model token each), the way `guardrail-proxy` feeds SSE
+/// text deltas. Reported per whole response and, via throughput, per byte.
+fn bench_pii_stream(c: &mut Criterion) {
+    use guardrail_classifiers::StreamingPiiRedactor;
+
+    let redactor = PiiRedactor::default();
+    let text = build_pii_request(44).user_text(); // ~2 KB, an email + phone per line
+    let deltas: Vec<&str> = {
+        let mut v = Vec::new();
+        let mut i = 0;
+        while i < text.len() {
+            let mut j = (i + 4).min(text.len());
+            while !text.is_char_boundary(j) {
+                j += 1;
+            }
+            v.push(&text[i..j]);
+            i = j;
+        }
+        v
+    };
+
+    let mut group = c.benchmark_group("pii_stream");
+    group.throughput(Throughput::Bytes(text.len() as u64));
+    group.bench_function(format!("{}B_in_4B_deltas", text.len()), |b| {
+        b.iter(|| {
+            let mut s = StreamingPiiRedactor::new();
+            let mut out = String::with_capacity(text.len());
+            for d in &deltas {
+                out.push_str(&s.push(&redactor, d));
+            }
+            out.push_str(&s.finish(&redactor));
+            out
+        });
+    });
+    group.bench_function(format!("{}B_whole_text_baseline", text.len()), |b| {
+        b.iter(|| redactor.redact_text(&text));
+    });
+    group.finish();
+}
+
 fn bench_full_pipeline_async(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let scanner = RegexInjectionScanner::default();
@@ -188,6 +229,7 @@ criterion_group!(
     benches,
     bench_regex_injection,
     bench_pii_redaction,
+    bench_pii_stream,
     bench_full_pipeline_async,
     bench_onnx
 );

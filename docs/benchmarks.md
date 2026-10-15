@@ -228,6 +228,29 @@ cargo bench -p guardrail-test-suite --bench pipeline
 cargo bench -p guardrail-classifiers --bench classifier_benchmarks
 ```
 
+### Streaming PII redaction (`pii_stream`)
+
+Response redaction for `stream: true` responses
+(`StreamingPiiRedactor`, used by the proxy's SSE rewriter). One local run on
+the same machine as above, 2026-10-15, Rust 1.99.0. A 2,058-byte answer
+containing an email and a phone number per line was fed as 4-byte deltas
+(about one model token each, 515 deltas):
+
+| Benchmark | Time |
+|-----------|-----:|
+| `pii_stream/2058B_in_4B_deltas` (whole response, streamed) | 180 µs (178 – 183) |
+| `pii_stream/2058B_whole_text_baseline` (same text, one `redact_text` call) | 11.5 µs (11.4 – 11.7) |
+
+That's about 0.35 µs per delta. Streaming costs more than one-shot
+redaction because each release first checks that cutting there gives the
+same result as redacting the whole buffered text. It's still small next to
+model token latency. A first version that retried on every delta measured
+419 µs for the same input. The redactor now retries only after 32 new bytes.
+
+```bash
+cargo bench -p guardrail-classifiers --bench classifier_benchmarks -- pii_stream
+```
+
 ---
 
 ## Observed CI variance (why median, not "latest")

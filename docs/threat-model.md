@@ -63,18 +63,21 @@ provider, creating a data-governance and compliance risk.
   types (email, phone, credit_card with Luhn validation, SSN, IP address,
   API key patterns, AWS access key IDs). Replaces matched spans with typed
   placeholders (`[EMAIL]`, `[PHONE]`, etc.) before forwarding.
-- `redact_responses = true` (opt-in) — post-processes non-streaming JSON
-  responses to redact PII the model may have echoed back from retrieved
-  documents or training data.
+- `redact_responses = true` (opt-in) — redacts PII the model may have
+  echoed back from retrieved documents or training data, in complete JSON
+  responses and, incrementally, in streamed (`stream: true`) responses.
 
 **Residual risk:**
 
 - Regex-only approach cannot detect names, addresses, or organization names
   (NER-based detection is planned via `onnx-pii` feature).
-- Response redaction is off by default, and when enabled it does not apply
-  to streaming (`stream: true`) responses, which most chat applications
-  use. For streaming traffic, assume PII the model writes reaches the
-  caller unredacted. See
+- Response redaction is off by default.
+- In streamed responses, only text deltas are scanned, as in complete
+  responses: tool-call arguments are not. A run of more than 8 KB without
+  whitespace is released without waiting for a word boundary, so a PII value
+  straddling that point could be missed. Deployments that need redaction
+  applied to complete responses only can set
+  `stages.pii_redactor.streaming_responses = "reject"`. See
   [`architecture.md`](architecture.md#streaming-responses).
 - Luhn validation reduces false positives for credit card numbers, but cannot
   catch all edge cases of arbitrary numeric strings.

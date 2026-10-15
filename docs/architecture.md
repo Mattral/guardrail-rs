@@ -131,8 +131,9 @@ everything-in-one-place dumping ground as the proxy grows:
 - [`response`](../crates/guardrail-proxy/src/response.rs) — output-side PII
   redaction. `redact_response_body` walks OpenAI `choices[].message.content`
   and Anthropic `content[]` text blocks. Gated by `is_redactable_response`
-  (non-streaming, `application/json` only). Streaming responses are not
-  scanned — see [Streaming responses](#streaming-responses).
+  (`application/json` bodies). Streamed (`text/event-stream`) responses go
+  through [`sse`](../crates/guardrail-proxy/src/sse.rs) instead — see
+  [Streaming responses](#streaming-responses).
 - [`forward`](../crates/guardrail-proxy/src/forward.rs) — sends the
   (possibly redacted) request upstream via a pooled `reqwest::Client`,
   forwarding the original `Authorization` header. Records
@@ -183,28 +184,49 @@ on Unix, spawns a SIGHUP listener for automatic configuration hot-reload.
 
 ## Streaming responses
 
-Requests with `"stream": true` go through the full request pipeline like
-any other request. The response side differs:
+Responses are forwarded as they arrive. `forward_to_upstream` picks one of
+three paths by the upstream response's content type:
 
-- **No output redaction.** `response::is_redactable_response` returns
-  `false` for streaming requests and for `text/event-stream` bodies, so
-  `redact_responses = true` has no effect on them. PII the model writes in a
-  streamed answer reaches the caller as-is.
-- **Not streamed incrementally.** `forward::read_body` reads the whole
-  upstream body before the proxy responds (the handler builds a single
-  `Full` body), so the client receives every SSE event at once when the
-  upstream finishes, not token by token. Clients still parse it as a normal
-  SSE stream, but time-to-first-token equals total generation time.
+| Response | Response redaction | What the proxy does |
+|----------|--------------------|---------------------|
+| anything | off | Streams the body through unchanged, chunk by chunk (`passthrough_body`). |
+| `text/event-stream` | on | Streams it through [`sse::SseRedactor`](../crates/guardrail-proxy/src/sse.rs), which redacts PII in text deltas as they flow. |
+| `application/json` | on | Buffers the complete document, redacts it (`response::redact_response_body`), then sends it. |
 
-Options, none implemented yet:
+**Incremental redaction.** `SseRedactor` reassembles server-sent events
+regardless of how the bytes are split, and feeds each choice's
+(`choices[].delta.content`, OpenAI-compatible) or content block's
+(`delta.text`, Anthropic) text through its own
+[`StreamingPiiRedactor`](../crates/guardrail-classifiers/src/pii_stream.rs).
+That redactor holds back the most recent text, at least 64 bytes and up to
+the last word boundary, until it knows no PII value could still be
+completing. So `"user@"` followed by `"example.com"` is released as
+`[EMAIL]`, never as a partial address. Held-back text is released as more
+arrives, or before the choice's `finish_reason`, the block's
+`content_block_stop`, or `data: [DONE]`. Its guarantee, checked by property
+tests over random inputs and random splits: the concatenated output equals
+redacting the whole text at once. Every other field and event (tool-call
+arguments, usage, pings, comments) passes through unchanged. Tool-call
+arguments are not scanned, which matches the non-streamed path. The one
+exception to the guarantee: a run of more than 8 KB with no whitespace is
+released without waiting for a word boundary.
 
-1. A setting that rejects `stream: true` requests, or rewrites them to
-   `stream: false`, when `redact_responses` is on, so the redaction promise
-   holds for all traffic.
-2. Since the body is already fully buffered, redact the text deltas inside
-   the buffered SSE events before returning them.
-3. Real streaming passthrough, with redaction applied per chunk and a small
-   carry-over buffer for matches that span chunk boundaries.
+**Cost.** In one local run (Intel Core Ultra 5 226V, Rust 1.99), a 2 KB answer
+containing PII, fed as 4-byte deltas, took 180 µs to redact in total. That's
+about 0.35 µs per delta, against 11.5 µs to redact the same text in one call;
+see `pii_stream` in [`benchmarks.md`](benchmarks.md). The visible latency is
+the hold-back: a client sees each word a few words late.
+
+**Rejecting instead.** Deployments that only accept redaction applied to a
+complete response can set `stages.pii_redactor.streaming_responses =
+"reject"`. With response redaction on, `stream: true` requests are then
+answered with `400 streaming_not_allowed` before anything is sent upstream.
+
+**Metrics and audit.** A redacted stream increments
+`guardrail_response_redacted_total` and emits the same `response_redact`
+audit event as a non-streamed response (with `streamed = true`) once the
+stream ends. `guardrail_request_duration_seconds` measures time to the
+response headers for streamed responses, not the length of the stream.
 
 ## Error handling: fail-open vs fail-closed
 

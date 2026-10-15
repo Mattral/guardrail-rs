@@ -254,6 +254,21 @@ impl PiiRedactor {
         self
     }
 
+    /// Byte spans of every match of every pattern in `text`, before any
+    /// replacement and without Luhn filtering. Used by the streaming
+    /// redactor to avoid splitting a possible match.
+    pub(crate) fn raw_matches<'t>(
+        &'t self,
+        text: &'t str,
+    ) -> impl Iterator<Item = (usize, usize)> + 't {
+        let candidates = self.set.matches(text);
+        self.patterns
+            .iter()
+            .enumerate()
+            .filter(move |(i, _)| candidates.matched(*i))
+            .flat_map(move |(_, p)| p.regex.find_iter(text).map(|m| (m.start(), m.end())))
+    }
+
     /// Set what [`Stage::evaluate`] does when PII is found. Default:
     /// [`PiiAction::Redact`]. The `redact_*` methods always redact.
     #[must_use]
