@@ -268,6 +268,209 @@ mod tests {
         }
     }
 
+    /// Streamed responses, end to end through the real server.
+    mod streaming {
+        use super::*;
+        use bytes::Bytes;
+        use futures::StreamExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        fn sse_chunk(text: &str) -> String {
+            format!(
+                "data: {}\n\n",
+                serde_json::json!({
+                    "id": "c1", "object": "chat.completion.chunk", "model": "m",
+                    "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": null}]
+                })
+            )
+        }
+
+        fn sse_finish() -> String {
+            format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                serde_json::json!({
+                    "id": "c1", "object": "chat.completion.chunk", "model": "m",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                })
+            )
+        }
+
+        /// An upstream that sends `first`, then waits for `go` before
+        /// sending `rest` and closing. Written by hand (not wiremock) so the
+        /// body really arrives in two parts.
+        async fn two_part_upstream(
+            first: String,
+            rest: String,
+        ) -> (String, tokio::sync::oneshot::Sender<()>) {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let (go_tx, go_rx) = tokio::sync::oneshot::channel::<()>();
+            tokio::spawn(async move {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                // Read the request head and its JSON body (Content-Length).
+                let mut req = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = sock.read(&mut buf).await.unwrap();
+                    req.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&req);
+                    if let Some(head_end) = text.find("\r\n\r\n") {
+                        let len = text[..head_end]
+                            .lines()
+                            .find_map(|l| {
+                                let l = l.to_ascii_lowercase();
+                                l.strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap_or(0);
+                        if req.len() >= head_end + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let chunk = |s: &str| format!("{:x}\r\n{s}\r\n", s.len());
+                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\
+                            transfer-encoding: chunked\r\n\r\n";
+                sock.write_all(head.as_bytes()).await.unwrap();
+                sock.write_all(chunk(&first).as_bytes()).await.unwrap();
+                sock.flush().await.unwrap();
+                let _ = go_rx.await;
+                sock.write_all(chunk(&rest).as_bytes()).await.unwrap();
+                sock.write_all(b"0\r\n\r\n").await.unwrap();
+                sock.flush().await.unwrap();
+            });
+            (format!("http://{addr}"), go_tx)
+        }
+
+        async fn proxy(
+            upstream: &str,
+            extra: &str,
+        ) -> (ServerHandle, std::net::SocketAddr, tempfile::NamedTempFile) {
+            let f = write_temp_config(&format!(
+                "[server]\nhost = \"127.0.0.1\"\nport = 0\n\n[upstream]\nurl = \"{upstream}\"\n\n{extra}"
+            ));
+            let config = Arc::new(ConfigHandle::load(f.path()).unwrap());
+            let handle = run_server(config).await.unwrap();
+            let addr = handle.local_addr();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            (handle, addr, f)
+        }
+
+        async fn send_streaming(addr: std::net::SocketAddr) -> reqwest::Response {
+            // A proxy that buffers the whole upstream body never sends
+            // headers here (the upstream is waiting on us), so time out
+            // instead of hanging until the upstream timeout.
+            let send = reqwest::Client::new()
+                .post(format!("http://{addr}/v1/chat/completions"))
+                .json(&serde_json::json!({
+                    "model": "gpt-4o", "stream": true,
+                    "messages": [{"role": "user", "content": "hello"}]
+                }))
+                .send();
+            tokio::time::timeout(Duration::from_secs(5), send)
+                .await
+                .expect("no response headers before the upstream finished: the proxy is buffering")
+                .unwrap()
+        }
+
+        /// Read body chunks until `needle` has appeared, or fail after 5 s.
+        async fn read_until(
+            body: &mut (impl futures::Stream<Item = reqwest::Result<Bytes>> + Unpin),
+            seen: &mut String,
+            needle: &str,
+        ) {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !seen.contains(needle) {
+                    let chunk = body.next().await.expect("stream ended early").unwrap();
+                    seen.push_str(&String::from_utf8_lossy(&chunk));
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!("{needle:?} not received before the upstream finished; got {seen:?}")
+            });
+        }
+
+        #[tokio::test]
+        async fn passthrough_streams_before_the_upstream_finishes() {
+            let first = sse_chunk("Hello");
+            let rest = format!("{}{}", sse_chunk(" world"), sse_finish());
+            let (upstream, go) = two_part_upstream(first, rest).await;
+            let (handle, addr, _f) = proxy(&upstream, "").await;
+
+            let resp = send_streaming(addr).await;
+            assert_eq!(resp.status(), 200);
+            let mut body = resp.bytes_stream();
+            let mut seen = String::new();
+            // Before this change the proxy buffered the whole body, so the
+            // first event only arrived after the upstream finished.
+            read_until(&mut body, &mut seen, "Hello").await;
+            go.send(()).unwrap();
+            read_until(&mut body, &mut seen, "[DONE]").await;
+            assert!(seen.contains(" world"));
+            handle.shutdown();
+        }
+
+        #[tokio::test]
+        async fn redacted_stream_still_streams_and_redacts_split_pii() {
+            // The first part is long enough that most of it is released
+            // before the upstream continues; the email is split across parts.
+            let first = format!(
+                "{}{}",
+                sse_chunk("Here is a fairly long first sentence so the stream has text to release right away. "),
+                sse_chunk("Contact jane.doe@")
+            );
+            let rest = format!("{}{}", sse_chunk("example.com for details."), sse_finish());
+            let (upstream, go) = two_part_upstream(first, rest).await;
+            let (handle, addr, _f) = proxy(
+                &upstream,
+                "[stages.pii_redactor]\nredact_responses = true\n",
+            )
+            .await;
+
+            let resp = send_streaming(addr).await;
+            let mut body = resp.bytes_stream();
+            let mut seen = String::new();
+            // Released text arrives in several deltas; look for its start.
+            read_until(&mut body, &mut seen, "Here is a fairly").await;
+            go.send(()).unwrap();
+            read_until(&mut body, &mut seen, "[DONE]").await;
+
+            assert!(seen.contains("[EMAIL]"), "{seen}");
+            assert!(!seen.contains("jane.doe"), "{seen}");
+            assert!(!seen.contains("example.com"), "{seen}");
+
+            let metrics = reqwest::get(format!("http://{addr}/metrics"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            assert!(
+                metrics.contains("guardrail_response_redacted_total 1"),
+                "{metrics}"
+            );
+            handle.shutdown();
+        }
+
+        #[tokio::test]
+        async fn streaming_can_be_rejected_while_redacting_responses() {
+            let upstream = wiremock::MockServer::start().await;
+            let (handle, addr, _f) = proxy(
+                &upstream.uri(),
+                "[stages.pii_redactor]\nredact_responses = true\nstreaming_responses = \"reject\"\n",
+            )
+            .await;
+
+            let resp = send_streaming(addr).await;
+            assert_eq!(resp.status(), 400);
+            let body: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(body["error"]["code"], "streaming_not_allowed");
+            assert!(upstream.received_requests().await.unwrap().is_empty());
+            handle.shutdown();
+        }
+    }
+
     #[tokio::test]
     async fn test_request_duration_is_labeled_by_decision() {
         let toml_str = r#"

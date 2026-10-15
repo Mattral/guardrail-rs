@@ -15,15 +15,12 @@
 //! | OpenAI `/v1/chat/completions` | `choices[].message.content` (string) |
 //! | Anthropic `/v1/messages` | `content[]` blocks where `type == "text"`, field `text` |
 //!
-//! # Known limitation: streaming responses
+//! # Streaming responses
 //!
-//! When the original request had `"stream": true`, the upstream returns a
-//! `text/event-stream` (SSE) body, not a single JSON document. This module
-//! does **not** parse or redact SSE chunks — streaming responses are passed
-//! through byte-for-byte unmodified. [`is_redactable_response`] returns
-//! `false` for such responses so callers can skip this stage entirely. See
-//! "Streaming responses" in `docs/architecture.md` for the current behavior
-//! and the options for closing this gap.
+//! This module handles complete JSON documents only.
+//! [`is_redactable_response`] returns `false` for `text/event-stream`
+//! bodies; those are redacted incrementally by [`crate::sse`] instead. See
+//! "Streaming responses" in `docs/architecture.md`.
 
 use guardrail_classifiers::PiiRedactor;
 use serde_json::Value;

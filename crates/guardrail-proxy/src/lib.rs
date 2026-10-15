@@ -96,6 +96,7 @@ pub(crate) mod handler;
 pub mod metrics;
 pub mod response;
 pub mod server;
+pub mod sse;
 pub mod state;
 pub mod telemetry;
 pub mod translate;
