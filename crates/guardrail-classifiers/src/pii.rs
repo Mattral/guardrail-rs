@@ -122,11 +122,27 @@ fn luhn_valid(digits: &str) -> bool {
 
 // ── PiiRedactor ───────────────────────────────────────────────────────────────
 
+/// What [`PiiRedactor`]'s [`Stage::evaluate`] does when it finds PII.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PiiAction {
+    /// Replace the PII and forward the sanitized request (the default).
+    #[default]
+    Redact,
+    /// Reject the request with block code [`PII_BLOCK_CODE`].
+    Block,
+    /// Log what was found and forward the request unchanged.
+    LogOnly,
+}
+
+/// Block code used when [`PiiAction::Block`] rejects a request.
+pub const PII_BLOCK_CODE: &str = "pii_detected";
+
 /// Detects and replaces PII in request messages before forwarding upstream.
 ///
-/// Returns [`Decision::Allow`] if no PII is found, or [`Decision::Redact`]
-/// with a sanitized request copy if PII was replaced. Never returns
-/// [`Decision::Block`].
+/// By default ([`PiiAction::Redact`]) returns [`Decision::Allow`] if no PII
+/// is found, or [`Decision::Redact`] with a sanitized request copy if PII
+/// was replaced. [`PiiRedactor::with_action`] can make it block or only log
+/// instead.
 ///
 /// # Examples
 ///
@@ -147,6 +163,8 @@ pub struct PiiRedactor {
     /// All of `patterns` in one set, index-aligned, used to skip patterns
     /// that can't match the current text with one combined scan.
     set: RegexSet,
+    /// What `evaluate` does when PII is found.
+    action: PiiAction,
     /// Whether to apply Luhn validation to candidate credit card numbers.
     validate_luhn: bool,
 }
@@ -206,8 +224,42 @@ impl PiiRedactor {
         Ok(Self {
             patterns,
             set,
+            action: PiiAction::Redact,
             validate_luhn,
         })
+    }
+
+    /// Use `replacement` instead of the default token (e.g. `[EMAIL]`) for
+    /// `entity`. Has no effect if `entity` isn't one of this redactor's
+    /// entity types.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use guardrail_classifiers::{PiiEntityType, PiiRedactor};
+    ///
+    /// let r = PiiRedactor::default().with_replacement(PiiEntityType::Email, "<email>");
+    /// assert_eq!(r.redact_text("mail a@b.co"), "mail <email>");
+    /// ```
+    #[must_use]
+    pub fn with_replacement(
+        mut self,
+        entity: PiiEntityType,
+        replacement: impl Into<String>,
+    ) -> Self {
+        let replacement = replacement.into();
+        for p in self.patterns.iter_mut().filter(|p| p.entity_type == entity) {
+            p.replacement.clone_from(&replacement);
+        }
+        self
+    }
+
+    /// Set what [`Stage::evaluate`] does when PII is found. Default:
+    /// [`PiiAction::Redact`]. The `redact_*` methods always redact.
+    #[must_use]
+    pub fn with_action(mut self, action: PiiAction) -> Self {
+        self.action = action;
+        self
     }
 
     /// Redact PII in a plain text string, returning the sanitized text.
@@ -394,19 +446,42 @@ impl Stage for PiiRedactor {
                     .into_iter()
                     .collect();
 
-                let reason = format!("PII detected and redacted: {}", entity_summary.join(", "));
-
-                tracing::info!(
-                    entities = ?entity_summary,
-                    num_redactions = records.len(),
-                    "PII redacted from request"
-                );
-
-                Ok(Decision::Redact {
-                    reason,
-                    mutated,
-                    entities: entity_summary,
-                })
+                match self.action {
+                    PiiAction::Redact => {
+                        tracing::info!(
+                            entities = ?entity_summary,
+                            num_redactions = records.len(),
+                            "PII redacted from request"
+                        );
+                        Ok(Decision::Redact {
+                            reason: format!(
+                                "PII detected and redacted: {}",
+                                entity_summary.join(", ")
+                            ),
+                            mutated,
+                            entities: entity_summary,
+                        })
+                    }
+                    PiiAction::Block => {
+                        // Entity types only: this reason goes back to the
+                        // caller and must never echo the matched values.
+                        tracing::info!(entities = ?entity_summary, "request blocked: PII detected");
+                        Ok(Decision::Block {
+                            reason: format!("PII detected: {}", entity_summary.join(", ")),
+                            code: guardrail_core::decision::BlockCode::Custom(
+                                PII_BLOCK_CODE.into(),
+                            ),
+                        })
+                    }
+                    PiiAction::LogOnly => {
+                        tracing::warn!(
+                            entities = ?entity_summary,
+                            num_matches = records.len(),
+                            "PII detected (log_only: request forwarded unchanged)"
+                        );
+                        Ok(Decision::Allow)
+                    }
+                }
             }
         }
     }

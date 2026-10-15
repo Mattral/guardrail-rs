@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use guardrail_classifiers::{PiiRedactor, RegexInjectionScanner};
+use guardrail_classifiers::{PiiAction, PiiEntityType, PiiRedactor, RegexInjectionScanner};
 use guardrail_core::{
     pipeline::{Pipeline, PipelineBuilder},
     policy::{PolicyAction, PolicyCondition, PolicyEngine, PolicyRule},
@@ -170,8 +170,9 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
     for stage_id in &config.pipeline.request_stages {
         match stage_id.as_str() {
             "regex_injection" if config.stages.regex_injection.enabled => {
-                let log_only =
-                    config.stages.regex_injection.action == crate::schema::StageAction::LogOnly;
+                let action = config.stages.regex_injection.action;
+                warn_if_redact_on_detection_stage("regex_injection", action);
+                let log_only = action == crate::schema::StageAction::LogOnly;
 
                 let scanner = if !config.stages.regex_injection.rules_file.trim().is_empty() {
                     let path = &config.stages.regex_injection.rules_file;
@@ -222,6 +223,10 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                     stage: "onnx_injection".into(),
                     source,
                 })?;
+                let action = config.stages.onnx_injection.action;
+                warn_if_redact_on_detection_stage("onnx_injection", action);
+                let classifier =
+                    classifier.with_log_only(action == crate::schema::StageAction::LogOnly);
                 let mode = crate::schema::OnErrorBehavior::resolve(
                     config.stages.onnx_injection.on_error,
                     config.pipeline.on_error,
@@ -249,6 +254,19 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                     stage: "toxicity".into(),
                     source,
                 })?;
+                let action = config.stages.toxicity.action;
+                warn_if_redact_on_detection_stage("toxicity", action);
+                let classifier = classifier
+                    .with_log_only(action == crate::schema::StageAction::LogOnly)
+                    .with_scan_roles(
+                        config
+                            .stages
+                            .toxicity
+                            .scan_roles
+                            .iter()
+                            .filter_map(|r| crate::schema::parse_role(r))
+                            .collect(),
+                    );
                 let mode = crate::schema::OnErrorBehavior::resolve(
                     config.stages.toxicity.on_error,
                     config.pipeline.on_error,
@@ -267,6 +285,18 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
     }
 
     Ok(builder.build())
+}
+
+/// `action = "redact"` has no meaning for a stage that detects rather than
+/// rewrites. It's accepted for backward compatibility and behaves like
+/// `"block"`; say so at load time instead of silently.
+fn warn_if_redact_on_detection_stage(stage: &str, action: crate::schema::StageAction) {
+    if action == crate::schema::StageAction::Redact {
+        tracing::warn!(
+            stage,
+            "action = \"redact\" is not supported by this stage and behaves like \"block\""
+        );
+    }
 }
 
 /// Convert schema `PolicyRuleConfig` entries (using `when`/`then` shape) to
@@ -335,12 +365,25 @@ fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoad
             }
         })?;
 
-    let redactor = PiiRedactor::new(entities.0, config.stages.pii_redactor.validate_luhn).map_err(
-        |source| ConfigLoadError::StageBuild {
+    let pii = &config.stages.pii_redactor;
+    let r = &pii.replacements;
+    let redactor = PiiRedactor::new(entities.0, pii.validate_luhn)
+        .map_err(|source| ConfigLoadError::StageBuild {
             stage: "pii_redactor".into(),
             source,
-        },
-    )?;
+        })?
+        .with_replacement(PiiEntityType::Email, &r.email)
+        .with_replacement(PiiEntityType::Phone, &r.phone)
+        .with_replacement(PiiEntityType::CreditCard, &r.credit_card)
+        .with_replacement(PiiEntityType::Ssn, &r.ssn)
+        .with_replacement(PiiEntityType::IpAddress, &r.ip_address)
+        .with_replacement(PiiEntityType::ApiKey, &r.api_key)
+        .with_replacement(PiiEntityType::AwsKey, &r.aws_key)
+        .with_action(match pii.action {
+            crate::schema::StageAction::Redact => PiiAction::Redact,
+            crate::schema::StageAction::Block => PiiAction::Block,
+            crate::schema::StageAction::LogOnly => PiiAction::LogOnly,
+        });
 
     Ok(Some(redactor))
 }
@@ -384,7 +427,15 @@ fn build_pii_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoad
 /// assert!(redactor.is_some());
 /// ```
 pub fn build_response_redactor(config: &Config) -> Result<Option<PiiRedactor>, ConfigLoadError> {
-    if !config.stages.pii_redactor.redact_responses {
+    // `output_pii_redactor` is the only response stage. Leaving it out of
+    // `pipeline.response_stages` turns response redaction off, the same way
+    // removing a request stage ID disables that stage.
+    let listed = config
+        .pipeline
+        .response_stages
+        .iter()
+        .any(|s| s == "output_pii_redactor");
+    if !config.stages.pii_redactor.redact_responses || !listed {
         return Ok(None);
     }
     build_pii_redactor(config)
@@ -793,6 +844,231 @@ on_error = "allow"
         );
         assert_eq!(config.stages.onnx_injection.on_error, None);
         assert_eq!(config.stages.toxicity.on_error, None);
+    }
+
+    /// Each documented stage setting must change what the built pipeline
+    /// does. Before these were wired up, every one of these configs behaved
+    /// exactly like the defaults.
+    mod wired_settings {
+        use super::*;
+        use guardrail_core::decision::Decision;
+        use guardrail_core::test_helpers::pii_request;
+
+        const BASE: &str = "[server]\nhost = \"127.0.0.1\"\nport = 8080\n\n\
+                            [upstream]\nurl = \"https://api.openai.com\"\n\n";
+
+        fn config(extra: &str) -> Config {
+            let config: Config = toml::from_str(&format!("{BASE}{extra}")).unwrap();
+            assert!(
+                validate_config(&config).is_empty(),
+                "{:?}",
+                validate_config(&config)
+            );
+            config
+        }
+
+        async fn decide(config: &Config) -> Decision {
+            build_pipeline(config)
+                .unwrap()
+                .run(pii_request())
+                .await
+                .unwrap()
+                .0
+        }
+
+        #[tokio::test]
+        async fn pii_replacements_are_used() {
+            let c = config("[stages.pii_redactor.replacements]\nemail = \"<redacted-email>\"\n");
+            match decide(&c).await {
+                Decision::Redact { mutated, .. } => {
+                    let text = mutated.user_text();
+                    assert!(text.contains("<redacted-email>"), "{text}");
+                    assert!(!text.contains("[EMAIL]"), "{text}");
+                    // Entities without an override keep their default token.
+                    assert!(text.contains("[PHONE]"), "{text}");
+                }
+                other => panic!("expected Redact, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn pii_replacements_also_apply_to_responses() {
+            let c = config(
+                "[stages.pii_redactor]\nredact_responses = true\n\n\
+                 [stages.pii_redactor.replacements]\nemail = \"<e>\"\n",
+            );
+            let r = build_response_redactor(&c)
+                .unwrap()
+                .expect("response redactor");
+            assert_eq!(r.redact_text("a@b.co"), "<e>");
+        }
+
+        #[tokio::test]
+        async fn pii_action_block_blocks() {
+            let c = config("[stages.pii_redactor]\naction = \"block\"\n");
+            match decide(&c).await {
+                Decision::Block { code, reason } => {
+                    assert_eq!(code.as_str(), guardrail_classifiers::PII_BLOCK_CODE);
+                    assert!(
+                        !reason.contains("user@example.com"),
+                        "reason leaks PII: {reason}"
+                    );
+                }
+                other => panic!("expected Block, got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn pii_action_log_only_forwards_unchanged() {
+            let c = config("[stages.pii_redactor]\naction = \"log_only\"\n");
+            assert_eq!(decide(&c).await, Decision::Allow);
+        }
+
+        #[test]
+        fn removing_output_pii_redactor_disables_response_redaction() {
+            let on = config("[stages.pii_redactor]\nredact_responses = true\n");
+            assert!(build_response_redactor(&on).unwrap().is_some());
+
+            let off = config(
+                "[pipeline]\nresponse_stages = []\n\n\
+                 [stages.pii_redactor]\nredact_responses = true\n",
+            );
+            assert!(build_response_redactor(&off).unwrap().is_none());
+        }
+
+        #[tokio::test]
+        async fn regex_action_redact_still_blocks() {
+            // "redact" means nothing for a detection stage; it's kept working
+            // as "block" (with a warning at load) rather than rejected.
+            let c = config("[stages.regex_injection]\naction = \"redact\"\n");
+            let req = guardrail_core::test_helpers::injection_request();
+            let decision = build_pipeline(&c).unwrap().run(req).await.unwrap().0;
+            assert!(matches!(decision, Decision::Block { .. }));
+        }
+
+        #[test]
+        fn toxicity_scan_roles_are_validated() {
+            let bad: Config = toml::from_str(&format!(
+                "{BASE}[stages.toxicity]\nenabled = true\nscan_roles = [\"users\"]\n"
+            ))
+            .unwrap();
+            assert!(validate_config(&bad)
+                .iter()
+                .any(|e| e.contains("unknown role 'users'")));
+
+            let empty: Config = toml::from_str(&format!(
+                "{BASE}[stages.toxicity]\nenabled = true\nscan_roles = []\n"
+            ))
+            .unwrap();
+            assert!(validate_config(&empty)
+                .iter()
+                .any(|e| e.contains("scan_roles is empty")));
+        }
+    }
+
+    /// `action` and `scan_roles` on the ONNX stages, against the keyword
+    /// fixture model (scores ~1.0 when the text contains "trigger").
+    #[cfg(feature = "onnx")]
+    mod onnx_wired_settings {
+        use super::*;
+        use guardrail_core::decision::Decision;
+        use guardrail_core::request::{
+            ChatMessage, GuardrailRequest, MessageContent, Provider, Role,
+        };
+
+        fn fixture(name: &str) -> String {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../guardrail-classifiers/tests/fixtures/onnx")
+                .join(name)
+                .to_string_lossy()
+                .replace('\\', "/")
+        }
+
+        fn config(stage: &str, model: &str, extra: &str) -> Config {
+            let s = format!(
+                "[server]\nhost = \"127.0.0.1\"\nport = 8080\n\n\
+                 [upstream]\nurl = \"https://api.openai.com\"\n\n\
+                 [pipeline]\nrequest_stages = [\"{stage}\"]\n\n\
+                 [stages.{stage}]\nenabled = true\nmodel_path = '{}'\ntokenizer_path = '{}'\n{extra}",
+                fixture(model),
+                fixture("tokenizer.json"),
+            );
+            let config: Config = toml::from_str(&s).unwrap();
+            assert!(
+                validate_config(&config).is_empty(),
+                "{:?}",
+                validate_config(&config)
+            );
+            config
+        }
+
+        fn request(messages: &[(Role, &str)]) -> GuardrailRequest {
+            GuardrailRequest::new(
+                messages
+                    .iter()
+                    .map(|(role, text)| ChatMessage {
+                        role: role.clone(),
+                        content: MessageContent::Text((*text).into()),
+                    })
+                    .collect(),
+                "gpt-4o".into(),
+                Provider::OpenAI,
+            )
+        }
+
+        async fn decide(config: &Config, req: GuardrailRequest) -> Decision {
+            build_pipeline(config).unwrap().run(req).await.unwrap().0
+        }
+
+        #[tokio::test]
+        async fn onnx_action_log_only_allows_positives() {
+            let positive = || request(&[(Role::User, "trigger")]);
+            for (stage, model) in [
+                ("onnx_injection", "keyword_2class.onnx"),
+                ("toxicity", "keyword_multilabel.onnx"),
+            ] {
+                let blocking = config(stage, model, "");
+                assert!(matches!(
+                    decide(&blocking, positive()).await,
+                    Decision::Block { .. }
+                ));
+
+                let log_only = config(stage, model, "action = \"log_only\"\n");
+                assert_eq!(
+                    decide(&log_only, positive()).await,
+                    Decision::Allow,
+                    "{stage}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn toxicity_scan_roles_selects_which_messages_are_scored() {
+            let system_trigger = || request(&[(Role::System, "trigger"), (Role::User, "hello")]);
+
+            // Default ["user"]: a toxic system prompt isn't scanned.
+            let default = config("toxicity", "keyword_multilabel.onnx", "");
+            assert_eq!(decide(&default, system_trigger()).await, Decision::Allow);
+
+            let with_system = config(
+                "toxicity",
+                "keyword_multilabel.onnx",
+                "scan_roles = [\"system\", \"user\"]\n",
+            );
+            assert!(matches!(
+                decide(&with_system, system_trigger()).await,
+                Decision::Block { .. }
+            ));
+
+            // And restricting to "system" stops user text from being scored.
+            let system_only = config(
+                "toxicity",
+                "keyword_multilabel.onnx",
+                "scan_roles = [\"system\"]\n",
+            );
+            let user_trigger = request(&[(Role::System, "hello"), (Role::User, "trigger")]);
+            assert_eq!(decide(&system_only, user_trigger).await, Decision::Allow);
+        }
     }
 
     /// End-to-end `on_error` tests: build a pipeline from TOML with an ONNX

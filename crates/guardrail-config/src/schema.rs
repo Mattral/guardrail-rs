@@ -541,6 +541,29 @@ fn default_toxicity_threshold() -> f32 {
 fn default_scan_roles() -> Vec<String> {
     vec!["user".into()]
 }
+
+/// Parse a message role as written in config (`"system"`, `"user"`,
+/// `"assistant"`, `"tool"`). Returns `None` for anything else.
+///
+/// # Examples
+///
+/// ```rust
+/// use guardrail_config::schema::parse_role;
+/// use guardrail_core::request::Role;
+///
+/// assert_eq!(parse_role("user"), Some(Role::User));
+/// assert_eq!(parse_role("users"), None);
+/// ```
+pub fn parse_role(s: &str) -> Option<guardrail_core::request::Role> {
+    use guardrail_core::request::Role;
+    match s {
+        "system" => Some(Role::System),
+        "user" => Some(Role::User),
+        "assistant" => Some(Role::Assistant),
+        "tool" => Some(Role::Tool),
+        _ => None,
+    }
+}
 fn default_true() -> bool {
     true
 }
