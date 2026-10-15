@@ -180,10 +180,17 @@ is intercepted, guardrail-rs provides no protection.
 
 ### Denial of service (resource exhaustion)
 
-The `max_body_size_bytes` and `upstream_timeout_secs` settings provide basic
-limits, but guardrail-rs is not designed to defend against sophisticated
-volumetric DoS attacks. A reverse proxy or WAF in front of guardrail-rs is
-recommended in public deployments.
+`server.max_body_size_bytes` (default 10 MiB) is enforced while the body is
+read. Reading stops once the limit is passed, and a declared
+`Content-Length` over the limit is rejected before anything is read, so a
+client can't make the proxy buffer more than that per request.
+`upstream.timeout_secs` bounds the wait for the provider. The ONNX stages are
+the most expensive part per request (tens to hundreds of ms per inference on
+CPU; see [`benchmarks.md`](benchmarks.md#onnx-classifiers-measured-and-far-over-target)).
+They score at most 16 windows of 512 tokens and treat longer input as a stage
+error. These are basic limits: guardrail-rs is not designed to defend against
+volumetric DoS, and there is no per-client rate limiting. A reverse proxy or
+WAF in front of guardrail-rs is recommended in public deployments.
 
 ---
 
