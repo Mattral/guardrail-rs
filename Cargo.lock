@@ -847,7 +847,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "guardrail-classifiers"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "criterion",
@@ -868,7 +868,7 @@ dependencies = [
 
 [[package]]
 name = "guardrail-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "guardrail-config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arc-swap",
  "guardrail-classifiers",
@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "guardrail-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "regex",
@@ -921,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "guardrail-proxy"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "guardrail-test-suite"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "guardrail-classifiers",
