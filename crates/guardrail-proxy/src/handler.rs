@@ -162,7 +162,7 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
         .pipeline_duration_seconds
         .observe(pipeline_elapsed_ms / 1000.0);
 
-    let response = match decision {
+    let (response, decision_label) = match decision {
         Decision::Block { reason, code } => {
             let body = translate::block_response_body(&reason, &code, &request_id);
             let block_response = error_body_response(StatusCode::FORBIDDEN, &body);
@@ -192,7 +192,7 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
                 .with_label_values(&["block", provider_label(&provider)])
                 .inc();
 
-            block_response
+            (block_response, "block")
         }
         Decision::Allow | Decision::Redact { .. } => {
             let is_redact = matches!(&decision, Decision::Redact { .. });
@@ -236,15 +236,17 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
                     .inc();
             }
 
-            upstream_response
+            let label = if is_redact { "redact" } else { "allow" };
+            (upstream_response, label)
         }
     };
 
-    // Record end-to-end request latency (pipeline + upstream forwarding).
+    // Record end-to-end request latency (pipeline + upstream forwarding),
+    // labeled with the decision as documented on the metric.
     state
         .metrics
         .request_duration_seconds
-        .with_label_values(&["total"])
+        .with_label_values(&[decision_label])
         .observe(start.elapsed().as_secs_f64());
 
     response
