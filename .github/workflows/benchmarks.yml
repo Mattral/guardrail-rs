@@ -63,7 +63,12 @@ jobs:
           tool: "cargo"
           output-file-path: output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}  # Use the built-in token for writes
-          auto-push: true
+          # Only main's results join the gh-pages history. PR runs are still
+          # compared against that history (and comment on alerts), but they
+          # aren't saved. Saving them made each PR's "previous" point
+          # whichever PR ran last, and mixed unmerged branches into the
+          # public dashboard.
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           alert-threshold: "150%"
           comment-on-alert: true
           fail-on-alert: false
