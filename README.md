@@ -7,18 +7,18 @@
 [![docs.rs](https://img.shields.io/docsrs/guardrail-core?style=for-the-badge&logo=read-the-docs&logoColor=white)](https://docs.rs/guardrail-core)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](https://github.com/Mattral/guardrail-rs/blob/main/LICENSE-APACHE)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange?style=for-the-badge&logo=rust&logoColor=white)](https://github.com/Mattral/guardrail-rs/blob/main/rust-toolchain.toml)
-[![Visitors](https://img.shields.io/badge/Visitors-1-blue?style=for-the-badge&logo=github&logoColor=white)](https://visitor-badge.laobi.icu/badge?page_id=Mattral.guardrail-rs)
 [![Open in Colab](https://img.shields.io/badge/Open%20in%20Colab-Notebook-yellow?style=for-the-badge&logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/Mattral/guardrail-rs/blob/main/examples/notebooks/quickstart_colab.ipynb)
 
 </div>
 
-**A zero-Python, production-grade LLM security layer written in Rust.**
+**A zero-Python LLM security proxy written in Rust.**
 
 `guardrail-rs` is a reverse-proxy that sits between your application and an
 LLM provider (OpenAI, Anthropic, Azure OpenAI, or any OpenAI-compatible
 endpoint). It inspects every chat-completion request before it leaves your
 infrastructure, blocking prompt injection attempts, redacting PII, and
-enforcing custom policy rules — all with single-digit-millisecond overhead.
+enforcing custom policy rules. The default regex + PII pipeline took
+47 µs on an 8 KB request in our measurement (see [Latency](#at-a-glance)).
 
 ## Installation
 
@@ -62,9 +62,9 @@ walks through blocking a prompt injection and redacting PII live.
 | | |
 |---|---|
 | **Threat model scope** | Prompt injection, PII leakage, toxic content, custom policy violations. PII is redacted from requests by default. Redacting PII from model *responses* is opt-in (`redact_responses = true`) and **only covers non-streaming responses**: `stream: true` responses pass through unredacted. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
-| **Latency** | Regex + PII pipeline: low tens of microseconds per request. Full pipeline with ONNX classifiers: single-digit milliseconds. These are the project's design targets — see [`docs/benchmarks.md`](docs/benchmarks.md) for methodology and CI-enforced latency gates. |
+| **Latency** | Default regex + PII pipeline, measured end to end (`Pipeline::run`): 4.7 µs at 512 B, 26.5 µs at 4 KB, 47.3 µs at 8 KB. The optional ONNX stages are far slower: 36–42 ms per stage for a 64 B prompt, 0.38–0.43 s at 1 KB. These figures are Criterion means from one local run (Intel Core Ultra 5 226V, Rust 1.99, Windows 11); CI's shared-runner medians are in [`docs/benchmarks.md`](docs/benchmarks.md), along with how to reproduce both. CI hard-fails if the regex + PII pipeline exceeds 5 ms. |
 | **Fails open** | By default, a stage that errors on a request (e.g. ONNX inference fails) is skipped and the request continues without that check. Set `pipeline.on_error = "block"`, or `on_error` on an individual ONNX stage, to block instead. A model that fails to load stops startup rather than failing open. |
-| **Observability** | Prometheus metrics at `:9090/metrics`, OpenTelemetry traces (OTLP), and an NDJSON audit log — which never contains message content or API keys, only decision metadata. |
+| **Observability** | Prometheus metrics at `/metrics` on the proxy's own port, OpenTelemetry traces (OTLP), and an NDJSON audit log — which never contains message content or API keys, only decision metadata. |
 
 ```mermaid
 flowchart LR
@@ -78,9 +78,11 @@ flowchart LR
 
 - **No Python, no PyTorch, no GPU required.** A single static binary
   (~15 MB), built from the Rust source in this repository.
-- **Fast.** Regex injection scanning and PII redaction both run in
-  single-digit microseconds; the full pipeline adds well under 1 ms p99 to
-  request latency in the default (non-ONNX) configuration.
+- **Fast without ONNX.** In the default configuration (regex + PII), the
+  pipeline took 4.7 µs for a 512 B request and 47 µs for 8 KB in our
+  measurement. Cost grows with input size, mostly from PII redaction. The
+  optional ONNX classifiers cost tens to hundreds of milliseconds per
+  request; see [Latency](#at-a-glance).
 - **Drop-in.** Point your existing OpenAI/Anthropic SDK's `base_url` at
   `guardrail-rs` — no application code changes required.
 - **Fails open by default.** A stage that errors on a request doesn't take
@@ -146,9 +148,9 @@ pkill -HUP guardrail
 | Stage | What it does | Performance target |
 |-------|--------------|---------------------|
 | `regex_injection` | Fast regex scan for jailbreaks, prompt-extraction attempts, delimiter injection | < 50 µs / 8 KB |
-| `onnx_injection` *(optional)* | DeBERTa-based semantic injection detection | target < 5 ms; **measured 52.9 ms at 64 B, 426 ms at 1 KB** (one local run, 1 CPU thread — [details](docs/benchmarks.md#onnx-classifiers-measured-and-far-over-target)) |
+| `onnx_injection` *(optional)* | DeBERTa-based semantic injection detection | target < 5 ms; **measured 41.9 ms at 64 B, 426 ms at 1 KB** (one local run, 1 CPU thread — [details](docs/benchmarks.md#onnx-classifiers-measured-and-far-over-target)) |
 | `pii_redactor` | Detects & redacts emails, phone numbers, credit cards (Luhn-validated), SSNs, IPs, API keys | < 20 µs / 4 KB |
-| `toxicity` *(optional)* | RoBERTa-based toxicity/harassment detection | target < 5 ms; **measured 33.6 ms at 64 B, 437 ms at 1 KB** (same run) |
+| `toxicity` *(optional)* | RoBERTa-based toxicity/harassment detection | target < 5 ms; **measured 36.4 ms at 64 B, 378 ms at 1 KB** (same run) |
 | `policy_engine` | Your custom rules: keyword blocks, token-count limits, required-system-prompt checks | negligible |
 
 The `onnx_injection` and `toxicity` stages are **experimental**. They
@@ -220,7 +222,7 @@ that drives this proxy. It does not reimplement detection.
 
 - Repo: https://github.com/Mattral/GuardRail-Studio
 - Talks to a running `guardrail` process (`/v1/chat/completions`, `/healthz`,
-  `:9090/metrics`, `guardrail.toml` + `SIGHUP`)
+  `/metrics` on the same port, `guardrail.toml` + `SIGHUP`)
 - Not required to use `guardrail-cli`
 
 ---

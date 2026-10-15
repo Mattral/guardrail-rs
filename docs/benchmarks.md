@@ -38,10 +38,10 @@ variance on shared runners is large enough to be misleading otherwise — see
 | `pii_redactor` (sync, `redact_text`) | 6.0 KB | 101 µs | 93.0 – 116.9 µs | — | |
 | `stage_evaluate_async` (real `Stage::evaluate`, incl. `Decision`/tracing) | ~1.0 KB, clean | 3.71 µs | 3.36 – 4.11 µs | — | |
 | `stage_evaluate_async` (real `Stage::evaluate`, incl. `Decision`/tracing) | ~742 B, w/ PII | 14.7 µs | 13.3 – 16.0 µs | — | |
-| `onnx_injection` (CPU, 1 thread) | 64 B | 52.9 ms † | — | < 5 ms | ❌ |
-| `onnx_injection` (CPU, 1 thread) | 1.0 KB | 426 ms † | — | — | |
-| `toxicity` (CPU, 1 thread) | 64 B | 33.6 ms † | — | < 5 ms | ❌ |
-| `toxicity` (CPU, 1 thread) | 1.0 KB | 437 ms † | — | — | |
+| `onnx_injection` (CPU, 1 thread) | 64 B | 41.9 ms † | 41.9 – 52.9 ms (2 local runs) | < 5 ms | ❌ |
+| `onnx_injection` (CPU, 1 thread) | 1.0 KB | 426 ms † | 426 ms (2 local runs) | — | |
+| `toxicity` (CPU, 1 thread) | 64 B | 36.4 ms † | 33.6 – 36.4 ms (2 local runs) | < 5 ms | ❌ |
+| `toxicity` (CPU, 1 thread) | 1.0 KB | 378 ms † | 378 – 437 ms (2 local runs) | — | |
 | Full pipeline (regex + PII), worst case (8 KB) | 8.2 KB | 158 µs | — | < 1 ms | ✅ [see detail](#full-pipeline-measured-gated-and-passing-single-run-snapshot) |
 
 **One real finding worth flagging:** in the CI rows above, `pii_redactor`
@@ -101,8 +101,9 @@ real request actually costs, not the full picture.
 ### ONNX classifiers: measured, and far over target
 
 † Unlike the rest of the table, these rows are **not** from the CI dashboard.
-They come from one local run of the `onnx_injection` and `toxicity` groups
-in `classifier_benchmarks.rs` (Criterion, 30 samples each, median shown):
+They come from two local runs of the `onnx_injection` and `toxicity` groups
+in `classifier_benchmarks.rs`, on 2026-10-14 and 2026-10-15 (Criterion, 30
+samples each, point estimate shown). The README quotes run 2.
 
 - Machine: Intel Core Ultra 5 226V laptop (8 cores), 15.5 GB RAM, Windows 11,
   Balanced power plan.
@@ -117,13 +118,17 @@ in `classifier_benchmarks.rs` (Criterion, 30 samples each, median shown):
   their sessions. The inputs are under 512 tokens, so each is a single
   window.
 
-| Input | `onnx_injection` | `toxicity` |
-|------:|-----------------:|-----------:|
-| 64 B | 52.9 ms (47.5 – 58.9) | 33.6 ms (32.9 – 34.7) |
-| 1.0 KB | 426 ms (418 – 434) | 437 ms (397 – 482) |
-| 1.8 KB | 845 ms (824 – 872) | 1.25 s (1.23 – 1.26) |
+| Input | `onnx_injection` run 1 | `onnx_injection` run 2 | `toxicity` run 1 | `toxicity` run 2 |
+|------:|---:|---:|---:|---:|
+| 64 B | 52.9 ms (47.5 – 58.9) | 41.9 ms (41.6 – 42.3) | 33.6 ms (32.9 – 34.7) | 36.4 ms (35.8 – 37.1) |
+| 1.0 KB | 426 ms (418 – 434) | 426 ms (425 – 429) | 437 ms (397 – 482) | 378 ms (376 – 381) |
+| 1.8 KB | 845 ms (824 – 872) | 828 ms (821 – 835) | 1.25 s (1.23 – 1.26) | 702 ms (695 – 709) |
 
-Ranges are Criterion's 95% confidence interval for that run.
+Ranges are Criterion's 95% confidence interval within each run. The gap
+between runs, up to 44% for `toxicity` at 1.8 KB, is larger than those
+intervals. On this laptop, run-to-run variance dominates, so treat any single
+figure as approximate. Run 2 was on code that also includes the PII rewrite
+and the config-wiring changes, which don't touch the timed `score()` path.
 
 **Finding:** the `< 5 ms` design target is missed by 7–250×. Latency grows
 with input length, and a 1 KB prompt costs about 0.4 s per stage on one
@@ -180,6 +185,48 @@ second `benchmark-action/github-action-benchmark` step to
 `pipeline-latency-gate` (mirroring the one already in the `bench` job)
 would start publishing this to `gh-pages` on every push, same as the
 classifier microbenchmarks — happy to wire that up on request.
+
+### Local reference run (the README's figures)
+
+The latency numbers quoted in the README come from this one local run, not
+from CI. The CI figures above are medians over shared runners; this run is a
+quieter machine, so it reads somewhat faster.
+
+- Machine: Intel Core Ultra 5 226V laptop (8 cores), 15.5 GB RAM, Windows 11,
+  Balanced power plan, on AC power.
+- Code: `main` at `b610ed6`, which includes the single-pass PII redactor.
+  Rust 1.99.0.
+- Date: 2026-10-15.
+- Values are Criterion's point estimate (mean), with the 95% confidence
+  interval in parentheses.
+
+| Benchmark | Input | Time |
+|-----------|------:|-----:|
+| `full_pipeline_regex_only` (regex + PII, short request with an email) | short | 1.89 µs (1.88 – 1.90) |
+| `full_pipeline_by_size/clean_with_pii` | 512 B | 4.67 µs (4.64 – 4.71) |
+| `full_pipeline_by_size/clean_with_pii` | 4 KB | 26.5 µs (25.9 – 27.6) |
+| `full_pipeline_by_size/clean_with_pii` | 8 KB | 47.3 µs (47.0 – 47.7) |
+| `full_pipeline_blocked_short_circuit` | short | 1.28 µs (1.22 – 1.35) |
+| `regex_injection_scanner` (sync) | 8.2 KB | 18.7 µs (18.6 – 18.8) |
+| `pii_redactor` (sync, `redact_text`) | 742 B | 3.68 µs (3.66 – 3.70) |
+| `pii_redactor` (sync, `redact_text`) | 3.0 KB | 14.3 µs (14.2 – 14.4) |
+| `pii_redactor` (sync, `redact_text`) | 4.1 KB | 19.0 µs (18.9 – 19.1) |
+| `pii_redactor` (sync, `redact_text`) | 6.0 KB | 28.4 µs (28.2 – 28.6) |
+
+For comparison, the same pipeline benchmark on this machine the day before,
+with the old two-pass PII redactor: 11.8 µs at 512 B, 67.8 µs at 4 KB, and
+139 µs at 8 KB.
+
+The ONNX figures in the README are run 2 of
+[ONNX classifiers](#onnx-classifiers-measured-and-far-over-target), from the
+same session.
+
+To reproduce:
+
+```bash
+cargo bench -p guardrail-test-suite --bench pipeline
+cargo bench -p guardrail-classifiers --bench classifier_benchmarks
+```
 
 ---
 
@@ -275,7 +322,7 @@ For a typical chat-completion request (one system message + one user message,
   ≈ 120,000–150,000 req/s for the guardrail layer (latency dominated by
   upstream time in practice).
 
-- **With ONNX classifiers (CPU):** inference-bound. In the one local run
+- **With ONNX classifiers (CPU):** inference-bound. In the two local runs
   above, a 64 B prompt took 34–53 ms per stage and a 1 KB prompt about
   0.4 s per stage, each on one core. Each inference occupies one Tokio
   blocking-pool thread for that long. Throughput under load hasn't been

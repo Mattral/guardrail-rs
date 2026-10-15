@@ -128,6 +128,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stream: true` responses. `docs/architecture.md` has a new "Streaming
   responses" section covering that, and the fact that streaming responses
   are buffered in full before reaching the client.
+- README latency claims now match measurements. Before, it said
+  "single-digit-millisecond overhead", "low tens of microseconds" (as a
+  design target), and "single-digit microseconds ... well under 1 ms p99"
+  in different places. Every figure now comes from one recorded local run,
+  listed with its machine and reproduce commands in `docs/benchmarks.md`.
+- Removed the static "Visitors 1" badge.
+- Dropped "production-grade" from the README tagline, CLI help and crate docs,
+  and "Sub-millisecond" from the crate and book descriptions, until the
+  ONNX path is tested and fast enough to support those claims.
+- The README said metrics are served at `:9090/metrics`. They're at
+  `/metrics` on the proxy's own port (`observability.metrics_port` is
+  reserved and unused).
 
 ### Security
 
