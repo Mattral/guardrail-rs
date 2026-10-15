@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
+### Upgrading from 0.1.x
+
+- **Configs that set `on_error = "block"` now fail closed.** That setting
+  used to be ignored. Stage errors now return `403` with code `stage_error`.
+  Configs that don't set it, or set `"allow"`, behave as before.
+- **Other settings that were ignored now take effect:**
+  - `stages.pii_redactor.replacements` and `stages.pii_redactor.action`
+  - `action = "log_only"` on the ONNX stages
+  - `stages.toxicity.scan_roles`
+  - `pipeline.response_stages`
+  - `server.workers`
+
+  Check any of these your config sets.
+- **Validation is stricter in one place:** an unknown role or an empty list
+  in `stages.toxicity.scan_roles` is now a config error when the stage is
+  enabled.
+- **The toxicity stage scores the recommended model differently.**
+  `unitary/unbiased-toxic-roberta` used to score ~0 for toxic text; it now
+  scores correctly, so expect it to start blocking. Re-check your
+  `threshold`.
+- **MSRV is 1.88** (the previous 1.75 claim was never accurate).
+- **Rust API breaking changes:**
+  - `guardrail_config::OnnxStageConfig::on_error` and
+    `ToxicityStageConfig::on_error` are now `Option<OnErrorBehavior>`.
+  - `guardrail_proxy::audit::AuditRecord` has a new public field,
+    `failed_open_stages`, so building one with a struct literal needs it
+    added. `AuditRecord::from_decision` is unchanged.
+  - Everything else is additive: `FailMode`, `run_with_events`,
+    `PiiAction`, and the new `with_*` builder methods.
+- **Metrics:** `guardrail_request_duration_seconds` is labeled by decision
+  (`allow`/`redact`/`block`) instead of `total`.
+  `guardrail_pipeline_errors_total` is new.
+
 ### Performance
 
 - `PiiRedactor` is about 2× faster: −48% to −55% across 46 B–6 KB inputs,
@@ -994,4 +1029,6 @@ and multi-part `image_url` round-tripping) in `translate.rs`.
   files, only showing inline code snippets — added explicit file
   pointers to all three.
 
-[Unreleased]: https://github.com/Mattral/guardrail-rs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Mattral/guardrail-rs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Mattral/guardrail-rs/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/Mattral/guardrail-rs/releases/tag/v0.1.1

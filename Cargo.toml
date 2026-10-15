@@ -25,7 +25,7 @@ resolver = "2"
 # actually being released. Grep for `version = "X.Y.Z"` (the *current*
 # version string, i.e. whatever this line said before your edit) under
 # `crates/` and update every match alongside this line.
-version     = "0.1.1"
+version     = "0.2.0"
 # NOTE: the spec requests edition 2024. We deliberately stay on 2021 here
 # because this environment has no Rust toolchain available to verify the
 # 2024-edition migration (RPITIT capture rules, `if let` temporary scoping,
