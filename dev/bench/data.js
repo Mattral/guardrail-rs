@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792034260055,
+  "lastUpdate": 1792035069620,
   "repoUrl": "https://github.com/Mattral/guardrail-rs",
   "entries": {
     "Benchmark": [
@@ -3899,6 +3899,108 @@ window.BENCHMARK_DATA = {
             "name": "stage_evaluate_async/pii_redactor_async_with_pii",
             "value": 6551,
             "range": "± 16",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "88831350+Mattral@users.noreply.github.com",
+            "name": "Min Htet Myet",
+            "username": "Mattral"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4f7470dddaadb9c3485a14b79b33979de273965",
+          "message": "Merge pull request #37 from Mattral/release/v0.3.0\n\nrelease: bump to 0.3.0; fix GitHub Release artifact download",
+          "timestamp": "2026-10-15T12:28:24+09:00",
+          "tree_id": "9cf63c832b16989b2c32b05ab57f7303afaa2520",
+          "url": "https://github.com/Mattral/guardrail-rs/commit/e4f7470dddaadb9c3485a14b79b33979de273965"
+        },
+        "date": 1792035069086,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "regex_injection_scanner/64B",
+            "value": 358,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/1024B",
+            "value": 3709,
+            "range": "± 97",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/4096B",
+            "value": 14493,
+            "range": "± 44",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "regex_injection_scanner/8192B",
+            "value": 28838,
+            "range": "± 68",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/46B",
+            "value": 450,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/742B",
+            "value": 5298,
+            "range": "± 88",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/2998B",
+            "value": 21434,
+            "range": "± 91",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/4079B",
+            "value": 29120,
+            "range": "± 462",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_redactor/6034B",
+            "value": 42854,
+            "range": "± 87",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_stream/2058B_in_4B_deltas",
+            "value": 215259,
+            "range": "± 989",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "pii_stream/2058B_whole_text_baseline",
+            "value": 14928,
+            "range": "± 62",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/regex_injection_async_clean",
+            "value": 3716,
+            "range": "± 9",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "stage_evaluate_async/pii_redactor_async_with_pii",
+            "value": 6846,
+            "range": "± 26",
             "unit": "ns/iter"
           }
         ]
