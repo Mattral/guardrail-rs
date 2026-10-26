@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `proxy-authorization`, `proxy-authenticate`, `proxy-connection`,
   `transfer-encoding`, and any header named in `Connection`) are no longer
   forwarded in either direction.
+- **The Anthropic top-level `system` prompt was never scanned.** On
+  `/v1/messages`, only `messages` went through the pipeline; `system` (where
+  RAG context often goes) was forwarded unchecked, so injection text and PII
+  in it reached Anthropic. It is now scanned by every stage as a system
+  message, in both its string and text-block forms, and PII redactions are
+  written back into the same field. Policy rules using `has_system_prompt`
+  now see it too.
 - Updated the lockfile to pick up fixes for RUSTSEC-2026-0381 (`webpki-roots`),
   RUSTSEC-2026-0382 (`rustls-webpki`) and RUSTSEC-2026-0386 (`tokio`,
   unsound). Resolved with MSRV-aware resolution, so the lockfile still builds
@@ -42,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- PII redaction of a multi-part message now redacts each text part in place
+  instead of collapsing the message into one text string, so image parts and
+  part order survive redaction.
 - Responses now reach the client decoded (no `content-encoding`), since the
   proxy decodes them itself. Clients don't need to change anything.
 - Rust API: `forward::STRIPPED_REQUEST_HEADERS` and

@@ -127,7 +127,10 @@ everything-in-one-place dumping ground as the proxy grows:
   conversion between raw JSON bodies and `GuardrailRequest`. Fields not
   understood by the normalized model (e.g. `temperature`, `tools`) are
   preserved in `GuardrailRequest::extra` and merged back on serialization —
-  **lossless passthrough**.
+  **lossless passthrough**. An Anthropic top-level `system` (a string or an
+  array of text blocks) becomes a leading `system` message, so every stage
+  scans it, and redactions are written back into the same field and blocks
+  (other block fields such as `cache_control` are kept).
 - [`response`](../crates/guardrail-proxy/src/response.rs) — output-side PII
   redaction. `redact_response_body` walks OpenAI `choices[].message.content`
   and Anthropic `content[]` text blocks. Gated by `is_redactable_response`
