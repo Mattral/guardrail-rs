@@ -10,21 +10,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-# IMPORTANT — version bump checklist: this version is consumed via
-# `version.workspace = true` for each crate's own `[package]`, but Cargo
-# does NOT propagate it into the internal `{ path = "..", version = ".." }`
-# dependency requirements in each crate's `[dependencies]` table (a
-# path+version dependency requires a *literal* version string — Cargo has
-# no `version.workspace = true` shorthand for dependency requirements as of
-# this writing). Bumping this version WITHOUT also updating the matching
-# `version = "X.Y.Z"` string in every internal
-# `guardrail-* = { path = "...", version = "..." }` line (14 occurrences
-# across crates/*/Cargo.toml as of this comment) will cause `cargo publish`
-# to either fail or — worse — succeed while publishing a crate whose
-# manifest requires a version of its sibling that doesn't match what's
-# actually being released. Grep for `version = "X.Y.Z"` (the *current*
-# version string, i.e. whatever this line said before your edit) under
-# `crates/` and update every match alongside this line.
+# Also bump the guardrail-* entries in [workspace.dependencies] below.
 version     = "0.3.1"
 edition     = "2021"
 # Keep in sync with the "MSRV (1.88)" job in .github/workflows/ci.yml and
@@ -40,8 +26,15 @@ categories  = ["web-programming", "network-programming", "science"]
 keywords    = ["llm", "security", "proxy", "guardrail", "prompt-injection"]
 
 [workspace.dependencies]
-# Async runtime
-tokio          = { version = "1", features = ["full"] }
+# Internal crates. Members use `guardrail-x = { workspace = true }`; the
+# version is needed for publishing and must equal [workspace.package].version.
+guardrail-core        = { path = "crates/guardrail-core", version = "0.3.1" }
+guardrail-classifiers = { path = "crates/guardrail-classifiers", version = "0.3.1" }
+guardrail-config      = { path = "crates/guardrail-config", version = "0.3.1" }
+guardrail-proxy       = { path = "crates/guardrail-proxy", version = "0.3.1" }
+# Async runtime. No features here: each crate turns on what it uses, so
+# embedding a library crate doesn't pull in all of tokio.
+tokio          = { version = "1", default-features = false }
 # HTTP
 hyper          = { version = "1", features = ["http1", "http2", "server"] }
 hyper-util     = { version = "0.1", features = ["tokio", "server", "server-auto"] }
@@ -83,3 +76,13 @@ futures = "0.3"
 tokio-stream = "0.1"
 arc-swap = "1"
 clap = { version = "4", features = ["derive", "env"] }
+subtle = "2.6"
+chrono = { version = "0.4", features = ["alloc"] }
+# Test and benchmark only
+tempfile   = "3"
+wiremock   = "0.6"
+tokio-test = "0.4"
+criterion  = "0.5"
+rstest     = "0.23"
+proptest   = "1"
+flate2     = "1"

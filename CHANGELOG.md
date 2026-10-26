@@ -99,6 +99,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Internal crates are declared once in `[workspace.dependencies]`; member
+  crates use `guardrail-x = { workspace = true }`.
+- Library crates no longer turn on all of `tokio` (`features = ["full"]`):
+  each crate enables only what it uses, so embedding `guardrail-core`,
+  `guardrail-classifiers` or `guardrail-proxy` no longer forces the full
+  runtime on you.
+- Removed the unused `ndarray` 0.15 (which `ort` duplicated with 0.17) and
+  `thiserror` dependencies from `guardrail-classifiers`, and moved repeated
+  dependencies (`uuid`, `regex`, `tracing-appender`, test and benchmark
+  crates, `subtle`, `chrono`) to `[workspace.dependencies]`.
 - More of the request is scanned: tool-call arguments, tool results
   (including Anthropic `tool_result` blocks), refusals, every string in an
   Anthropic `tool_use.input`, and plain-text `document` sources. Anthropic

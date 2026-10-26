@@ -15,21 +15,20 @@ readme             = "../../README.md"
 [features]
 default = []
 # Enable ONNX-backed classifiers (requires ort + tokenizers)
-onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
+onnx = ["dep:ort", "dep:tokenizers"]
 # Enable ONNX-based NER PII detection
 onnx-pii = ["onnx"]
 # Enable CUDA GPU acceleration (implies onnx)
 onnx-cuda = ["onnx", "ort/cuda"]
 
 [dependencies]
-guardrail-core = { path = "../guardrail-core", version = "0.3.1" }
+guardrail-core = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
-thiserror      = { workspace = true }
 regex          = { workspace = true }
 async-trait    = { workspace = true }
 tracing        = { workspace = true }
-tokio          = { workspace = true }
+tokio          = { workspace = true, features = ["rt", "sync"] }
 
 # Optional ONNX deps (behind feature flag)
 ort         = { version = "2.0.0-rc.12", optional = true }
@@ -38,14 +37,13 @@ ort         = { version = "2.0.0-rc.12", optional = true }
 # RuntimeLibrary mismatch), and `progressbar` is only for training. We only
 # load tokenizer.json files, which needs neither.
 tokenizers  = { version = "0.22", optional = true, default-features = false, features = ["onig"] }
-ndarray     = { version = "0.15", optional = true }
 
 [dev-dependencies]
-tokio      = { workspace = true }
-rstest     = "0.23"
-proptest   = "1"
-tokio-test = "0.4"
-criterion  = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+rstest     = { workspace = true }
+proptest   = { workspace = true }
+tokio-test = { workspace = true }
+criterion  = { workspace = true, features = ["html_reports", "async_tokio"] }
 
 [[bench]]
 name = "classifier_benchmarks"

@@ -137,17 +137,11 @@ individually registered for [crates.io Trusted Publishing](https://crates.io/doc
 
 ### Version bumps
 
-`[workspace.package].version` in the root `Cargo.toml` is the single
-source of truth for each crate's own version, but — important — it does
-**not** propagate into the internal `guardrail-* = { path = "..",
-version = ".." }` dependency requirements inside each crate's own
-`Cargo.toml` (Cargo has no `version.workspace = true` shorthand for
-dependency requirements, only for a package's own version). After bumping
-`[workspace.package].version`, also update every
-`guardrail-* = { path = "..", version = "X.Y.Z" }` line under `crates/*/Cargo.toml`
-to match — a CI job (`version-pin-check` in `ci.yml`) fails the build if
-these drift out of sync, so this isn't easy to forget silently, but it is
-still a manual two-step process rather than one.
+Change the version in two places in the root `Cargo.toml`:
+`[workspace.package].version`, and the four `guardrail-*` entries in
+`[workspace.dependencies]` (the version there is what a published crate
+requires of its siblings). Member crates take both from the workspace. The
+`version-pin-check` CI job fails if the two disagree.
 
 ## Reporting security issues
 
