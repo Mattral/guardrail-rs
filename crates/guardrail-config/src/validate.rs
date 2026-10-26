@@ -120,6 +120,10 @@ pub fn validate_config(config: &Config) -> Vec<String> {
         }
     }
 
+    if config.onnx.intra_threads == 0 {
+        errors.push("onnx.intra_threads must be at least 1, got 0".into());
+    }
+
     // ── ONNX stages ───────────────────────────────────────────────────────
     for (stage_name, enabled, model_path, threshold, max_windows) in [
         (
@@ -401,6 +405,27 @@ request_stages = ["regex_injection", "banana_stage"]
                 .filter(|e| e.contains("passthrough_paths"))
                 .count(),
             2,
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_onnx_runtime_and_stage_timeout_settings() {
+        let config: Config = toml::from_str(minimal()).unwrap();
+        assert_eq!(config.onnx.sessions, 0);
+        assert_eq!(config.onnx.intra_threads, 1);
+        assert_eq!(config.pipeline.stage_timeout_ms, 0);
+
+        let toml = format!(
+            "{}\n[pipeline]\nstage_timeout_ms = 1500\n\n[onnx]\nsessions = 3\nintra_threads = 0\n",
+            minimal()
+        );
+        let config: Config = toml::from_str(&toml).unwrap();
+        assert_eq!(config.onnx.sessions, 3);
+        assert_eq!(config.pipeline.stage_timeout_ms, 1500);
+        let errors = validate_config(&config);
+        assert!(
+            errors.iter().any(|e| e.contains("onnx.intra_threads")),
             "{errors:?}"
         );
     }

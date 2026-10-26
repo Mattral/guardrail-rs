@@ -23,6 +23,8 @@ regex       = "1"
 # Optional: enables GuardrailError::Upstream(#[from] reqwest::Error).
 # See the module doc in src/error.rs for the rationale.
 reqwest     = { workspace = true, optional = true }
+# Stage timeouts (`PipelineBuilder::stage_timeout`).
+tokio       = { workspace = true }
 
 [features]
 default = []
@@ -32,6 +34,6 @@ default = []
 reqwest-errors = ["reqwest"]
 
 [dev-dependencies]
-tokio       = { workspace = true }
+tokio       = { workspace = true, features = ["test-util"] }
 serde_json  = { workspace = true }
 tokio-test  = "0.4"

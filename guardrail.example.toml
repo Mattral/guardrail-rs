@@ -55,6 +55,11 @@ response_stages = ["output_pii_redactor"]
 # own on_error use this value.
 on_error = "allow"
 
+# Longest any stage may take on one request, in ms (0 = no limit). A timeout
+# is handled like a stage error (on_error): with fail-open ONNX stages, slow
+# (long) requests would skip them, so set on_error = "block" there too.
+stage_timeout_ms = 0
+
 # ── Stage 1: regex-based prompt injection detection ───────────────────────────
 [stages.regex_injection]
 enabled = true
@@ -140,6 +145,14 @@ scan_roles = ["user"]
 # on_error = "block"
 max_windows = 16
 on_oversize = "block"
+
+# ── ONNX runtime ──────────────────────────────────────────────────────────────
+# Each enabled ONNX stage gets its own pool of sessions; each session scores
+# one request at a time and holds its own copy of the model (~0.85 GB for the
+# DeBERTa injection model). 0 = one per core / intra_threads, at most 4.
+[onnx]
+sessions = 0
+intra_threads = 1
 
 # ── Stage 5: user-defined policy rules ─────────────────────────────────────────
 # Evaluated last, in order. The first enabled rule whose `when` condition

@@ -70,6 +70,7 @@ keys = ["grk-your-generated-key-here"]
 | `request_stages` | array of strings | `["regex_injection", "onnx_injection", "pii_redactor", "toxicity", "policy"]` | Ordered list of stage IDs to run on the request side. Removing an ID disables that stage regardless of its own `enabled` flag. Order is significant. |
 | `response_stages` | array of strings | `["output_pii_redactor"]` | Response-side stages. `output_pii_redactor` is the only one, and it runs only when `stages.pii_redactor.redact_responses = true`. Removing it from this list turns response redaction off. |
 | `on_error` | `"allow"` \| `"block"` | `"allow"` | What to do when a stage errors instead of returning a decision (e.g. ONNX inference fails). `"allow"` skips that stage's check and continues (fail-open); `"block"` rejects the request with `403` and code `stage_error` (fail-closed). Applies to every request stage that doesn't set its own `on_error`. |
+| `stage_timeout_ms` | integer | `0` (no limit) | Longest any stage may take on one request. A stage that runs over is handled like a stage error, i.e. by its `on_error`. **On a fail-open ONNX stage this lets slow requests skip the check** (long inputs are slow), so set `on_error = "block"` on the ONNX stages when you set a timeout; the proxy logs a warning at load if you don't. Inference that already started keeps running in the background and holds its session until it finishes. |
 
 Valid request stage IDs: `regex_injection`, `onnx_injection`, `pii_redactor`,
 `toxicity`, `policy`. Valid response stage IDs: `output_pii_redactor`.
@@ -142,6 +143,22 @@ see [`docs/onnx-models.md`](onnx-models.md).
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `scan_roles` | array of strings | `["user"]` | Which message roles to score: any of `"system"`, `"user"`, `"assistant"`, `"tool"`. The text of matching messages is joined in order and scored together. An unknown role or an empty list is a validation error. (`onnx_injection` always scores user messages.) |
+
+## `[onnx]`
+
+How the ONNX stages run their models. Each enabled ONNX stage gets its own
+pool of sessions; a session scores one request at a time, so `sessions` is
+how many requests a stage scores in parallel. Requests beyond that wait
+their turn without holding a thread.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `sessions` | integer | `0` (auto) | Sessions per stage. `0` means one per available core divided by `intra_threads`, capped at 4. **Each session holds its own copy of the model:** about 0.85 GB of RAM for `deberta-v3-base-prompt-injection-v2` (fp32), so budget `sessions × model size` per enabled stage. Throughput grows about linearly with sessions up to the number of cores; see [benchmarks](benchmarks.md#onnx-throughput-under-concurrent-requests). |
+| `intra_threads` | integer ≥ 1 | `1` | Threads ONNX Runtime uses inside one inference. Raising it lowers latency per request; raising `sessions` raises throughput. |
+
+Read at startup and on reload (a reload loads new sessions). Graph
+optimizations are set to ONNX Runtime's highest level (`Level3`)
+explicitly.
 
 ## `[[policy.rules]]`
 

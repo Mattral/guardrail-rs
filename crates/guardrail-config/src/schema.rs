@@ -81,6 +81,9 @@ pub struct Config {
     /// Per-stage configuration.
     #[serde(default)]
     pub stages: StagesConfig,
+    /// How the ONNX stages run their models.
+    #[serde(default)]
+    pub onnx: OnnxRuntimeConfig,
     /// User-defined policy rules (evaluated last).
     #[serde(default)]
     pub policy: PolicyConfig,
@@ -287,6 +290,12 @@ pub struct PipelineConfig {
     /// - `"block"`: block the request with code `stage_error` (fail-closed).
     #[serde(default)]
     pub on_error: OnErrorBehavior,
+
+    /// Longest a stage may take on one request, in milliseconds. A stage
+    /// that runs over is handled like a stage error (`on_error`). `0` (the
+    /// default) means no limit.
+    #[serde(default)]
+    pub stage_timeout_ms: u64,
 }
 
 impl Default for PipelineConfig {
@@ -295,6 +304,7 @@ impl Default for PipelineConfig {
             request_stages: default_request_stages(),
             response_stages: default_response_stages(),
             on_error: OnErrorBehavior::Allow,
+            stage_timeout_ms: 0,
         }
     }
 }
@@ -311,6 +321,34 @@ fn default_request_stages() -> Vec<String> {
 
 fn default_response_stages() -> Vec<String> {
     vec!["output_pii_redactor".into()]
+}
+
+/// `[onnx]`: how the ONNX stages (`onnx_injection`, `toxicity`) run their
+/// models. Each enabled stage gets its own pool of `sessions`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct OnnxRuntimeConfig {
+    /// Sessions per stage: how many requests a stage scores in parallel.
+    /// Each session holds its own copy of the model in memory. `0` (the
+    /// default) means one per available core divided by `intra_threads`,
+    /// capped at 4.
+    #[serde(default)]
+    pub sessions: usize,
+    /// Threads ONNX Runtime uses inside one inference. Default: `1`.
+    #[serde(default = "default_intra_threads")]
+    pub intra_threads: usize,
+}
+
+impl Default for OnnxRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            sessions: 0,
+            intra_threads: default_intra_threads(),
+        }
+    }
+}
+
+fn default_intra_threads() -> usize {
+    1
 }
 
 /// Behavior when a pipeline stage returns an error.
