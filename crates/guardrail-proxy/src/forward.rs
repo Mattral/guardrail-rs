@@ -14,7 +14,9 @@ use std::time::Duration;
 ///
 /// * `client` — a shared [`reqwest::Client`] (connection-pooled).
 /// * `upstream_url` — base URL of the upstream, e.g. `https://api.openai.com`.
-/// * `path` — the request path, e.g. `/v1/chat/completions`.
+/// * `path` — the request path and query string, e.g.
+///   `/v1/chat/completions` or
+///   `/openai/deployments/prod/chat/completions?api-version=2024-10-21`.
 /// * `body` — the JSON body to send (see
 ///   [`crate::translate::ScannedBody::apply`]).
 /// * `headers` — headers from the original client request to forward
@@ -59,9 +61,39 @@ pub async fn forward_request(
     let mut builder = client.post(&url).json(body).timeout(timeout);
 
     for (key, value) in headers {
-        builder = builder.header(key, value);
+        // `.json` sets it; a second copy from the client would be appended.
+        if key != "content-type" {
+            builder = builder.header(key, value);
+        }
     }
 
+    builder.send().await.map_err(GuardrailError::from)
+}
+
+/// Forward a request on a passthrough route (`server.passthrough_paths`)
+/// with its method, body and headers as the client sent them.
+///
+/// # Errors
+///
+/// Returns [`GuardrailError::Upstream`] if the request fails to send or the
+/// connection is refused/times out.
+pub async fn forward_passthrough(
+    client: &Client,
+    method: reqwest::Method,
+    upstream_url: &str,
+    path: &str,
+    body: Bytes,
+    headers: Vec<(String, String)>,
+    timeout: Duration,
+) -> Result<Response, GuardrailError> {
+    let url = format!("{}{}", upstream_url.trim_end_matches('/'), path);
+    let mut builder = client.request(method, &url).timeout(timeout);
+    if !body.is_empty() {
+        builder = builder.body(body);
+    }
+    for (key, value) in headers {
+        builder = builder.header(key, value);
+    }
     builder.send().await.map_err(GuardrailError::from)
 }
 

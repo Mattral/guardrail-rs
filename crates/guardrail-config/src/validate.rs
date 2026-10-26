@@ -111,6 +111,15 @@ pub fn validate_config(config: &Config) -> Vec<String> {
         }
     }
 
+    for entry in &config.server.passthrough_paths {
+        if crate::schema::PassthroughRoute::parse(entry).is_none() {
+            errors.push(format!(
+                "server.passthrough_paths: '{entry}' must look like \"GET /v1/models\" \
+                 (method, space, path starting with '/', optional trailing '/*')"
+            ));
+        }
+    }
+
     // ── ONNX stages ───────────────────────────────────────────────────────
     for (stage_name, enabled, model_path, threshold, max_windows) in [
         (
@@ -374,6 +383,24 @@ request_stages = ["regex_injection", "banana_stage"]
         let errors = validate_config(&config);
         assert!(
             errors.iter().any(|e| e.contains("max_windows")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_passthrough_paths_are_validated() {
+        let toml = minimal().replace(
+            "[upstream]",
+            "passthrough_paths = [\"GET /v1/models\", \"/no-method\", \"GET relative\"]\n[upstream]",
+        );
+        let config: Config = toml::from_str(&toml).unwrap();
+        let errors = validate_config(&config);
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|e| e.contains("passthrough_paths"))
+                .count(),
+            2,
             "{errors:?}"
         );
     }

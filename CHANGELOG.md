@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrading from 0.3.x
 
+- **Routes are now an explicit list.** `POST /v1/chat/completions`,
+  `/v1/messages`, `/v1/responses` and Azure's
+  `/openai/deployments/{deployment}/chat/completions` are scanned;
+  `GET /v1/models` is forwarded without scanning; everything else gets
+  `404 not_found` (deny by default). To forward another route without
+  scanning (for example `POST /v1/embeddings`), add it to the new
+  `[server] passthrough_paths`.
+
 - Requests are now forwarded exactly as the client sent them, apart from
   redacted text. Nothing to change for clients; requests that used to fail
   (tool history, Anthropic images and documents) now work.
@@ -19,8 +27,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `forward::forward_request` takes the JSON body (`&serde_json::Value`)
   instead of a `GuardrailRequest`.
 
+### Added
+
+- `POST /v1/responses` (OpenAI Responses API) is scanned: `instructions`
+  and `input` (a string, or message, `function_call` and
+  `function_call_output` items), and its non-streamed output is covered by
+  response redaction. Streamed Responses events aren't redacted yet, so with
+  response redaction on, `stream: true` gets `400 streaming_not_allowed`.
+- Azure OpenAI chat completions
+  (`/openai/deployments/{deployment}/chat/completions`), whose bodies carry
+  no `model`.
+- `[server] passthrough_paths` (default `["GET /v1/models",
+  "GET /v1/models/*"]`): routes forwarded with their method and body as
+  sent, without scanning.
+- `guardrail_proxy::translate::{Api, parse_api_body}` and
+  `forward::forward_passthrough`.
+
 ### Fixed
 
+- The query string was dropped when forwarding, so Azure OpenAI's required
+  `?api-version=` never reached it. It is now forwarded unchanged.
+- `GET /v1/models`, `/v1/embeddings` and `/v1/responses` all got `400`
+  because every request was parsed as a chat completion and sent as a
+  `POST`.
+- A `content-type` header sent by the client was forwarded in addition to
+  the proxy's own, so the upstream saw it twice.
 - **Requests are no longer rebuilt before forwarding.** The proxy used to
   rebuild every message as `{"role", "content"}`, which dropped
   `tool_calls`, `tool_call_id` and `name` (OpenAI then rejected any
