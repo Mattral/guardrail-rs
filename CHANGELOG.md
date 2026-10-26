@@ -76,6 +76,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body that isn't JSON as an error instead of `None`, and
   `guardrail_proxy::forward::forwardable_headers`.
 
+### Fixed
+
+- The end-to-end test for streamed responses never ran the streaming path:
+  the mock upstream's body was sent as `text/plain`, and the test asserted
+  that streams are *not* redacted, the opposite of 0.3.0's behavior. It now
+  sends a real `text/event-stream` body with an email split across deltas
+  and checks that it arrives as `[EMAIL]`, and a second test covers
+  `streaming_responses = "reject"`.
+
 ### Changed
 
 - PII redaction of a multi-part message now redacts each text part in place

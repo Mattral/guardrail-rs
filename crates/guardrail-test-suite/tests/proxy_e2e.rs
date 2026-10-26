@@ -530,38 +530,86 @@ async fn response_pii_passes_through_when_disabled() {
     handle.shutdown();
 }
 
-#[tokio::test]
-async fn streaming_response_is_never_redacted() {
-    let upstream = MockServer::start().await;
+/// An OpenAI-style SSE stream that spells out an email across two deltas.
+const SSE_WITH_EMAIL: &str =
+    "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Write to help@exam\"}}]}\n\n\
+     data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ple.com today\"}}]}\n\n\
+     data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+     data: [DONE]\n\n";
 
-    // Even though the body contains an email, content-type is text/event-stream
-    // and the request was streaming, so redaction must not apply.
+/// Concatenated `delta.content` text of an OpenAI-style SSE body.
+fn sse_text(body: &str) -> String {
+    body.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter(|data| *data != "[DONE]")
+        .filter_map(|data| serde_json::from_str::<serde_json::Value>(data).ok())
+        .filter_map(|v| {
+            v["choices"][0]["delta"]["content"]
+                .as_str()
+                .map(String::from)
+        })
+        .collect()
+}
+
+async fn streaming_upstream() -> MockServer {
+    let upstream = MockServer::start().await;
+    // `set_body_raw` keeps the content type; `set_body_string` would
+    // replace it with text/plain, and the SSE path would never run.
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"help@example.com\"}}]}\n\ndata: [DONE]\n\n")
-                .insert_header("content-type", "text/event-stream"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(SSE_WITH_EMAIL, "text/event-stream"))
         .mount(&upstream)
         .await;
+    upstream
+}
 
+#[tokio::test]
+async fn streaming_response_is_redacted() {
+    let upstream = streaming_upstream().await;
+    let (handle, _f) = start_proxy(&redacting_config(&upstream)).await;
+    let addr = handle.local_addr();
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "gpt-4o",
+            "stream": true,
+            "messages": [{"role": "user", "content": "How can I contact support?"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert!(resp.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/event-stream"));
+    let body = resp.text().await.unwrap();
+    assert!(!body.contains("help@exam"), "PII leaked: {body}");
+    assert_eq!(sse_text(&body), "Write to [EMAIL] today");
+    assert!(body.ends_with("data: [DONE]\n\n"), "{body}");
+
+    let metrics = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(metrics.contains("guardrail_response_redacted_total 1"));
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn streaming_request_is_rejected_when_configured() {
+    let upstream = streaming_upstream().await;
     let config_toml = format!(
-        r#"
-        [server]
-        host = "127.0.0.1"
-        port = 0
-
-        [upstream]
-        url = "{}"
-
-        [stages.pii_redactor]
-        enabled = true
-        redact_responses = true
+        r#"{}
+        streaming_responses = "reject"
         "#,
-        upstream.uri()
+        redacting_config(&upstream)
     );
-
     let (handle, _f) = start_proxy(&config_toml).await;
     let addr = handle.local_addr();
 
@@ -577,10 +625,10 @@ async fn streaming_response_is_never_redacted() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 200);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("help@example.com"));
-    assert!(!body.contains("[EMAIL]"));
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "streaming_not_allowed");
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 0);
 
     handle.shutdown();
 }
