@@ -72,55 +72,44 @@ pub enum Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
-    /// All `GUARDRAIL_CONFIG` behavior is tested in a single function rather
-    /// than separate `#[test]` functions, because `std::env::set_var` /
-    /// `remove_var` mutate process-global state and `cargo test`/`nextest`
-    /// run tests in parallel by default — separate functions touching the
-    /// same env var would race against each other.
+    /// Every subcommand's `--config` falls back to `GUARDRAIL_CONFIG`. Checked
+    /// on the argument definitions, so the test never changes the process
+    /// environment (other tests run in parallel).
     #[test]
-    fn test_guardrail_config_env_var_behavior() {
-        // 1. No env var, no flag: falls back to the hardcoded default.
-        std::env::remove_var("GUARDRAIL_CONFIG");
-        let cli = Cli::parse_from(["guardrail", "run"]);
-        match cli.command {
-            Command::Run { config } => assert_eq!(config, PathBuf::from("guardrail.toml")),
-            _ => panic!("expected Run command"),
+    fn test_config_flag_falls_back_to_env_var() {
+        let command = Cli::command();
+        for name in ["run", "validate", "check"] {
+            let sub = command.find_subcommand(name).unwrap();
+            let arg = sub
+                .get_arguments()
+                .find(|a| a.get_id() == "config")
+                .unwrap_or_else(|| panic!("{name} has no --config"));
+            assert_eq!(
+                arg.get_env().and_then(|e| e.to_str()),
+                Some("GUARDRAIL_CONFIG"),
+                "{name}"
+            );
         }
+    }
 
-        // 2. Env var set, no flag: env var wins over the hardcoded default.
-        std::env::set_var("GUARDRAIL_CONFIG", "/from/env.toml");
-        let cli = Cli::parse_from(["guardrail", "run"]);
-        match cli.command {
-            Command::Run { config } => assert_eq!(config, PathBuf::from("/from/env.toml")),
-            _ => panic!("expected Run command"),
-        }
-
-        // 3. Env var set AND flag given: explicit flag wins over the env var.
+    #[test]
+    fn test_config_flag_wins_and_has_a_default() {
         let cli = Cli::parse_from(["guardrail", "run", "--config", "/from/flag.toml"]);
         match cli.command {
             Command::Run { config } => assert_eq!(config, PathBuf::from("/from/flag.toml")),
             _ => panic!("expected Run command"),
         }
-
-        // 4. Same env-var fallback applies to `validate`.
-        let cli = Cli::parse_from(["guardrail", "validate"]);
-        match cli.command {
-            Command::Validate { config } => assert_eq!(config, PathBuf::from("/from/env.toml")),
-            _ => panic!("expected Validate command"),
-        }
-
-        // 5. Same env-var fallback applies to `check`.
-        let cli = Cli::parse_from(["guardrail", "check", "hello world"]);
-        match cli.command {
-            Command::Check { text, config } => {
-                assert_eq!(text, "hello world");
-                assert_eq!(config, PathBuf::from("/from/env.toml"));
-            }
-            _ => panic!("expected Check command"),
-        }
-
-        // Clean up so other tests in this process don't observe a stale value.
-        std::env::remove_var("GUARDRAIL_CONFIG");
+        let check = Cli::command();
+        let default = check
+            .find_subcommand("check")
+            .unwrap()
+            .get_arguments()
+            .find(|a| a.get_id() == "config")
+            .unwrap()
+            .get_default_values()
+            .to_vec();
+        assert_eq!(default, ["guardrail.toml"]);
     }
 }

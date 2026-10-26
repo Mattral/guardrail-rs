@@ -99,7 +99,7 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigLoadError> {
         })?;
 
     // Apply environment-variable overrides (later layers win over TOML).
-    apply_env_overrides(&mut config);
+    apply_env_overrides(&mut config, |name| std::env::var(name).ok());
 
     let errors = crate::validate::validate_config(&config);
     if !errors.is_empty() {
@@ -115,23 +115,25 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigLoadError> {
 /// `GUARDRAIL_LOG_LEVEL`, `GUARDRAIL_OTLP_ENDPOINT`.
 ///
 /// Unknown or malformed values are silently ignored; validation runs
-/// afterwards and will catch issues.
-fn apply_env_overrides(config: &mut Config) {
-    if let Ok(upstream) = std::env::var("GUARDRAIL_UPSTREAM") {
+/// afterwards and will catch issues. `lookup` reads a variable (the process
+/// environment in production; a map in tests, so they never touch the
+/// real environment).
+fn apply_env_overrides(config: &mut Config, lookup: impl Fn(&str) -> Option<String>) {
+    if let Some(upstream) = lookup("GUARDRAIL_UPSTREAM") {
         if !upstream.trim().is_empty() {
             tracing::debug!(env = "GUARDRAIL_UPSTREAM", value = %upstream, "applying env override");
             config.upstream.url = upstream;
         }
     }
 
-    if let Ok(port_str) = std::env::var("GUARDRAIL_PORT") {
+    if let Some(port_str) = lookup("GUARDRAIL_PORT") {
         if let Ok(port) = port_str.trim().parse::<u16>() {
             tracing::debug!(env = "GUARDRAIL_PORT", port, "applying env override");
             config.server.port = port;
         }
     }
 
-    if let Ok(level) = std::env::var("GUARDRAIL_LOG_LEVEL") {
+    if let Some(level) = lookup("GUARDRAIL_LOG_LEVEL") {
         if !level.trim().is_empty() {
             tracing::debug!(
                 env = "GUARDRAIL_LOG_LEVEL",
@@ -142,7 +144,7 @@ fn apply_env_overrides(config: &mut Config) {
         }
     }
 
-    if let Ok(endpoint) = std::env::var("GUARDRAIL_OTLP_ENDPOINT") {
+    if let Some(endpoint) = lookup("GUARDRAIL_OTLP_ENDPOINT") {
         if !endpoint.trim().is_empty() {
             tracing::debug!(
                 env = "GUARDRAIL_OTLP_ENDPOINT",
@@ -608,36 +610,6 @@ mod tests {
     use crate::validate_config;
     use std::io::Write;
 
-    /// Guards every test that either mutates `GUARDRAIL_UPSTREAM` /
-    /// `GUARDRAIL_PORT` / `GUARDRAIL_LOG_LEVEL` / `GUARDRAIL_OTLP_ENDPOINT`
-    /// (via `std::env::set_var`) or calls [`load_config`] expecting a
-    /// specific field value / validation outcome that such an override
-    /// could silently change out from under it. `std::env::set_var` mutates
-    /// process-global state, and `cargo test`/`nextest` run test functions
-    /// in parallel by default — without this, `test_env_override_behavior`
-    /// setting e.g. `GUARDRAIL_PORT=9999` can interleave with
-    /// `test_load_minimal_config` asserting `port == 8080` on a different
-    /// thread and fail it nondeterministically (as it did in CI:
-    /// `test_load_minimal_config` saw port 9999, and
-    /// `test_load_invalid_semantics_errors` saw its intentionally-invalid
-    /// `ftp://` upstream URL silently "fixed" by a concurrently-applied
-    /// `GUARDRAIL_UPSTREAM` override, so the validation error it expected
-    /// never fired).
-    ///
-    /// `.unwrap_or_else(|poisoned| poisoned.into_inner())` recovers from
-    /// poisoning: if some other test panics while holding this lock, that
-    /// failure is already reported on its own, and there's no shared data
-    /// here to actually be left inconsistent, so there's no reason to
-    /// cascade the failure into every other test that happens to run
-    /// afterwards.
-    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn lock_env_tests() -> std::sync::MutexGuard<'static, ()> {
-        ENV_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     fn write_temp_config(contents: &str) -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(contents.as_bytes()).unwrap();
@@ -656,7 +628,6 @@ url = "https://api.openai.com"
 
     #[test]
     fn test_load_minimal_config() {
-        let _guard = lock_env_tests();
         let f = write_temp_config(MINIMAL);
         let config = load_config(f.path()).unwrap();
         assert_eq!(config.upstream.url, "https://api.openai.com");
@@ -678,7 +649,6 @@ url = "https://api.openai.com"
 
     #[test]
     fn test_load_invalid_semantics_errors() {
-        let _guard = lock_env_tests();
         // Bad upstream scheme triggers validation failure.
         let f = write_temp_config(
             r#"
@@ -1228,48 +1198,37 @@ on_error = "allow"
     }
 
     // ── Environment variable overlay ────────────────────────────────────────
-    // All five assertions live in a single test function rather than five
-    // separate `#[test]` functions, because `std::env::set_var`/`remove_var`
-    // mutate process-global state and cargo test/nextest run different test
-    // functions in parallel by default. Two functions touching the same env
-    // var name concurrently (GUARDRAIL_UPSTREAM is used by both the
-    // "set a value" and "empty string is ignored" cases; GUARDRAIL_PORT by
-    // both the "set a value" and "invalid value is ignored" cases) would
-    // otherwise race against each other and produce flaky failures.
+
+    /// Apply overrides from `vars` (never the real environment) to the
+    /// minimal config.
+    fn with_env(vars: &[(&str, &str)]) -> Config {
+        let mut config: Config = toml::from_str(MINIMAL).unwrap();
+        let vars: std::collections::HashMap<String, String> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        apply_env_overrides(&mut config, |name| vars.get(name).cloned());
+        config
+    }
 
     #[test]
-    fn test_env_override_behavior() {
-        let _guard = lock_env_tests();
-        let f = write_temp_config(MINIMAL);
+    fn test_env_overrides() {
+        let config = with_env(&[
+            ("GUARDRAIL_UPSTREAM", "https://api.anthropic.com"),
+            ("GUARDRAIL_PORT", "9999"),
+            ("GUARDRAIL_LOG_LEVEL", "debug"),
+            ("GUARDRAIL_OTLP_ENDPOINT", "http://collector:4317"),
+        ]);
+        assert_eq!(config.upstream.url, "https://api.anthropic.com");
+        assert_eq!(config.server.port, 9999);
+        assert_eq!(config.observability.log_level, "debug");
+        assert_eq!(config.observability.otlp_endpoint, "http://collector:4317");
+    }
 
-        // 1. GUARDRAIL_UPSTREAM overrides upstream.url.
-        std::env::set_var("GUARDRAIL_UPSTREAM", "https://api.anthropic.com");
-        let result = load_config(f.path());
-        std::env::remove_var("GUARDRAIL_UPSTREAM");
-        assert_eq!(result.unwrap().upstream.url, "https://api.anthropic.com");
-
-        // 2. GUARDRAIL_PORT overrides server.port.
-        std::env::set_var("GUARDRAIL_PORT", "9999");
-        let result = load_config(f.path());
-        std::env::remove_var("GUARDRAIL_PORT");
-        assert_eq!(result.unwrap().server.port, 9999);
-
-        // 3. GUARDRAIL_LOG_LEVEL overrides observability.log_level.
-        std::env::set_var("GUARDRAIL_LOG_LEVEL", "debug");
-        let result = load_config(f.path());
-        std::env::remove_var("GUARDRAIL_LOG_LEVEL");
-        assert_eq!(result.unwrap().observability.log_level, "debug");
-
-        // 4. An empty-string env var must NOT override the TOML value.
-        std::env::set_var("GUARDRAIL_UPSTREAM", "");
-        let result = load_config(f.path());
-        std::env::remove_var("GUARDRAIL_UPSTREAM");
-        assert_eq!(result.unwrap().upstream.url, "https://api.openai.com");
-
-        // 5. An unparseable port value must be silently ignored, not error.
-        std::env::set_var("GUARDRAIL_PORT", "notaport");
-        let result = load_config(f.path());
-        std::env::remove_var("GUARDRAIL_PORT");
-        assert_eq!(result.unwrap().server.port, 8080);
+    #[test]
+    fn test_env_overrides_ignore_empty_and_invalid_values() {
+        let config = with_env(&[("GUARDRAIL_UPSTREAM", " "), ("GUARDRAIL_PORT", "notaport")]);
+        assert_eq!(config.upstream.url, "https://api.openai.com");
+        assert_eq!(config.server.port, 8080);
     }
 }
