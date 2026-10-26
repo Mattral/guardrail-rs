@@ -1,50 +1,46 @@
 //! Upstream request forwarding.
 //!
 //! Once the pipeline allows (or redacts) a request, [`forward_request`] sends
-//! it to the configured upstream LLM API and streams the response back to the
-//! client unmodified (responses are never inspected by the pipeline — only
-//! requests are).
+//! the body upstream. Responses are streamed back by the handler.
 
 use bytes::Bytes;
-use guardrail_core::{request::GuardrailRequest, GuardrailError};
+use guardrail_core::GuardrailError;
 use reqwest::{Client, Response};
 use std::time::Duration;
 
-/// Forward a (possibly redacted) request to the upstream LLM API.
+/// Forward a (possibly redacted) request body to the upstream LLM API.
 ///
 /// # Arguments
 ///
 /// * `client` — a shared [`reqwest::Client`] (connection-pooled).
 /// * `upstream_url` — base URL of the upstream, e.g. `https://api.openai.com`.
 /// * `path` — the request path, e.g. `/v1/chat/completions`.
-/// * `req` — the (possibly redacted) normalized request.
+/// * `body` — the JSON body to send (see
+///   [`crate::translate::ScannedBody::apply`]).
 /// * `headers` — headers from the original client request to forward
-///   (e.g. `Authorization`), with `Host` and `Content-Length` stripped by
-///   the caller.
+///   (see [`forwardable_headers`]).
 /// * `timeout` — per-request timeout.
 ///
 /// # Errors
 ///
 /// Returns [`GuardrailError::Upstream`] if the request fails to send or the
-/// connection is refused/times out. Returns [`GuardrailError::Serialization`]
-/// if `req` cannot be serialized back to JSON.
+/// connection is refused/times out.
 ///
 /// # Examples
 ///
 /// ```rust,no_run
 /// use guardrail_proxy::forward::forward_request;
-/// use guardrail_core::test_helpers::clean_request;
 /// use reqwest::Client;
 /// use std::time::Duration;
 ///
 /// # tokio_test::block_on(async {
 /// let client = Client::new();
-/// let req = clean_request();
+/// let body = serde_json::json!({"model": "gpt-4o", "messages": []});
 /// let resp = forward_request(
 ///     &client,
 ///     "https://api.openai.com",
 ///     "/v1/chat/completions",
-///     &req,
+///     &body,
 ///     vec![("authorization".to_string(), "Bearer sk-...".to_string())],
 ///     Duration::from_secs(60),
 /// ).await;
@@ -54,14 +50,13 @@ pub async fn forward_request(
     client: &Client,
     upstream_url: &str,
     path: &str,
-    req: &GuardrailRequest,
+    body: &serde_json::Value,
     headers: Vec<(String, String)>,
     timeout: Duration,
 ) -> Result<Response, GuardrailError> {
-    let body = crate::translate::serialize_request(req)?;
     let url = format!("{}{}", upstream_url.trim_end_matches('/'), path);
 
-    let mut builder = client.post(&url).json(&body).timeout(timeout);
+    let mut builder = client.post(&url).json(body).timeout(timeout);
 
     for (key, value) in headers {
         builder = builder.header(key, value);
@@ -174,7 +169,6 @@ pub fn forwardable_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use guardrail_core::test_helpers::clean_request;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -192,7 +186,7 @@ mod tests {
             .await;
 
         let client = Client::new();
-        let req = clean_request();
+        let req = serde_json::json!({"model": "gpt-4o", "messages": []});
 
         let resp = forward_request(
             &client,
@@ -214,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn test_forward_request_connection_refused() {
         let client = Client::new();
-        let req = clean_request();
+        let req = serde_json::json!({"model": "gpt-4o", "messages": []});
 
         // Port 1 is reserved and should refuse connections immediately.
         let result = forward_request(

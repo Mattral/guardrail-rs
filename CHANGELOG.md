@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading from 0.3.x
+
+- Requests are now forwarded exactly as the client sent them, apart from
+  redacted text. Nothing to change for clients; requests that used to fail
+  (tool history, Anthropic images and documents) now work.
+- `onnx_injection` now also scores tool results, so a tool output that looks
+  like an injection is blocked.
+- Rust API: `translate::serialize_request` is gone; use
+  `translate::parse_body` and `ScannedBody::apply`.
+  `forward::forward_request` takes the JSON body (`&serde_json::Value`)
+  instead of a `GuardrailRequest`.
+
+### Fixed
+
+- **Requests are no longer rebuilt before forwarding.** The proxy used to
+  rebuild every message as `{"role", "content"}`, which dropped
+  `tool_calls`, `tool_call_id` and `name` (OpenAI then rejected any
+  conversation with tool history), replaced Anthropic `image` blocks with
+  empty text blocks, dropped `cache_control` (silently turning off prompt
+  caching), rejected Anthropic `tool_use` / `tool_result` / `document` /
+  `thinking` blocks and OpenAI `input_audio` / `file` / `refusal` parts with
+  a `400`, and added `"stream": false` to every request. The client's body is
+  now forwarded as sent, with only redacted text changed.
+- The OpenAI `developer` role is accepted (scanned as a system message), and
+  messages without `content` (assistant tool calls) are accepted.
+
+### Changed
+
+- More of the request is scanned: tool-call arguments, tool results
+  (including Anthropic `tool_result` blocks), refusals, every string in an
+  Anthropic `tool_use.input`, and plain-text `document` sources. Anthropic
+  `thinking` blocks are signed and are left alone.
+
 ## [0.3.1] - 2026-10-26
 
 ### Upgrading from 0.3.0

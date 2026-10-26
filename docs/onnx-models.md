@@ -134,7 +134,8 @@ How the logits become a score in `[0, 1]` (compared against `threshold`):
 Any other shape is an inference error, handled by the stage's `on_error`,
 as is any other inference failure.
 
-**Long input.** The user text is split into windows of at most 512 tokens
+**Long input.** The scanned text (user messages and tool results for
+`onnx_injection`, `scan_roles` for `toxicity`) is split into windows of at most 512 tokens
 (special tokens included) that overlap by 128 tokens. Each window is scored
 and the request gets the highest score. This overrides any `truncation`
 setting in `tokenizer.json`. Without it, RoBERTa (toxicity) fails outright
@@ -149,7 +150,7 @@ without this stage's check. Either way it is counted in
 `on_error`: an input that is too long is not an inference failure, and
 failing open on it would let anyone skip the stage by padding their prompt.
 
-Requests with no user-message text skip both stages (allowed without
+Requests with none of that text skip the stage (allowed without
 running inference).
 
 ## Tuning thresholds

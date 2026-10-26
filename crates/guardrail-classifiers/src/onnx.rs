@@ -333,7 +333,9 @@ impl Stage for OnnxInjectionClassifier {
     /// [`InputTooLong`] instead, which the pipeline resolves with the
     /// stage's `on_oversize`.
     async fn evaluate(&self, req: &GuardrailRequest) -> Result<Decision, GuardrailError> {
-        let text = req.user_text();
+        // User messages and tool results: tool output is the main route for
+        // indirect injection.
+        let text = req.text_for_roles(&[Role::User, Role::Tool]);
         if text.trim().is_empty() {
             return Ok(Decision::Allow);
         }

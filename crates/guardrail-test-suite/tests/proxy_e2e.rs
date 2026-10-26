@@ -994,3 +994,109 @@ async fn anthropic_system_injection_is_blocked() {
 
     handle.shutdown();
 }
+
+// ── Requests are forwarded as sent, apart from redacted text ──────────────────
+
+/// Send `body` to `route` through a default proxy and return what the
+/// upstream received.
+async fn forwarded_body(route: &str, body: serde_json::Value) -> serde_json::Value {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(route))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "x", "choices": []})))
+        .mount(&upstream)
+        .await;
+    let (handle, _f) = start_proxy(&plain_config(&upstream)).await;
+    let addr = handle.local_addr();
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}{route}"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+    let received = upstream.received_requests().await.unwrap();
+    assert_eq!(received.len(), 1);
+    handle.shutdown();
+    received[0].body_json().unwrap()
+}
+
+#[tokio::test]
+async fn openai_tool_history_round_trips_unchanged() {
+    let body = json!({
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "developer", "content": "Be brief."},
+            {"role": "user", "name": "alice", "content": "Weather in Paris?"},
+            {"role": "assistant", "content": null, "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}
+            }]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "18C, sunny"},
+            {"role": "user", "content": [
+                {"type": "text", "text": "And this?"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+                {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}}
+            ]}
+        ],
+        "tools": [{"type": "function", "function": {"name": "get_weather", "parameters": {}}}]
+    });
+    // No `stream` key in, none out.
+    assert_eq!(
+        forwarded_body("/v1/chat/completions", body.clone()).await,
+        body
+    );
+}
+
+#[tokio::test]
+async fn openai_redaction_touches_only_the_text() {
+    let mut body = json!({
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "user", "name": "alice", "content": "mail alice@example.com"},
+            {"role": "assistant", "content": null, "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "lookup", "arguments": "{\"email\":\"bob@example.com\"}"}
+            }]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "found carol@example.com"}
+        ]
+    });
+    let sent = forwarded_body("/v1/chat/completions", body.clone()).await;
+
+    body["messages"][0]["content"] = json!("mail [EMAIL]");
+    body["messages"][1]["tool_calls"][0]["function"]["arguments"] =
+        json!("{\"email\":\"[EMAIL]\"}");
+    body["messages"][2]["content"] = json!("found [EMAIL]");
+    assert_eq!(sent, body);
+}
+
+#[tokio::test]
+async fn anthropic_blocks_round_trip_with_only_text_redacted() {
+    let mut body = json!({
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 64,
+        "system": [{"type": "text", "text": "Be brief.", "cache_control": {"type": "ephemeral"}}],
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBOR"}},
+                {"type": "text", "text": "Who is dave@example.com?", "cache_control": {"type": "ephemeral"}}
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "Look it up.", "signature": "sig"},
+                {"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {"email": "dave@example.com"}}
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": [
+                    {"type": "text", "text": "dave@example.com is a customer"}
+                ]}
+            ]}
+        ]
+    });
+    let sent = forwarded_body("/v1/messages", body.clone()).await;
+
+    body["messages"][0]["content"][1]["text"] = json!("Who is [EMAIL]?");
+    body["messages"][1]["content"][1]["input"]["email"] = json!("[EMAIL]");
+    body["messages"][2]["content"][0]["content"][0]["text"] = json!("[EMAIL] is a customer");
+    assert_eq!(sent, body);
+}

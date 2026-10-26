@@ -161,11 +161,16 @@ deployments, pair this with a proper API gateway or WAF.
 
 ### Response-side injection / indirect prompt injection
 
-If the upstream LLM processes external content (retrieved documents, web
-results, tool outputs) that contains injection payloads, guardrail-rs does
-not inspect those payloads — only the **incoming request** messages are
-scanned. Mitigate with careful tool design, `redact_responses = true` for
-PII, and output validation at the application layer.
+Tool results and tool-call arguments in the request history are scanned,
+because they are the main route for indirect injection: every stage that
+scans all messages (regex injection, PII, policy) sees them, and
+`onnx_injection` scores user messages and tool results (OpenAI `tool`
+messages; Anthropic `tool_result` blocks, which sit in user messages).
+Content the upstream fetches itself (server-side tools, web search,
+retrieval) never passes through the proxy and is not inspected, and
+neither is the model's output, apart from PII redaction with
+`redact_responses = true`. Mitigate with careful tool design and output
+validation at the application layer.
 
 ### Multi-turn context injection
 
