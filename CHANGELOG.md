@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Updated the lockfile to pick up fixes for RUSTSEC-2026-0381 (`webpki-roots`),
+  RUSTSEC-2026-0382 (`rustls-webpki`) and RUSTSEC-2026-0386 (`tokio`,
+  unsound). Resolved with MSRV-aware resolution, so the lockfile still builds
+  on Rust 1.88.
+
 ## [0.3.0] - 2026-10-15
 
 ### Upgrading from 0.2.x
