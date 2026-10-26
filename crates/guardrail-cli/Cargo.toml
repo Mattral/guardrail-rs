@@ -21,10 +21,10 @@ default = []
 onnx = ["guardrail-proxy/onnx", "guardrail-config/onnx", "guardrail-classifiers/onnx"]
 
 [dependencies]
-guardrail-core        = { path = "../guardrail-core", version = "0.3.0" }
-guardrail-config      = { path = "../guardrail-config", version = "0.3.0" }
-guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.3.0" }
-guardrail-proxy       = { path = "../guardrail-proxy", version = "0.3.0" }
+guardrail-core        = { path = "../guardrail-core", version = "0.3.1" }
+guardrail-config      = { path = "../guardrail-config", version = "0.3.1" }
+guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.3.1" }
+guardrail-proxy       = { path = "../guardrail-proxy", version = "0.3.1" }
 
 clap   = { workspace = true }
 tokio  = { workspace = true }
