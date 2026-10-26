@@ -26,13 +26,6 @@ resolver = "2"
 # version string, i.e. whatever this line said before your edit) under
 # `crates/` and update every match alongside this line.
 version     = "0.3.0"
-# NOTE: the spec requests edition 2024. We deliberately stay on 2021 here
-# because this environment has no Rust toolchain available to verify the
-# 2024-edition migration (RPITIT capture rules, `if let` temporary scoping,
-# and the reserved `gen` keyword are all breaking changes that could
-# silently miscompile without a compiler to check against). Bumping to 2024
-# is a single-line change recommended as the *first* step once a toolchain
-# is available: run `cargo fix --edition` per crate, then `cargo test --workspace`.
 edition     = "2021"
 # Keep in sync with the "MSRV (1.88)" job in .github/workflows/ci.yml and
 # the MSRV badge in README.md — all three should always agree.
