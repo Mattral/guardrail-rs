@@ -166,8 +166,13 @@ everything-in-one-place dumping ground as the proxy grows:
   `target = "guardrail::audit"`. The caller must hold the returned
   `WorkerGuard` alive for the process lifetime.
 - [`telemetry`](../crates/guardrail-proxy/src/telemetry.rs) —
-  OpenTelemetry OTLP layer and per-request/stage span helpers, gated on
-  `observability.otlp_endpoint` being non-empty.
+  OpenTelemetry: `build_otel_layer` builds the OTLP tracer provider (when
+  `observability.otlp_endpoint` is set) and `otel_layer` exports spans
+  with target `guardrail::trace` through it. The handler opens
+  `guardrail.request` around each scanned request and
+  `guardrail.upstream.forward` around the upstream call; the pipeline in
+  `guardrail-core` opens `guardrail.stage.<stage>` around each stage, so
+  the stage spans nest under the request span.
 
 ### `guardrail-cli`
 

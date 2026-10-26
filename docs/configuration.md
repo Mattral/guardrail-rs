@@ -234,7 +234,7 @@ Always matches. Useful as a final catch-all rule.
 | `log_level` | `"trace"` \| `"debug"` \| `"info"` \| `"warn"` \| `"error"` | `"info"` | Log verbosity, passed to `tracing_subscriber::EnvFilter`. |
 | `log_format` | `"pretty"` \| `"json"` | `"pretty"` | Log output format. `"json"` is recommended for production log aggregation (Datadog, Splunk, Loki). |
 | `metrics_port` | integer | `9090` | Reserved for a future release that serves `/metrics` on a separate port. Currently `/metrics` is served on `server.listen_addr()` alongside the proxy endpoints regardless of this setting. |
-| `otlp_endpoint` | string | `""` | OpenTelemetry OTLP gRPC endpoint, e.g. `"http://localhost:4317"`. Empty disables OTLP export. Must start with `http://`, `https://`, or `grpc://` if set. |
+| `otlp_endpoint` | string | `""` | OpenTelemetry OTLP gRPC endpoint, e.g. `"http://localhost:4317"`. Empty disables OTLP export. Must start with `http://`, `https://`, or `grpc://` if set. Each scanned request exports a `guardrail.request` span (`request_id`, `model`, `provider`, `decision`, `http.status_code`, `entities_found`) with a child `guardrail.stage.<stage>` span per stage (`decision`, `entities_found`) and a `guardrail.upstream.forward` span (`upstream_url`, `http.status_code`). Resource `service.name` is `guardrail-rs`. Read at startup only. |
 | `audit_log` | table | *(see below)* | Structured NDJSON audit log settings. |
 
 ### `[observability.audit_log]`

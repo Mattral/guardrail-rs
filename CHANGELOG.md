@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrading from 0.3.x
 
+- OpenTelemetry crates are updated to `opentelemetry` 0.33 and
+  `tracing-opentelemetry` 0.34. Rust API: `telemetry::build_otel_layer`
+  returns `opentelemetry_sdk::trace::SdkTracerProvider` (re-exported as
+  `telemetry::SdkTracerProvider`); add `telemetry::otel_layer(&provider)`
+  to your subscriber to export spans.
+
 - **Routes are now an explicit list.** `POST /v1/chat/completions`,
   `/v1/messages`, `/v1/responses` and Azure's
   `/openai/deployments/{deployment}/chat/completions` are scanned;
@@ -40,11 +46,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `[server] passthrough_paths` (default `["GET /v1/models",
   "GET /v1/models/*"]`): routes forwarded with their method and body as
   sent, without scanning.
+- `guardrail_proxy::telemetry::{otel_layer, TRACE_TARGET}` and
+  `guardrail_core::pipeline::stage_span`. The pipeline now opens a
+  `guardrail.stage.<stage>` span around every stage.
 - `guardrail_proxy::translate::{Api, parse_api_body}` and
   `forward::forward_passthrough`.
 
 ### Fixed
 
+- **OpenTelemetry tracing exported nothing.** Setting `otlp_endpoint` built a
+  tracer provider, but no OpenTelemetry layer was ever added to the
+  subscriber and the request, stage and upstream spans were never opened.
+  Each scanned request now exports `guardrail.request` with child
+  `guardrail.stage.<stage>` and `guardrail.upstream.forward` spans and their
+  documented attributes, under `service.name = "guardrail-rs"`.
 - The query string was dropped when forwarding, so Azure OpenAI's required
   `?api-version=` never reached it. It is now forwarded unchanged.
 - `GET /v1/models`, `/v1/embeddings` and `/v1/responses` all got `400`

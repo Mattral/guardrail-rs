@@ -6,17 +6,18 @@
 //!
 //! ## Span hierarchy
 //!
-//! Each request produces one root span and one child span per pipeline stage:
+//! Each scanned request produces one root span, one child span per pipeline
+//! stage, and one for the upstream call:
 //!
 //! ```text
-//! guardrail.request
-//! ├── guardrail.stage.regex_injection    {decision, matched_rule}
-//! ├── guardrail.stage.onnx_injection     {decision, score}
-//! ├── guardrail.stage.pii_redactor       {decision, entities_found}
-//! ├── guardrail.stage.toxicity           {decision, score}
-//! ├── guardrail.stage.policy             {decision, rule_name}
-//! └── guardrail.upstream.forward         {http.status_code, upstream_url}
+//! guardrail.request              {request_id, model, provider, decision, http.status_code, entities_found}
+//! ├── guardrail.stage.<stage>    {stage, decision, entities_found}   (one per stage, in order)
+//! └── guardrail.upstream.forward {upstream_url, http.status_code}
 //! ```
+//!
+//! Stage spans are opened by [`guardrail_core::Pipeline`] itself, around
+//! each stage's `evaluate`. All three use the `tracing` target
+//! [`TRACE_TARGET`]; [`otel_layer`] exports only spans with that target.
 //!
 //! ## Enabling tracing
 //!
@@ -32,11 +33,46 @@
 //! emitted regardless of this setting.
 
 use guardrail_config::ObservabilityConfig;
+use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
+pub use opentelemetry_sdk::trace::SdkTracerProvider;
+use tracing_subscriber::{filter::filter_fn, registry::LookupSpan, Layer};
 
-/// Name used for all guardrail-rs spans in the trace backend.
+/// Name used for all guardrail-rs spans in the trace backend, and the
+/// `service.name` of the exported resource.
 pub const TRACER_NAME: &str = "guardrail-rs";
+
+/// `tracing` target of every span exported to OpenTelemetry.
+pub const TRACE_TARGET: &str = "guardrail::trace";
+
+/// A `tracing-subscriber` layer that exports guardrail-rs's spans (target
+/// [`TRACE_TARGET`]) through `provider`. Add it to the subscriber next to
+/// the log layers.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use guardrail_config::ObservabilityConfig;
+/// use guardrail_proxy::telemetry;
+/// use tracing_subscriber::prelude::*;
+///
+/// let obs = ObservabilityConfig::default();
+/// if let Some(provider) = telemetry::build_otel_layer(&obs).unwrap() {
+///     tracing_subscriber::registry()
+///         .with(telemetry::otel_layer(&provider))
+///         .init();
+/// }
+/// ```
+pub fn otel_layer<S>(provider: &SdkTracerProvider) -> impl Layer<S> + Send + Sync
+where
+    S: tracing::Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
+{
+    tracing_opentelemetry::layer()
+        .with_tracer(provider.tracer(TRACER_NAME))
+        .with_filter(filter_fn(|metadata| {
+            metadata.is_span() && metadata.target() == TRACE_TARGET
+        }))
+}
 
 /// Errors that can occur while setting up the OpenTelemetry tracer.
 #[derive(Debug, thiserror::Error)]
@@ -49,10 +85,11 @@ pub enum OtelError {
     ProviderInstall(String),
 }
 
-/// Build an `OpenTelemetryLayer` that exports traces to an OTLP gRPC endpoint.
+/// Build the tracer provider that exports traces to an OTLP gRPC endpoint,
+/// with `service.name = "guardrail-rs"`. Pass it to [`otel_layer`].
 ///
 /// Returns `Ok(None)` if `config.otlp_endpoint` is empty or absent — OTLP
-/// export is disabled and callers should skip adding this layer.
+/// export is disabled and callers should skip adding the layer.
 ///
 /// The returned [`SdkTracerProvider`] **must** be shut down gracefully on
 /// process exit by calling `provider.shutdown()`, or buffered spans may be
@@ -72,7 +109,10 @@ pub enum OtelError {
 ///
 /// let obs = ObservabilityConfig::default();
 /// if let Some(provider) = telemetry::build_otel_layer(&obs).unwrap() {
-///     // add your tracing subscriber layer here if desired
+///     tracing_subscriber::registry()
+///         .with(telemetry::otel_layer(&provider))
+///         .init();
+///     // ... run ...
 ///     telemetry::shutdown_tracer_provider(provider);
 /// }
 /// ```
@@ -90,8 +130,12 @@ pub fn build_otel_layer(
         .build()
         .map_err(|e| OtelError::ExporterBuild(e.to_string()))?;
 
+    let resource = opentelemetry_sdk::Resource::builder()
+        .with_service_name(TRACER_NAME)
+        .build();
     let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
         .build();
 
     Ok(Some(provider))
@@ -106,8 +150,7 @@ pub fn build_otel_layer(
 ///
 /// ```rust,no_run
 /// use guardrail_proxy::telemetry;
-/// # use opentelemetry_sdk::trace::TracerProvider;
-/// # let provider: TracerProvider = todo!();
+/// # let provider: telemetry::SdkTracerProvider = todo!();
 /// telemetry::shutdown_tracer_provider(provider);
 /// ```
 pub fn shutdown_tracer_provider(provider: SdkTracerProvider) {
@@ -116,34 +159,19 @@ pub fn shutdown_tracer_provider(provider: SdkTracerProvider) {
     }
 }
 
-/// Create a child span for a pipeline stage evaluation.
-///
-/// Call this inside `pipeline.run_with_observer` or a custom observer to
-/// create per-stage spans. The span is automatically ended when the
-/// returned `Span` guard is dropped.
+/// The span for one pipeline stage evaluation. The pipeline opens one
+/// around every stage itself; this is the same span, for custom pipelines.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use guardrail_proxy::telemetry;
-/// use tracing::Span;
 ///
 /// let stage_span = telemetry::stage_span("regex_injection");
 /// let _guard = stage_span.entered();
-/// // ... stage evaluation happens here ...
-/// // span ends when `_guard` is dropped.
 /// ```
 pub fn stage_span(stage_name: &str) -> tracing::Span {
-    tracing::info_span!(
-        target: "guardrail::trace",
-        "guardrail.stage",
-        otel.name = format!("guardrail.stage.{stage_name}"),
-        stage = stage_name,
-        decision = tracing::field::Empty,
-        score = tracing::field::Empty,
-        matched_rule = tracing::field::Empty,
-        entities_found = tracing::field::Empty,
-    )
+    guardrail_core::pipeline::stage_span(stage_name)
 }
 
 /// Create the root span for an entire request lifecycle.
@@ -169,6 +197,23 @@ pub fn request_span(request_id: &str, model: &str, provider: &str) -> tracing::S
         provider = provider,
         decision = tracing::field::Empty,
         http.status_code = tracing::field::Empty,
+        entities_found = tracing::field::Empty,
+    )
+}
+
+/// The request span as the proxy opens it, before the body is parsed:
+/// `request_id` and `model` are recorded once they are known.
+pub(crate) fn incoming_request_span(provider: &str) -> tracing::Span {
+    tracing::info_span!(
+        target: "guardrail::trace",
+        "guardrail.request",
+        otel.name = "guardrail.request",
+        request_id = tracing::field::Empty,
+        model = tracing::field::Empty,
+        provider = provider,
+        decision = tracing::field::Empty,
+        http.status_code = tracing::field::Empty,
+        entities_found = tracing::field::Empty,
     )
 }
 
@@ -188,8 +233,7 @@ pub fn upstream_span(upstream_url: &str) -> tracing::Span {
         "guardrail.upstream.forward",
         otel.name = "guardrail.upstream.forward",
         upstream_url = upstream_url,
-        "http.status_code" = tracing::field::Empty,
-        latency_ms = tracing::field::Empty,
+        http.status_code = tracing::field::Empty,
     )
 }
 
