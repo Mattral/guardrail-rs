@@ -389,8 +389,9 @@ impl Pipeline {
             let stage_name = stage.name();
             tracing::debug!(stage = stage_name, "evaluating stage");
 
+            let span = stage_span(stage_name);
             let stage_start = std::time::Instant::now();
-            let result = stage.evaluate(&req).await;
+            let result = tracing::Instrument::instrument(stage.evaluate(&req), span.clone()).await;
             let elapsed = stage_start.elapsed();
 
             let decision = match result {
@@ -444,6 +445,10 @@ impl Pipeline {
                 },
             };
 
+            span.record("decision", decision.name());
+            if let Decision::Redact { entities, .. } = &decision {
+                span.record("entities_found", entities.len());
+            }
             tracing::debug!(
                 stage = stage_name,
                 decision = decision.name(),
@@ -491,6 +496,21 @@ impl Pipeline {
             ))
         }
     }
+}
+
+/// The span the pipeline opens around each stage's `evaluate`: named
+/// `guardrail.stage.<stage>` for OpenTelemetry, with the stage's
+/// `decision` (and, for a redaction, `entities_found`) recorded once it is
+/// known. Target `guardrail::trace`.
+pub fn stage_span(stage: &str) -> tracing::Span {
+    tracing::info_span!(
+        target: "guardrail::trace",
+        "guardrail.stage",
+        otel.name = %format_args!("guardrail.stage.{stage}"),
+        stage = stage,
+        decision = tracing::field::Empty,
+        entities_found = tracing::field::Empty,
+    )
 }
 
 /// Turn a stage's [`InputTooLong`] into its decision, and report it.

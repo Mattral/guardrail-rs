@@ -132,7 +132,14 @@ pub(crate) async fn handle_request(
     let response = match route {
         Route::Health => reply(healthz()),
         Route::Metrics => reply(metrics_endpoint(&state)),
-        Route::Scanned(route) => proxy_request(state, req, route).await,
+        Route::Scanned(route) => {
+            let span = crate::telemetry::incoming_request_span(provider_label(&route.provider));
+            let response =
+                tracing::Instrument::instrument(proxy_request(state, req, route), span.clone())
+                    .await;
+            span.record("http.status_code", response.status().as_u16());
+            response
+        }
         Route::Passthrough => passthrough_request(state, req).await,
         Route::MethodNotAllowed => reply(error_response(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -308,6 +315,9 @@ async fn proxy_request(
     };
 
     let request_id = guardrail_req.id.to_string();
+    let request_span = tracing::Span::current();
+    request_span.record("request_id", request_id.as_str());
+    request_span.record("model", guardrail_req.model.as_str());
 
     // `streaming_responses = "reject"`: refuse streamed requests outright
     // while response redaction is on, before spending anything on them.
@@ -359,6 +369,10 @@ async fn proxy_request(
             return reply(internal_error_response());
         }
     };
+    request_span.record("decision", decision.name());
+    if let Decision::Redact { entities, .. } = &decision {
+        request_span.record("entities_found", entities.len());
+    }
     let pipeline_elapsed_ms = pipeline_start.elapsed().as_secs_f64() * 1000.0;
     state
         .metrics
@@ -404,15 +418,23 @@ async fn proxy_request(
             // body; everything else in it is forwarded untouched.
             let upstream_response = match scanned_body.apply(&final_req) {
                 Ok(body) => {
-                    let result = forward::forward_request(
-                        &state.http_client,
-                        &config.upstream.url,
-                        &target,
-                        &body,
-                        forward_headers,
-                        std::time::Duration::from_secs(config.upstream.timeout_secs),
+                    let span = crate::telemetry::upstream_span(&config.upstream.url);
+                    let result = tracing::Instrument::instrument(
+                        forward::forward_request(
+                            &state.http_client,
+                            &config.upstream.url,
+                            &target,
+                            &body,
+                            forward_headers,
+                            std::time::Duration::from_secs(config.upstream.timeout_secs),
+                        ),
+                        span.clone(),
                     )
                     .await;
+                    if let Ok(resp) = &result {
+                        span.record("http.status_code", resp.status().as_u16());
+                    }
+                    drop(span);
                     relay_upstream(&state, result, &final_req.provider, &request_id).await
                 }
                 Err(e) => {

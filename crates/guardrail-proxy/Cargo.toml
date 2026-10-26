@@ -52,3 +52,5 @@ tokio-stream = { workspace = true }
 wiremock     = "0.6"
 tempfile     = "3"
 tokio-test   = "0.4"
+# In-memory span exporter for the tracing tests.
+opentelemetry_sdk = { workspace = true, features = ["testing"] }

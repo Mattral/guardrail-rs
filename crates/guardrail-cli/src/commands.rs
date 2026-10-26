@@ -206,7 +206,7 @@ fn init_tracing(
     observability: &guardrail_config::ObservabilityConfig,
 ) -> anyhow::Result<(
     Option<tracing_appender::non_blocking::WorkerGuard>,
-    Option<opentelemetry_sdk::trace::TracerProvider>,
+    Option<guardrail_proxy::telemetry::SdkTracerProvider>,
 )> {
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
@@ -253,13 +253,15 @@ fn init_tracing(
         Err(e) => return Err(anyhow::anyhow!("OpenTelemetry init failed: {e}")),
     };
 
-    match audit_layer {
-        None => tracing_subscriber::registry().with(fmt_layer).init(),
-        Some(a) => tracing_subscriber::registry()
-            .with(fmt_layer)
-            .with(a)
-            .init(),
-    }
+    // `Option<Layer>` is itself a layer that does nothing when `None`.
+    let otel_layer = provider
+        .as_ref()
+        .map(guardrail_proxy::telemetry::otel_layer);
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(audit_layer)
+        .with(otel_layer)
+        .init();
 
     Ok((guard, provider))
 }
