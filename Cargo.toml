@@ -46,7 +46,10 @@ tokio          = { version = "1", features = ["full"] }
 hyper          = { version = "1", features = ["http1", "http2", "server"] }
 hyper-util     = { version = "0.1", features = ["tokio", "server", "server-auto"] }
 http-body-util = { version = "0.1" }
-reqwest        = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+# The compression features make reqwest decode upstream bodies itself, so
+# response redaction always sees plain text (it drops `content-encoding` and
+# `content-length` from a response it has decoded).
+reqwest        = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli", "deflate", "zstd"] }
 # Serialization
 serde          = { version = "1", features = ["derive"] }
 serde_json     = "1"

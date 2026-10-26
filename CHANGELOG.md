@@ -9,10 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Response PII redaction was bypassed for compressed responses.** The
+  proxy passed the client's `Accept-Encoding` upstream but couldn't decode
+  the result, so with `redact_responses = true` a gzip (or other compressed)
+  response was forwarded with its PII intact, with no log or metric. The
+  OpenAI Python and Node SDKs ask for gzip by default, so most non-streamed
+  responses were affected, as were compressed streams. The proxy now asks
+  the upstream for encodings it can decode (gzip, brotli, deflate, zstd),
+  decodes the body before redaction, and never forwards the client's
+  `Accept-Encoding`. Affects 0.3.0 and earlier.
+- With response redaction on, an upstream response in a `content-encoding`
+  the proxy can't decode is now refused with `502 response_unredactable`
+  instead of being passed through.
+- Hop-by-hop headers (`te`, `trailer`, `upgrade`, `keep-alive`,
+  `proxy-authorization`, `proxy-authenticate`, `proxy-connection`,
+  `transfer-encoding`, and any header named in `Connection`) are no longer
+  forwarded in either direction.
 - Updated the lockfile to pick up fixes for RUSTSEC-2026-0381 (`webpki-roots`),
   RUSTSEC-2026-0382 (`rustls-webpki`) and RUSTSEC-2026-0386 (`tokio`,
   unsound). Resolved with MSRV-aware resolution, so the lockfile still builds
   on Rust 1.88.
+
+### Added
+
+- `guardrail_response_redaction_skipped_total{reason}` counts responses that
+  response redaction was on for but couldn't inspect (`unknown_encoding`,
+  `unparseable_body`, `unknown_content_type`); each one is also logged at
+  `warn`.
+- `guardrail_proxy::response::try_redact_response_body`, which reports a
+  body that isn't JSON as an error instead of `None`, and
+  `guardrail_proxy::forward::forwardable_headers`.
+
+### Changed
+
+- Responses now reach the client decoded (no `content-encoding`), since the
+  proxy decodes them itself. Clients don't need to change anything.
+- Rust API: `forward::STRIPPED_REQUEST_HEADERS` and
+  `forward::STRIPPED_RESPONSE_HEADERS` no longer list hop-by-hop
+  headers; those are in the new `forward::HOP_BY_HOP_HEADERS`.
 
 ## [0.3.0] - 2026-10-15
 

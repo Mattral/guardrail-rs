@@ -72,6 +72,11 @@ provider, creating a data-governance and compliance risk.
 - Regex-only approach cannot detect names, addresses, or organization names
   (NER-based detection is planned via `onnx-pii` feature).
 - Response redaction is off by default.
+- Responses that response redaction can't inspect (body not valid JSON,
+  content type other than JSON or SSE) are forwarded unredacted. They are
+  counted in `guardrail_response_redaction_skipped_total{reason}`; alert on
+  it. Compressed bodies are decoded first, and an encoding the proxy can't
+  decode is refused with `502`.
 - In streamed responses, only text deltas are scanned, as in complete
   responses: tool-call arguments are not. A run of more than 8 KB without
   whitespace is released without waiting for a word boundary, so a PII value

@@ -661,3 +661,197 @@ async fn audit_log_config_does_not_break_proxy() {
 
     handle.shutdown();
 }
+
+// ── Compressed upstream responses ─────────────────────────────────────────────
+
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    let mut enc = GzEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all(bytes).unwrap();
+    enc.finish().unwrap()
+}
+
+/// Read a response body the way a client that advertised `gzip` would:
+/// decode it if the proxy says it's gzip, take it as-is otherwise.
+async fn client_decoded_body(resp: reqwest::Response) -> String {
+    use std::io::Read;
+    let gzipped = resp
+        .headers()
+        .get("content-encoding")
+        .is_some_and(|v| v == "gzip");
+    let raw = resp.bytes().await.unwrap();
+    if gzipped {
+        let mut out = String::new();
+        flate2::read::GzDecoder::new(&raw[..])
+            .read_to_string(&mut out)
+            .unwrap();
+        out
+    } else {
+        String::from_utf8(raw.to_vec()).unwrap()
+    }
+}
+
+fn redacting_config(upstream: &MockServer) -> String {
+    format!(
+        r#"
+        [server]
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
+
+        [stages.pii_redactor]
+        enabled = true
+        redact_responses = true
+        "#,
+        upstream.uri()
+    )
+}
+
+#[tokio::test]
+async fn gzip_json_response_is_redacted() {
+    let upstream = MockServer::start().await;
+    let body = serde_json::to_vec(&json!({
+        "id": "chatcmpl-gz",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": "reach me at help@example.com"},
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap();
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(gzip(&body), "application/json")
+                .insert_header("content-encoding", "gzip"),
+        )
+        .mount(&upstream)
+        .await;
+
+    let (handle, _f) = start_proxy(&redacting_config(&upstream)).await;
+    let addr = handle.local_addr();
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .header("accept-encoding", "gzip")
+        .json(&json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "How can I contact support?"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let text = client_decoded_body(resp).await;
+    assert!(!text.contains("help@example.com"), "PII leaked: {text}");
+    assert!(text.contains("[EMAIL]"), "got: {text}");
+
+    handle.shutdown();
+}
+
+#[tokio::test]
+async fn gzip_sse_response_is_redacted() {
+    let upstream = MockServer::start().await;
+    let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"mail help@example.com now\"}}]}\n\ndata: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(gzip(sse.as_bytes()), "text/event-stream")
+                .insert_header("content-encoding", "gzip"),
+        )
+        .mount(&upstream)
+        .await;
+
+    let (handle, _f) = start_proxy(&redacting_config(&upstream)).await;
+    let addr = handle.local_addr();
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .header("accept-encoding", "gzip")
+        .json(&json!({
+            "model": "gpt-4o",
+            "stream": true,
+            "messages": [{"role": "user", "content": "How can I contact support?"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let text = client_decoded_body(resp).await;
+    assert!(!text.contains("help@example.com"), "PII leaked: {text}");
+    assert!(text.contains("[EMAIL]"), "got: {text}");
+
+    handle.shutdown();
+}
+
+/// Status, headers and body of a request whose upstream answers with an
+/// encoding nobody can decode.
+async fn send_with_unknown_encoding(
+    config_toml: &str,
+    upstream: &MockServer,
+) -> (u16, reqwest::header::HeaderMap, bytes::Bytes) {
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(b"opaque bytes".to_vec(), "application/json")
+                .insert_header("content-encoding", "x-weird"),
+        )
+        .mount(upstream)
+        .await;
+
+    let (handle, _f) = start_proxy(config_toml).await;
+    let addr = handle.local_addr();
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    let headers = resp.headers().clone();
+    let body = resp.bytes().await.unwrap();
+    handle.shutdown();
+    (status, headers, body)
+}
+
+#[tokio::test]
+async fn unknown_encoding_is_refused_when_redaction_is_on() {
+    let upstream = MockServer::start().await;
+    let (status, _, body) =
+        send_with_unknown_encoding(&redacting_config(&upstream), &upstream).await;
+
+    assert_eq!(status, 502);
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], "response_unredactable");
+}
+
+#[tokio::test]
+async fn unknown_encoding_passes_through_when_redaction_is_off() {
+    let upstream = MockServer::start().await;
+    let config_toml = format!(
+        r#"
+        [server]
+        host = "127.0.0.1"
+        port = 0
+
+        [upstream]
+        url = "{}"
+        "#,
+        upstream.uri()
+    );
+    let (status, headers, body) = send_with_unknown_encoding(&config_toml, &upstream).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(headers["content-encoding"], "x-weird");
+    assert_eq!(body.as_ref(), b"opaque bytes");
+}
