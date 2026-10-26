@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/roadmap.md`: open work, grouped by what it needs to run (a large
+  machine, a GPU, or nothing special).
 - **ONNX session pool.** Each ONNX stage now runs a pool of sessions
   (`[onnx] sessions`, default one per core divided by
   `[onnx] intra_threads`, at most 4) instead of a single session behind a

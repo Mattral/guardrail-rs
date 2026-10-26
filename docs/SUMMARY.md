@@ -17,6 +17,7 @@
 - [Stage API](stage-api.md)
 - [Benchmarks](benchmarks.md)
 - [Threat Model](threat-model.md)
+- [Roadmap](roadmap.md)
 
 ---
 
