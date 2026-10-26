@@ -25,6 +25,11 @@ pub struct Metrics {
     /// Total number of responses with PII redacted on the **response** side
     /// (see [`crate::response`]).
     pub response_redacted_total: IntCounter,
+    /// Total number of responses that response redaction was on for but
+    /// could not inspect, labeled by reason: `"unknown_encoding"` (refused
+    /// with 502), `"unparseable_body"` or `"unknown_content_type"`
+    /// (forwarded unredacted).
+    pub response_redaction_skipped_total: IntCounterVec,
     /// End-to-end pipeline evaluation latency, in seconds.
     pub pipeline_duration_seconds: Histogram,
     /// Per-stage evaluation latency, in seconds, labeled by stage name.
@@ -92,6 +97,16 @@ impl Metrics {
         let response_redacted_total = IntCounter::new(
             "guardrail_response_redacted_total",
             "Total number of responses that had PII redacted on the response side.",
+        )
+        .expect("valid metric definition");
+
+        let response_redaction_skipped_total = IntCounterVec::new(
+            Opts::new(
+                "guardrail_response_redaction_skipped_total",
+                "Total number of responses that response redaction was on for but could not \
+                 inspect, labeled by reason.",
+            ),
+            &["reason"],
         )
         .expect("valid metric definition");
 
@@ -168,6 +183,9 @@ impl Metrics {
             .register(Box::new(response_redacted_total.clone()))
             .expect("register response_redacted_total");
         registry
+            .register(Box::new(response_redaction_skipped_total.clone()))
+            .expect("register response_redaction_skipped_total");
+        registry
             .register(Box::new(pipeline_duration_seconds.clone()))
             .expect("register pipeline_duration_seconds");
         registry
@@ -191,6 +209,7 @@ impl Metrics {
             blocked_total,
             redacted_total,
             response_redacted_total,
+            response_redaction_skipped_total,
             pipeline_duration_seconds,
             stage_duration_seconds,
             request_duration_seconds,
@@ -248,6 +267,10 @@ mod tests {
         metrics.blocked_total.with_label_values(&["testcode"]).inc();
         metrics.redacted_total.inc();
         metrics.response_redacted_total.inc();
+        metrics
+            .response_redaction_skipped_total
+            .with_label_values(&["unknown_encoding"])
+            .inc();
         metrics.pipeline_duration_seconds.observe(0.001);
         metrics
             .stage_duration_seconds
@@ -267,6 +290,9 @@ mod tests {
         assert!(output.contains("guardrail_blocked_total"));
         assert!(output.contains("guardrail_redacted_total"));
         assert!(output.contains("guardrail_response_redacted_total"));
+        assert!(output.contains(
+            r#"guardrail_response_redaction_skipped_total{reason="unknown_encoding"} 1"#
+        ));
         assert!(output.contains("guardrail_pipeline_duration_seconds"));
         assert!(output.contains("guardrail_stage_duration_seconds"));
         assert!(output.contains("guardrail_request_duration_seconds"));

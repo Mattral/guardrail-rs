@@ -18,7 +18,11 @@ guardrail-proxy       = { path = "../guardrail-proxy", version = "0.3.0" }
 tokio      = { workspace = true }
 reqwest    = { workspace = true }
 serde_json = { workspace = true }
+bytes      = { workspace = true }
 wiremock   = "0.6"
+# Gzip test fixtures. Do not enable reqwest's `gzip` feature here instead:
+# feature unification would turn it on for the proxy too and hide bugs in it.
+flate2     = "1"
 tempfile   = "3"
 criterion  = { version = "0.5", features = ["html_reports"] }
 

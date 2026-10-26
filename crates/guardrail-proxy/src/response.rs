@@ -95,7 +95,35 @@ pub fn redact_response_body(
     body: &[u8],
     redactor: &PiiRedactor,
 ) -> Option<(Vec<u8>, ResponseRedactionSummary)> {
-    let mut value: Value = serde_json::from_slice(body).ok()?;
+    try_redact_response_body(body, redactor).ok().flatten()
+}
+
+/// Like [`redact_response_body`], but tells a body that isn't JSON apart
+/// from one that needed no changes.
+///
+/// Returns `Ok(None)` if the body is JSON but contains no PII in a known
+/// text field, and `Ok(Some(..))` with the redacted body otherwise.
+///
+/// # Errors
+///
+/// Returns the parse error if `body` is not valid JSON. The proxy uses this
+/// to count responses it could not inspect.
+///
+/// # Examples
+///
+/// ```rust
+/// use guardrail_classifiers::PiiRedactor;
+/// use guardrail_proxy::response::try_redact_response_body;
+///
+/// let redactor = PiiRedactor::default();
+/// assert!(try_redact_response_body(b"\x1f\x8b not json", &redactor).is_err());
+/// assert!(try_redact_response_body(br#"{"choices":[]}"#, &redactor).unwrap().is_none());
+/// ```
+pub fn try_redact_response_body(
+    body: &[u8],
+    redactor: &PiiRedactor,
+) -> Result<Option<(Vec<u8>, ResponseRedactionSummary)>, serde_json::Error> {
+    let mut value: Value = serde_json::from_slice(body)?;
     let mut summary = ResponseRedactionSummary::default();
     let mut entity_set = std::collections::HashSet::new();
 
@@ -142,14 +170,14 @@ pub fn redact_response_body(
     }
 
     if !changed || summary.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     summary.entity_types = entity_set.into_iter().collect();
     summary.entity_types.sort();
 
-    let new_body = serde_json::to_vec(&value).ok()?;
-    Some((new_body, summary))
+    let new_body = serde_json::to_vec(&value)?;
+    Ok(Some((new_body, summary)))
 }
 
 #[cfg(test)]

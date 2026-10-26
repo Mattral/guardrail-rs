@@ -97,7 +97,9 @@ validate_luhn = true
 
 # Whether to also scan LLM *responses* for PII before returning them to the
 # caller. Complete responses are redacted as a whole; streamed responses
-# (stream: true) are redacted incrementally and still stream.
+# (stream: true) are redacted incrementally and still stream. Compressed
+# upstream bodies are decoded first; a response in an encoding the proxy
+# can't decode is refused with 502 response_unredactable.
 redact_responses = false
 
 # With redact_responses = true: "redact" (default) streams and redacts as

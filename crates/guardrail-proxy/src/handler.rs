@@ -97,18 +97,8 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
         ));
     }
 
-    // Collect headers to forward (everything except hop-by-hop / sensitive
-    // sizing headers, which are recomputed).
-    let mut forward_headers: Vec<(String, String)> = Vec::new();
-    for (name, value) in req.headers().iter() {
-        let name_lower = name.as_str().to_ascii_lowercase();
-        if forward::STRIPPED_REQUEST_HEADERS.contains(&name_lower.as_str()) {
-            continue;
-        }
-        if let Ok(v) = value.to_str() {
-            forward_headers.push((name_lower, v.to_string()));
-        }
-    }
+    let forward_headers =
+        forward::forwardable_headers(req.headers(), forward::STRIPPED_REQUEST_HEADERS);
 
     // Read body with a size limit.
     let max_body = config.server.max_body_size_bytes;
@@ -308,28 +298,65 @@ async fn forward_to_upstream(
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
 
+            let redactor = state.config.response_redactor();
+
+            // The HTTP client decodes every encoding it asks for and drops
+            // `content-encoding` when it does. One that's still there is an
+            // encoding the proxy can't read, so with redaction on the body
+            // can't be checked: refuse it rather than pass PII through.
+            let content_encoding = upstream_resp
+                .headers()
+                .get("content-encoding")
+                .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
+            if redactor.is_some() {
+                if let Some(encoding) = content_encoding
+                    .as_deref()
+                    .filter(|e| !e.trim().eq_ignore_ascii_case("identity"))
+                {
+                    record_redaction_skipped(state, "unknown_encoding");
+                    tracing::warn!(
+                        request_id = %request_id,
+                        content_encoding = %encoding,
+                        "refusing upstream response: its encoding can't be decoded for redaction"
+                    );
+                    return reply(error_response(
+                        StatusCode::BAD_GATEWAY,
+                        "upstream response uses a content-encoding the proxy cannot decode, \
+                         so it cannot be checked for PII",
+                        "response_unredactable",
+                    ));
+                }
+            }
+
             let mut builder = Response::builder().status(status);
 
-            for (name, value) in upstream_resp.headers().iter() {
-                let name_lower = name.as_str().to_ascii_lowercase();
-                if forward::STRIPPED_RESPONSE_HEADERS.contains(&name_lower.as_str()) {
-                    continue;
-                }
+            for (name, value) in forward::forwardable_headers(
+                upstream_resp.headers(),
+                forward::STRIPPED_RESPONSE_HEADERS,
+            ) {
                 if let (Ok(header_name), Ok(header_value)) = (
-                    HeaderName::from_bytes(name.as_str().as_bytes()),
-                    HeaderValue::from_bytes(value.as_bytes()),
+                    HeaderName::from_bytes(name.as_bytes()),
+                    HeaderValue::from_str(&value),
                 ) {
                     builder = builder.header(header_name, header_value);
                 }
             }
 
-            let redactor = state.config.response_redactor();
             let is_sse = content_type
                 .as_deref()
                 .is_some_and(|ct| ct.starts_with("text/event-stream"));
             let is_json = content_type
                 .as_deref()
                 .is_some_and(|ct| ct.starts_with("application/json"));
+
+            if redactor.is_some() && !is_sse && !is_json && status.is_success() {
+                record_redaction_skipped(state, "unknown_content_type");
+                tracing::warn!(
+                    request_id = %request_id,
+                    content_type = content_type.as_deref().unwrap_or("<none>"),
+                    "forwarding upstream response unredacted: unknown content-type"
+                );
+            }
 
             let body = if redactor.is_some() && is_sse {
                 // Streamed response with redaction on: rewrite text deltas
@@ -493,8 +520,8 @@ fn maybe_redact_response(
         return body.clone();
     }
 
-    match crate::response::redact_response_body(body, redactor) {
-        Some((new_body, summary)) => {
+    match crate::response::try_redact_response_body(body, redactor) {
+        Ok(Some((new_body, summary))) => {
             state.metrics.response_redacted_total.inc();
             tracing::info!(
                 target: "guardrail::audit",
@@ -506,8 +533,27 @@ fn maybe_redact_response(
             );
             Bytes::from(new_body)
         }
-        None => body.clone(),
+        Ok(None) => body.clone(),
+        Err(e) => {
+            record_redaction_skipped(state, "unparseable_body");
+            tracing::warn!(
+                request_id = %request_id,
+                error = %e,
+                "forwarding upstream response unredacted: body is not valid JSON"
+            );
+            body.clone()
+        }
     }
+}
+
+/// Count a response that response redaction was on for but couldn't
+/// inspect. Callers log the details.
+fn record_redaction_skipped(state: &AppState, reason: &'static str) {
+    state
+        .metrics
+        .response_redaction_skipped_total
+        .with_label_values(&[reason])
+        .inc();
 }
 
 /// Record one stage evaluation: its latency, and, if it errored, a
@@ -724,6 +770,41 @@ mod tests {
         assert!(text.contains("[EMAIL]"));
         assert!(!text.contains("user@example.com"));
         assert_eq!(state.metrics.response_redacted_total.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_maybe_redact_response_counts_unparseable_body() {
+        let toml_str = r#"
+            [server]
+            host = "127.0.0.1"
+            port = 0
+
+            [upstream]
+            url = "https://api.openai.com"
+
+            [stages.pii_redactor]
+            enabled = true
+            redact_responses = true
+        "#;
+        let f = write_temp_config(toml_str);
+        let config = Arc::new(ConfigHandle::load(f.path()).unwrap());
+        let state = Arc::new(AppState {
+            config,
+            http_client: reqwest::Client::new(),
+            metrics: Metrics::new(),
+        });
+
+        let body = Bytes::from_static(b"{\"choices\": [truncated");
+        let out = maybe_redact_response(&state, "req-4", &body, Some("application/json"), false);
+
+        assert_eq!(out, body);
+        let skipped = &state.metrics.response_redaction_skipped_total;
+        assert_eq!(skipped.with_label_values(&["unparseable_body"]).get(), 1);
+
+        // A clean JSON body is not a skip.
+        let clean = Bytes::from_static(br#"{"choices":[]}"#);
+        maybe_redact_response(&state, "req-5", &clean, Some("application/json"), false);
+        assert_eq!(skipped.with_label_values(&["unparseable_body"]).get(), 1);
     }
 
     #[tokio::test]

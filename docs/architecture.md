@@ -228,6 +228,30 @@ audit event as a non-streamed response (with `streamed = true`) once the
 stream ends. `guardrail_request_duration_seconds` measures time to the
 response headers for streamed responses, not the length of the stream.
 
+### Compressed responses
+
+The proxy never forwards the client's `Accept-Encoding`. Its own HTTP
+client asks the upstream for gzip, brotli, deflate or zstd and decodes the
+body before anything reads it, so response redaction always sees plain
+text. The client gets the decoded body. If response redaction is on and an
+upstream response still carries a `content-encoding` (other than
+`identity`), the proxy can't read it and answers `502
+response_unredactable` instead of passing it through.
+
+Responses that redaction is on for but can't inspect are counted in
+`guardrail_response_redaction_skipped_total{reason}` and logged at `warn`:
+
+| `reason` | Response |
+|----------|----------|
+| `unknown_encoding` | Refused with `502 response_unredactable`. |
+| `unparseable_body` | `application/json` body that isn't valid JSON. Forwarded unredacted. |
+| `unknown_content_type` | Successful response that is neither JSON nor `text/event-stream`. Forwarded unredacted. |
+
+Hop-by-hop headers (`connection`, `keep-alive`, `te`, `trailer`,
+`transfer-encoding`, `upgrade`, `proxy-authorization`,
+`proxy-authenticate`, `proxy-connection`, and any header named in
+`Connection`) are dropped in both directions.
+
 ## Error handling: fail-open vs fail-closed
 
 Each `Stage::evaluate()` returns `Result<Decision, GuardrailError>`. When a
