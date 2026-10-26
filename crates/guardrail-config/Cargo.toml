@@ -17,8 +17,8 @@ default = []
 onnx = ["guardrail-classifiers/onnx"]
 
 [dependencies]
-guardrail-core        = { path = "../guardrail-core", version = "0.3.1" }
-guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.3.1" }
+guardrail-core        = { workspace = true }
+guardrail-classifiers = { workspace = true }
 serde       = { workspace = true }
 toml        = { workspace = true }
 thiserror   = { workspace = true }
@@ -26,5 +26,5 @@ tracing     = { workspace = true }
 arc-swap    = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
-tokio    = { workspace = true }
+tempfile = { workspace = true }
+tokio    = { workspace = true, features = ["macros", "rt"] }

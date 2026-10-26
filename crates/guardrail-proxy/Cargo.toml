@@ -17,11 +17,11 @@ default = []
 onnx = ["guardrail-config/onnx", "guardrail-classifiers/onnx"]
 
 [dependencies]
-guardrail-core        = { path = "../guardrail-core", version = "0.3.1", features = ["reqwest-errors"] }
-guardrail-config      = { path = "../guardrail-config", version = "0.3.1" }
-guardrail-classifiers = { path = "../guardrail-classifiers", version = "0.3.1" }
+guardrail-core        = { workspace = true, features = ["reqwest-errors"] }
+guardrail-config      = { workspace = true }
+guardrail-classifiers = { workspace = true }
 
-tokio          = { workspace = true }
+tokio          = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 hyper          = { workspace = true }
 hyper-util     = { workspace = true }
 http-body-util = { workspace = true }
@@ -36,7 +36,7 @@ anyhow     = { workspace = true }
 
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
-tracing-appender    = "0.2"
+tracing-appender    = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 opentelemetry        = { workspace = true }
 opentelemetry_sdk    = { workspace = true }
@@ -44,13 +44,14 @@ opentelemetry-otlp   = { workspace = true }
 prometheus          = { workspace = true }
 uuid                = { workspace = true }
 # Constant-time comparison of caller API keys (auth.rs).
-subtle              = "2.6"
-chrono              = { version = "0.4", features = ["alloc"] }
+subtle              = { workspace = true }
+chrono              = { workspace = true }
 
 [dev-dependencies]
+tokio        = { workspace = true, features = ["rt-multi-thread"] }
 tokio-stream = { workspace = true }
-wiremock     = "0.6"
-tempfile     = "3"
-tokio-test   = "0.4"
+wiremock     = { workspace = true }
+tempfile     = { workspace = true }
+tokio-test   = { workspace = true }
 # In-memory span exporter for the tracing tests.
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
