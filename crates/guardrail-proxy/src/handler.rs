@@ -122,7 +122,7 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
     };
 
     // Parse into normalized request.
-    let guardrail_req = match translate::parse_request(&body_bytes, provider.clone()) {
+    let (guardrail_req, scanned_body) = match translate::parse_body(&body_bytes, provider.clone()) {
         Ok(r) => r,
         Err(e) => {
             tracing::debug!(error = %e, "failed to parse request body");
@@ -213,15 +213,26 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
         Decision::Allow | Decision::Redact { .. } => {
             let is_redact = matches!(&decision, Decision::Redact { .. });
 
-            let upstream_response = forward_to_upstream(
-                &state,
-                &config,
-                &path,
-                &final_req,
-                &request_id,
-                forward_headers,
-            )
-            .await;
+            // Write the (possibly redacted) text back into the client's
+            // body; everything else in it is forwarded untouched.
+            let upstream_response = match scanned_body.apply(&final_req) {
+                Ok(body) => {
+                    forward_to_upstream(
+                        &state,
+                        &config,
+                        &path,
+                        &body,
+                        &final_req,
+                        &request_id,
+                        forward_headers,
+                    )
+                    .await
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "could not write pipeline output back to the request");
+                    reply(internal_error_response())
+                }
+            };
 
             let total_elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -268,10 +279,12 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
     response
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn forward_to_upstream(
     state: &Arc<AppState>,
     config: &guardrail_config::Config,
     path: &str,
+    body: &serde_json::Value,
     req: &GuardrailRequest,
     request_id: &str,
     headers: Vec<(String, String)>,
@@ -282,7 +295,7 @@ async fn forward_to_upstream(
         &state.http_client,
         &config.upstream.url,
         path,
-        req,
+        body,
         headers,
         timeout,
     )

@@ -123,14 +123,22 @@ everything-in-one-place dumping ground as the proxy grows:
   config handle, HTTP client, metrics registry) and the public
   [`ServerHandle`]. Pure data, no behavior — kept separate so it's obvious
   at a glance what every connection handler has access to.
-- [`translate`](../crates/guardrail-proxy/src/translate.rs) — bidirectional
-  conversion between raw JSON bodies and `GuardrailRequest`. Fields not
-  understood by the normalized model (e.g. `temperature`, `tools`) are
-  preserved in `GuardrailRequest::extra` and merged back on serialization —
-  **lossless passthrough**. An Anthropic top-level `system` (a string or an
-  array of text blocks) becomes a leading `system` message, so every stage
-  scans it, and redactions are written back into the same field and blocks
-  (other block fields such as `cache_control` are kept).
+- [`translate`](../crates/guardrail-proxy/src/translate.rs) — the client's
+  JSON body is the source of truth and is never rebuilt. `parse_body` walks
+  it and extracts every scannable string together with its JSON pointer:
+  message `content` strings, `text` parts and blocks, the Anthropic
+  top-level `system`, `tool_result` content, tool-call arguments (OpenAI
+  `tool_calls[].function.arguments`, every string in an Anthropic
+  `tool_use.input`), refusals and plain-text documents. Stages see those
+  strings as a `GuardrailRequest`, whose public shape is unchanged: one
+  `ChatMessage` per message (the Anthropic `system` is a leading `system`
+  message), one text part per string. After the pipeline,
+  `ScannedBody::apply` writes the final text back at the same pointers.
+  Everything else (tool calls, `tool_call_id`, `name`, images, audio,
+  `cache_control`, `thinking` blocks, unknown fields and part types) is
+  forwarded byte-for-byte as the client sent it, by construction. If a
+  stage changed the number of messages or text parts, the request is
+  refused with `500` rather than forwarded.
 - [`response`](../crates/guardrail-proxy/src/response.rs) — output-side PII
   redaction. `redact_response_body` walks OpenAI `choices[].message.content`
   and Anthropic `content[]` text blocks. Gated by `is_redactable_response`
