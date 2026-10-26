@@ -15,6 +15,7 @@
 //! |----------|---------|
 //! | OpenAI-compatible | message `content` strings, `text` and `refusal` parts, assistant `refusal`, `tool_calls[].function.arguments`, legacy `function_call.arguments` |
 //! | Anthropic | top-level `system` (string or text blocks), message `content` strings, `text` blocks, `tool_use` input (every string value), `tool_result` content (string or text blocks), plain-text `document` sources |
+//! | OpenAI Responses | `instructions`, `input` (a string, or items: message `content` strings and `input_text` / `output_text` / `refusal` parts, `function_call` arguments, `function_call_output` output) |
 //!
 //! Images, audio and files are not scanned (there is no text to scan), and
 //! Anthropic `thinking` blocks are left alone: they are signed, and
@@ -143,48 +144,65 @@ pub fn parse_request(body: &[u8], provider: Provider) -> Result<GuardrailRequest
     parse_body(body, provider).map(|(req, _)| req)
 }
 
-/// Parse a raw JSON request body into the [`GuardrailRequest`] the stages
-/// see, plus a [`ScannedBody`] to write their changes back with.
-///
-/// `GuardrailRequest::extra` holds the body without `model`, `messages` and
-/// `stream`, for stages that want other fields. An Anthropic top-level
-/// `system` becomes a leading system message.
+/// The shape of a scanned request body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Api {
+    /// OpenAI-compatible `/v1/chat/completions` (also Azure OpenAI).
+    ChatCompletions,
+    /// Anthropic `/v1/messages`.
+    Messages,
+    /// OpenAI `/v1/responses`.
+    Responses,
+}
+
+/// Like [`parse_body`], for any [`Api`]. `default_model` is used when the
+/// body has no `model` (Azure OpenAI puts the deployment in the path
+/// instead); with `None`, a missing `model` is an error for chat
+/// completions and messages. A Responses body may omit both `model` and
+/// `input`.
 ///
 /// # Errors
 ///
-/// Returns [`GuardrailError::Serialization`] if `body` is not valid JSON, or
-/// [`GuardrailError::Internal`] if `model` or `messages` is missing or
-/// malformed, or a message has an unknown role.
-pub fn parse_body(
+/// As for [`parse_body`].
+///
+/// # Examples
+///
+/// ```rust
+/// use guardrail_core::request::{Provider, Role};
+/// use guardrail_proxy::translate::{parse_api_body, Api};
+///
+/// let body = br#"{"model": "gpt-4.1", "instructions": "Be brief.", "input": "Hi"}"#;
+/// let (req, _) = parse_api_body(body, Api::Responses, Provider::OpenAI, None).unwrap();
+/// assert_eq!(req.messages[0].role, Role::System);
+/// assert_eq!(req.messages[1].role, Role::User);
+/// ```
+pub fn parse_api_body(
     body: &[u8],
+    api: Api,
     provider: Provider,
+    default_model: Option<&str>,
 ) -> Result<(GuardrailRequest, ScannedBody), GuardrailError> {
     let value: Value = serde_json::from_slice(body)?;
 
-    let model = value
-        .get("model")
-        .and_then(Value::as_str)
-        .ok_or_else(|| GuardrailError::Internal("missing or invalid 'model' field".into()))?
-        .to_string();
+    let model = match (value.get("model").and_then(Value::as_str), default_model) {
+        (Some(model), _) => model.to_string(),
+        (None, Some(default)) => default.to_string(),
+        (None, None) if api == Api::Responses => String::new(),
+        (None, None) => {
+            return Err(GuardrailError::Internal(
+                "missing or invalid 'model' field".into(),
+            ))
+        }
+    };
     let stream = value
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let messages = value
-        .get("messages")
-        .ok_or_else(|| GuardrailError::Internal("missing 'messages' field".into()))?
-        .as_array()
-        .ok_or_else(|| GuardrailError::Internal("'messages' must be an array".into()))?;
 
-    let mut extracted = Vec::with_capacity(messages.len() + 1);
-    if provider == Provider::Anthropic {
-        if let Some(system) = extract_anthropic_system(value.get("system"))? {
-            extracted.push(system);
-        }
-    }
-    for (i, message) in messages.iter().enumerate() {
-        extracted.push(extract_message(message, i, &provider)?);
-    }
+    let extracted = match api {
+        Api::ChatCompletions | Api::Messages => extract_chat(&value, api)?,
+        Api::Responses => extract_responses(&value)?,
+    };
 
     let mut extra = value.clone();
     if let Value::Object(map) = &mut extra {
@@ -210,6 +228,155 @@ pub fn parse_body(
             pointers,
         },
     ))
+}
+
+/// Parse a raw JSON request body into the [`GuardrailRequest`] the stages
+/// see, plus a [`ScannedBody`] to write their changes back with.
+///
+/// `GuardrailRequest::extra` holds the body without `model`, `messages` and
+/// `stream`, for stages that want other fields. An Anthropic top-level
+/// `system` becomes a leading system message.
+///
+/// # Errors
+///
+/// Returns [`GuardrailError::Serialization`] if `body` is not valid JSON, or
+/// [`GuardrailError::Internal`] if `model` or `messages` is missing or
+/// malformed, or a message has an unknown role.
+pub fn parse_body(
+    body: &[u8],
+    provider: Provider,
+) -> Result<(GuardrailRequest, ScannedBody), GuardrailError> {
+    let api = if provider == Provider::Anthropic {
+        Api::Messages
+    } else {
+        Api::ChatCompletions
+    };
+    parse_api_body(body, api, provider, None)
+}
+
+/// Chat completions and Anthropic messages: `messages`, plus the Anthropic
+/// top-level `system`.
+fn extract_chat(value: &Value, api: Api) -> Result<Vec<Extracted>, GuardrailError> {
+    let messages = value
+        .get("messages")
+        .ok_or_else(|| GuardrailError::Internal("missing 'messages' field".into()))?
+        .as_array()
+        .ok_or_else(|| GuardrailError::Internal("'messages' must be an array".into()))?;
+
+    let mut extracted = Vec::with_capacity(messages.len() + 1);
+    if api == Api::Messages {
+        if let Some(system) = extract_anthropic_system(value.get("system"))? {
+            extracted.push(system);
+        }
+    }
+    for (i, message) in messages.iter().enumerate() {
+        extracted.push(extract_message(message, i, api)?);
+    }
+    Ok(extracted)
+}
+
+/// OpenAI Responses: `instructions` and `input`.
+fn extract_responses(value: &Value) -> Result<Vec<Extracted>, GuardrailError> {
+    let mut extracted = Vec::new();
+    if let Some(instructions) = value.get("instructions").and_then(Value::as_str) {
+        let mut system = Extracted::new(Role::System);
+        system.plain_text("/instructions".into(), instructions);
+        extracted.push(system);
+    }
+    match value.get("input") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(s)) => {
+            let mut user = Extracted::new(Role::User);
+            user.plain_text("/input".into(), s);
+            extracted.push(user);
+        }
+        Some(Value::Array(items)) => {
+            for (i, item) in items.iter().enumerate() {
+                if let Some(message) = extract_responses_item(item, i)? {
+                    extracted.push(message);
+                }
+            }
+        }
+        Some(other) => {
+            return Err(GuardrailError::Internal(format!(
+                "'input' has unsupported JSON type: {other}"
+            )))
+        }
+    }
+    Ok(extracted)
+}
+
+/// One Responses `input` item. Items with no text (reasoning, item
+/// references, built-in tool calls) are skipped.
+fn extract_responses_item(item: &Value, i: usize) -> Result<Option<Extracted>, GuardrailError> {
+    let base = format!("/input/{i}");
+    let kind = item.get("type").and_then(Value::as_str);
+    match kind {
+        None | Some("message") => {
+            let role = item
+                .get("role")
+                .and_then(Value::as_str)
+                .ok_or_else(|| GuardrailError::Internal(format!("input[{i}] missing 'role'")))?;
+            let mut out = Extracted::new(role_from_str(role, &format!("input[{i}]"))?);
+            match item.get("content") {
+                Some(Value::String(s)) => out.plain_text(format!("{base}/content"), s),
+                Some(Value::Array(parts)) => {
+                    for (j, part) in parts.iter().enumerate() {
+                        let at = format!("{base}/content/{j}");
+                        match part.get("type").and_then(Value::as_str) {
+                            Some("input_text" | "output_text" | "text") => {
+                                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                                    out.text(format!("{at}/text"), text);
+                                }
+                            }
+                            Some("refusal") => {
+                                if let Some(text) = part.get("refusal").and_then(Value::as_str) {
+                                    out.text(format!("{at}/refusal"), text);
+                                }
+                            }
+                            Some("input_image") => {
+                                if let Some(url) = part.get("image_url").and_then(Value::as_str) {
+                                    out.segments.push(Segment::Image(ImageUrl {
+                                        url: url.to_string(),
+                                        detail: part
+                                            .get("detail")
+                                            .and_then(Value::as_str)
+                                            .map(String::from),
+                                    }));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Ok(Some(out))
+        }
+        Some("function_call") => {
+            let mut out = Extracted::new(Role::Assistant);
+            if let Some(args) = item.get("arguments").and_then(Value::as_str) {
+                out.text(format!("{base}/arguments"), args);
+            }
+            Ok(Some(out))
+        }
+        Some("function_call_output") => {
+            let mut out = Extracted::new(Role::Tool);
+            match item.get("output") {
+                Some(Value::String(s)) => out.text(format!("{base}/output"), s),
+                Some(Value::Array(parts)) => {
+                    for (j, part) in parts.iter().enumerate() {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            out.text(format!("{base}/output/{j}/text"), text);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Ok(Some(out))
+        }
+        Some(_) => Ok(None),
+    }
 }
 
 /// One message's scannable text, with where each piece came from.
@@ -305,25 +472,25 @@ fn parse_role(message: &Value, i: usize) -> Result<Role, GuardrailError> {
         .get("role")
         .and_then(Value::as_str)
         .ok_or_else(|| GuardrailError::Internal(format!("messages[{i}] missing 'role' field")))?;
+    role_from_str(role, &format!("messages[{i}]"))
+}
+
+fn role_from_str(role: &str, location: &str) -> Result<Role, GuardrailError> {
     match role {
         "system" | "developer" => Ok(Role::System),
         "user" => Ok(Role::User),
         "assistant" => Ok(Role::Assistant),
         "tool" | "function" => Ok(Role::Tool),
         other => Err(GuardrailError::Internal(format!(
-            "messages[{i}] has unknown role '{other}'"
+            "{location} has unknown role '{other}'"
         ))),
     }
 }
 
-fn extract_message(
-    message: &Value,
-    i: usize,
-    provider: &Provider,
-) -> Result<Extracted, GuardrailError> {
+fn extract_message(message: &Value, i: usize, api: Api) -> Result<Extracted, GuardrailError> {
     let mut out = Extracted::new(parse_role(message, i)?);
     let base = format!("/messages/{i}");
-    let anthropic = *provider == Provider::Anthropic;
+    let anthropic = api == Api::Messages;
 
     match message.get("content") {
         None | Some(Value::Null) => {}
@@ -754,6 +921,68 @@ mod tests {
         assert_eq!(body["error"]["code"], "prompt_injection");
         assert_eq!(body["error"]["guardrail_request_id"], "req-abc");
         assert_eq!(body["error"]["type"], "guardrail_block");
+    }
+
+    #[test]
+    fn test_responses_body() {
+        let body = br#"{
+            "model": "gpt-4.1",
+            "instructions": "Be brief.",
+            "input": [
+                {"role": "developer", "content": "dev a@example.com"},
+                {"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": "hi b@example.com"},
+                    {"type": "input_image", "image_url": "https://example.com/i.png"}
+                ]},
+                {"type": "reasoning", "id": "rs_1", "summary": []},
+                {"type": "function_call", "call_id": "c", "name": "f", "arguments": "{\"to\":\"c@example.com\"}"},
+                {"type": "function_call_output", "call_id": "c", "output": "d@example.com"}
+            ],
+            "store": false
+        }"#;
+        let (req, scanned) = parse_api_body(body, Api::Responses, Provider::OpenAI, None).unwrap();
+        let roles: Vec<Role> = req.messages.iter().map(|m| m.role.clone()).collect();
+        assert_eq!(
+            roles,
+            [
+                Role::System,
+                Role::System,
+                Role::User,
+                Role::Assistant,
+                Role::Tool
+            ]
+        );
+        let out = redact_and_apply(req, scanned);
+        assert_eq!(out["instructions"], "Be brief.");
+        assert_eq!(out["input"][0]["content"], "dev [EMAIL]");
+        assert_eq!(out["input"][1]["content"][0]["text"], "hi [EMAIL]");
+        assert_eq!(
+            out["input"][1]["content"][1]["image_url"],
+            "https://example.com/i.png"
+        );
+        assert_eq!(out["input"][2]["type"], "reasoning");
+        assert_eq!(out["input"][3]["arguments"], "{\"to\":\"[EMAIL]\"}");
+        assert_eq!(out["input"][4]["output"], "[EMAIL]");
+        assert_eq!(out["store"], false);
+    }
+
+    #[test]
+    fn test_model_defaults() {
+        let azure = br#"{"messages": [{"role": "user", "content": "hi"}]}"#;
+        assert!(parse_body(azure, Provider::Azure).is_err());
+        let (req, scanned) =
+            parse_api_body(azure, Api::ChatCompletions, Provider::Azure, Some("prod")).unwrap();
+        assert_eq!(req.model, "prod");
+        assert!(scanned.apply(&req).unwrap().get("model").is_none());
+
+        let (req, _) = parse_api_body(
+            br#"{"previous_response_id": "r"}"#,
+            Api::Responses,
+            Provider::OpenAI,
+            None,
+        )
+        .unwrap();
+        assert!(req.messages.is_empty());
     }
 
     #[test]

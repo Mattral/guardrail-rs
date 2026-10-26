@@ -101,9 +101,10 @@ everything-in-one-place dumping ground as the proxy grows:
 - [`server`](../crates/guardrail-proxy/src/server.rs) — the listener
   lifecycle only: bind, accept loop, graceful shutdown via
   [`ServerHandle`]. Hands every accepted connection to `handler::handle_request`.
-- [`handler`](../crates/guardrail-proxy/src/handler.rs) — per-connection
-  routing (`/healthz`, `/metrics`, everything else) and the core proxy
-  flow (`proxy_request`): authenticate → strip/forward headers → read body
+- [`handler`](../crates/guardrail-proxy/src/handler.rs) — the route table
+  (scanned routes, `server.passthrough_paths`, `404` for everything else;
+  see [Routes](configuration.md#routes)) and the core proxy flow
+  (`proxy_request`): authenticate → strip/forward headers → read body
   with a size limit → parse → run the pipeline → forward upstream or
   return a block response. `pub(crate)` — this is an internal
   implementation detail, not part of the crate's public API.

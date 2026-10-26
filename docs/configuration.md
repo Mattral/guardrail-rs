@@ -14,8 +14,25 @@ reference, matching `crates/guardrail-config/src/schema.rs` exactly.
 | `workers` | integer | `0` | Number of Tokio worker threads for `guardrail run`. `0` = one per logical CPU. Read once at startup; a SIGHUP reload doesn't change it. |
 | `max_body_size_bytes` | integer | `10485760` (10 MiB) | Maximum accepted client request body size. Larger bodies receive `413 Payload Too Large`. Enforced while reading: the proxy stops reading at the limit, and rejects a `Content-Length` over it without reading at all. |
 
+| `passthrough_paths` | array of strings | `["GET /v1/models", "GET /v1/models/*"]` | Routes forwarded upstream **without scanning**, as `"METHOD /path"`; a path ending in `/*` also matches everything under it. Their responses still go through response redaction. Only list routes whose request bodies don't need checking. |
+
 `server.host` and `server.port` are combined into a socket address via
 `ServerConfig::listen_addr()` (`"<host>:<port>"`).
+
+### Routes
+
+| Route | Handling |
+|-------|----------|
+| `POST /v1/chat/completions` | Scanned (OpenAI chat completions). |
+| `POST /v1/messages` | Scanned (Anthropic messages, including the top-level `system`). |
+| `POST /v1/responses` | Scanned (OpenAI Responses API: `instructions` and `input`). With response redaction on, `stream: true` is refused with `400 streaming_not_allowed`, because streamed Responses events aren't redacted yet. |
+| `POST /openai/deployments/{deployment}/chat/completions` | Scanned (Azure OpenAI). The body needs no `model`; the deployment name stands in for it. |
+| `GET /healthz`, `GET /metrics` | Served by the proxy. |
+| `server.passthrough_paths` | Forwarded without scanning. |
+| anything else | `404 not_found`. A scanned path with another method gets `405 method_not_allowed`. |
+
+The query string is forwarded unchanged on every route (Azure needs
+`?api-version=`).
 
 ## `[upstream]`
 

@@ -20,7 +20,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use guardrail_core::{
     decision::Decision,
     pipeline::{StageEvent, StageOutcome},
-    request::{GuardrailRequest, Provider},
+    request::Provider,
 };
 
 use crate::auth::is_authorized;
@@ -41,17 +41,109 @@ fn reply(resp: Response<Full<Bytes>>) -> Response<ProxyBody> {
     resp.map(|body| body.map_err(|never| match never {}).boxed_unsync())
 }
 
-/// Top-level request handler: routes to `/metrics`, `/healthz`, or the proxy logic.
+/// Where a request goes.
+#[derive(Debug, Clone, PartialEq)]
+enum Route {
+    Health,
+    Metrics,
+    /// Parsed, run through the pipeline, then forwarded.
+    Scanned(ScannedRoute),
+    /// Listed in `server.passthrough_paths`: forwarded without scanning.
+    Passthrough,
+    /// A scanned path with a method other than `POST`.
+    MethodNotAllowed,
+    NotFound,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ScannedRoute {
+    api: translate::Api,
+    provider: Provider,
+    /// Model name to use when the body has none (the Azure deployment).
+    default_model: Option<String>,
+}
+
+/// The scanned route for `path`, whatever the method.
+fn scanned_route(path: &str) -> Option<ScannedRoute> {
+    let (api, provider, default_model) = match path {
+        "/v1/chat/completions" => (translate::Api::ChatCompletions, Provider::OpenAI, None),
+        "/v1/messages" => (translate::Api::Messages, Provider::Anthropic, None),
+        "/v1/responses" => (translate::Api::Responses, Provider::OpenAI, None),
+        _ => {
+            // Azure OpenAI: /openai/deployments/{deployment}/chat/completions
+            let deployment = path
+                .strip_prefix("/openai/deployments/")?
+                .strip_suffix("/chat/completions")?;
+            if deployment.is_empty() || deployment.contains('/') {
+                return None;
+            }
+            (
+                translate::Api::ChatCompletions,
+                Provider::Azure,
+                Some(deployment.to_string()),
+            )
+        }
+    };
+    Some(ScannedRoute {
+        api,
+        provider,
+        default_model,
+    })
+}
+
+/// Route a request. Anything that is neither a scanned route nor listed in
+/// `passthrough` is `NotFound` (deny by default).
+fn route(method: &Method, path: &str, passthrough: &[String]) -> Route {
+    match (method, path) {
+        (&Method::GET, "/healthz") => return Route::Health,
+        (&Method::GET, "/metrics") => return Route::Metrics,
+        _ => {}
+    }
+    let scanned = scanned_route(path);
+    if let (&Method::POST, Some(route)) = (method, &scanned) {
+        return Route::Scanned(route.clone());
+    }
+    let listed = passthrough
+        .iter()
+        .filter_map(|entry| guardrail_config::schema::PassthroughRoute::parse(entry))
+        .any(|entry| entry.matches(method.as_str(), path));
+    if listed {
+        Route::Passthrough
+    } else if scanned.is_some() {
+        Route::MethodNotAllowed
+    } else {
+        Route::NotFound
+    }
+}
+
+/// Top-level request handler: health and metrics endpoints, then the
+/// route table (see [`route`]).
 pub(crate) async fn handle_request(
     state: Arc<AppState>,
     req: Request<Incoming>,
 ) -> Result<Response<ProxyBody>, Infallible> {
-    let path = req.uri().path();
+    let config = state.config.config();
+    let route = route(
+        req.method(),
+        req.uri().path(),
+        &config.server.passthrough_paths,
+    );
 
-    let response = match (req.method(), path) {
-        (&Method::GET, "/healthz") => reply(healthz()),
-        (&Method::GET, "/metrics") => reply(metrics_endpoint(&state)),
-        _ => proxy_request(state, req).await,
+    let response = match route {
+        Route::Health => reply(healthz()),
+        Route::Metrics => reply(metrics_endpoint(&state)),
+        Route::Scanned(route) => proxy_request(state, req, route).await,
+        Route::Passthrough => passthrough_request(state, req).await,
+        Route::MethodNotAllowed => reply(error_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "this route only accepts POST",
+            "method_not_allowed",
+        )),
+        Route::NotFound => reply(error_response(
+            StatusCode::NOT_FOUND,
+            "no such route on this proxy (see server.passthrough_paths)",
+            "not_found",
+        )),
     };
 
     Ok(response)
@@ -79,50 +171,131 @@ fn metrics_endpoint(state: &Arc<AppState>) -> Response<Full<Bytes>> {
     }
 }
 
-/// The core proxy flow: authenticate → parse → run pipeline → forward or block.
-async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response<ProxyBody> {
-    let start = Instant::now();
-    let config = state.config.config();
-    let pipeline = state.config.pipeline();
+/// What every proxied request (scanned or passthrough) has once it is
+/// authorized and its body is read.
+struct Admitted {
+    /// Path plus query string, forwarded upstream as is.
+    target: String,
+    method: Method,
+    headers: Vec<(String, String)>,
+    body: Bytes,
+}
 
+/// Authenticate, collect forwardable headers and read the body with the
+/// size limit. `Err` is the response to send instead.
+async fn admit(
+    config: &guardrail_config::Config,
+    req: Request<Incoming>,
+) -> Result<Admitted, Box<Response<ProxyBody>>> {
     let path = req.uri().path().to_string();
-    let provider = provider_for_path(&path);
-
     if !is_authorized(&config.auth, &path, req.headers()) {
         tracing::warn!(path = %path, "rejected request: missing or invalid X-Guardrail-Key");
-        return reply(error_response(
+        return Err(Box::new(reply(error_response(
             StatusCode::UNAUTHORIZED,
             "missing or invalid X-Guardrail-Key header",
             "unauthorized",
-        ));
+        ))));
     }
 
-    let forward_headers =
-        forward::forwardable_headers(req.headers(), forward::STRIPPED_REQUEST_HEADERS);
+    let target = req
+        .uri()
+        .path_and_query()
+        .map_or(path, |pq| pq.as_str().to_string());
+    let method = req.method().clone();
+    let headers = forward::forwardable_headers(req.headers(), forward::STRIPPED_REQUEST_HEADERS);
 
-    // Read body with a size limit.
-    let max_body = config.server.max_body_size_bytes;
-    let body_bytes = match read_limited_body(req.into_body(), max_body).await {
+    let body = match read_limited_body(req.into_body(), config.server.max_body_size_bytes).await {
         Ok(b) => b,
         Err(BodyReadError::TooLarge) => {
-            return reply(error_response(
+            return Err(Box::new(reply(error_response(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "request body exceeds maximum allowed size",
                 "payload_too_large",
-            ));
+            ))));
         }
         Err(BodyReadError::Io(e)) => {
             tracing::warn!(error = %e, "failed to read request body");
-            return reply(error_response(
+            return Err(Box::new(reply(error_response(
                 StatusCode::BAD_REQUEST,
                 "failed to read request body",
                 "bad_request",
-            ));
+            ))));
         }
+    };
+    Ok(Admitted {
+        target,
+        method,
+        headers,
+        body,
+    })
+}
+
+/// A route from `server.passthrough_paths`: forwarded with its method and
+/// body as is, without running the pipeline. The response still goes
+/// through response redaction.
+async fn passthrough_request(state: Arc<AppState>, req: Request<Incoming>) -> Response<ProxyBody> {
+    let start = Instant::now();
+    let config = state.config.config();
+    let incoming = match admit(&config, req).await {
+        Ok(incoming) => incoming,
+        Err(response) => return *response,
+    };
+    let request_id = uuid::Uuid::new_v4().to_string();
+
+    let result = forward::forward_passthrough(
+        &state.http_client,
+        incoming.method,
+        &config.upstream.url,
+        &incoming.target,
+        incoming.body,
+        incoming.headers,
+        std::time::Duration::from_secs(config.upstream.timeout_secs),
+    )
+    .await;
+    let response = relay_upstream(&state, result, &Provider::OpenAI, &request_id).await;
+
+    state
+        .metrics
+        .requests_total
+        .with_label_values(&["passthrough", "other"])
+        .inc();
+    state
+        .metrics
+        .request_duration_seconds
+        .with_label_values(&["passthrough"])
+        .observe(start.elapsed().as_secs_f64());
+    response
+}
+
+/// The core proxy flow: authenticate → parse → run pipeline → forward or block.
+async fn proxy_request(
+    state: Arc<AppState>,
+    req: Request<Incoming>,
+    route: ScannedRoute,
+) -> Response<ProxyBody> {
+    let start = Instant::now();
+    let config = state.config.config();
+    let pipeline = state.config.pipeline();
+    let provider = route.provider.clone();
+
+    let Admitted {
+        target,
+        headers: forward_headers,
+        body: body_bytes,
+        ..
+    } = match admit(&config, req).await {
+        Ok(incoming) => incoming,
+        Err(response) => return *response,
     };
 
     // Parse into normalized request.
-    let (guardrail_req, scanned_body) = match translate::parse_body(&body_bytes, provider.clone()) {
+    let parsed = translate::parse_api_body(
+        &body_bytes,
+        route.api,
+        provider.clone(),
+        route.default_model.as_deref(),
+    );
+    let (guardrail_req, scanned_body) = match parsed {
         Ok(r) => r,
         Err(e) => {
             tracing::debug!(error = %e, "failed to parse request body");
@@ -147,6 +320,20 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
             StatusCode::BAD_REQUEST,
             "streaming responses are disabled while response PII redaction is on \
              (stages.pii_redactor.streaming_responses = \"reject\"); send stream: false",
+            "streaming_not_allowed",
+        ));
+    }
+
+    // Streamed Responses API events aren't redacted yet: refuse rather than
+    // stream PII through.
+    if guardrail_req.stream
+        && route.api == translate::Api::Responses
+        && state.config.response_redactor().is_some()
+    {
+        return reply(error_response(
+            StatusCode::BAD_REQUEST,
+            "streamed /v1/responses responses can't be redacted yet; \
+             send stream: false while response PII redaction is on",
             "streaming_not_allowed",
         ));
     }
@@ -217,16 +404,16 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
             // body; everything else in it is forwarded untouched.
             let upstream_response = match scanned_body.apply(&final_req) {
                 Ok(body) => {
-                    forward_to_upstream(
-                        &state,
-                        &config,
-                        &path,
+                    let result = forward::forward_request(
+                        &state.http_client,
+                        &config.upstream.url,
+                        &target,
                         &body,
-                        &final_req,
-                        &request_id,
                         forward_headers,
+                        std::time::Duration::from_secs(config.upstream.timeout_secs),
                     )
-                    .await
+                    .await;
+                    relay_upstream(&state, result, &final_req.provider, &request_id).await
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "could not write pipeline output back to the request");
@@ -279,28 +466,15 @@ async fn proxy_request(state: Arc<AppState>, req: Request<Incoming>) -> Response
     response
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn forward_to_upstream(
+/// Turn the upstream's answer into the client's response: copy status
+/// and headers, and redact the body when response redaction is on.
+async fn relay_upstream(
     state: &Arc<AppState>,
-    config: &guardrail_config::Config,
-    path: &str,
-    body: &serde_json::Value,
-    req: &GuardrailRequest,
+    result: Result<reqwest::Response, guardrail_core::GuardrailError>,
+    provider: &Provider,
     request_id: &str,
-    headers: Vec<(String, String)>,
 ) -> Response<ProxyBody> {
-    let timeout = std::time::Duration::from_secs(config.upstream.timeout_secs);
-
-    match forward::forward_request(
-        &state.http_client,
-        &config.upstream.url,
-        path,
-        body,
-        headers,
-        timeout,
-    )
-    .await
-    {
+    match result {
         Ok(upstream_resp) => {
             let status = StatusCode::from_u16(upstream_resp.status().as_u16())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -377,7 +551,7 @@ async fn forward_to_upstream(
                 redacting_sse_body(
                     state.clone(),
                     redactor,
-                    req.provider.clone(),
+                    provider.clone(),
                     request_id.to_string(),
                     upstream_resp,
                 )
@@ -607,14 +781,6 @@ fn observe_stage_event(metrics: &Metrics, event: &StageEvent, failed_open: &mut 
         .inc();
 }
 
-fn provider_for_path(path: &str) -> Provider {
-    if path.starts_with("/v1/messages") {
-        Provider::Anthropic
-    } else {
-        Provider::OpenAI
-    }
-}
-
 fn provider_label(provider: &Provider) -> &'static str {
     match provider {
         Provider::OpenAI => "openai",
@@ -639,14 +805,65 @@ mod tests {
     }
 
     #[test]
-    fn test_provider_for_path_anthropic() {
-        assert_eq!(provider_for_path("/v1/messages"), Provider::Anthropic);
-    }
+    fn test_route_table() {
+        use translate::Api;
+        let allow = vec!["GET /v1/models".to_string(), "GET /v1/models/*".to_string()];
+        let scanned = |api, provider, model: Option<&str>| {
+            Route::Scanned(ScannedRoute {
+                api,
+                provider,
+                default_model: model.map(String::from),
+            })
+        };
 
-    #[test]
-    fn test_provider_for_path_openai_default() {
-        assert_eq!(provider_for_path("/v1/chat/completions"), Provider::OpenAI);
-        assert_eq!(provider_for_path("/anything/else"), Provider::OpenAI);
+        assert_eq!(route(&Method::GET, "/healthz", &allow), Route::Health);
+        assert_eq!(route(&Method::GET, "/metrics", &allow), Route::Metrics);
+        assert_eq!(
+            route(&Method::POST, "/v1/chat/completions", &allow),
+            scanned(Api::ChatCompletions, Provider::OpenAI, None)
+        );
+        assert_eq!(
+            route(&Method::POST, "/v1/messages", &allow),
+            scanned(Api::Messages, Provider::Anthropic, None)
+        );
+        assert_eq!(
+            route(&Method::POST, "/v1/responses", &allow),
+            scanned(Api::Responses, Provider::OpenAI, None)
+        );
+        assert_eq!(
+            route(
+                &Method::POST,
+                "/openai/deployments/prod/chat/completions",
+                &allow
+            ),
+            scanned(Api::ChatCompletions, Provider::Azure, Some("prod"))
+        );
+        assert_eq!(
+            route(
+                &Method::POST,
+                "/openai/deployments//chat/completions",
+                &allow
+            ),
+            Route::NotFound
+        );
+        assert_eq!(
+            route(&Method::GET, "/v1/chat/completions", &allow),
+            Route::MethodNotAllowed
+        );
+        assert_eq!(
+            route(&Method::GET, "/v1/models", &allow),
+            Route::Passthrough
+        );
+        assert_eq!(
+            route(&Method::GET, "/v1/models/gpt-4o", &allow),
+            Route::Passthrough
+        );
+        assert_eq!(route(&Method::POST, "/v1/models", &allow), Route::NotFound);
+        assert_eq!(
+            route(&Method::POST, "/v1/embeddings", &allow),
+            Route::NotFound
+        );
+        assert_eq!(route(&Method::POST, "/anything/else", &[]), Route::NotFound);
     }
 
     #[test]

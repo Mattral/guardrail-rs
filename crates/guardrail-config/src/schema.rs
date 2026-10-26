@@ -106,6 +106,12 @@ pub struct ServerConfig {
     /// Maximum allowed request body size in bytes (default: 10 MiB).
     #[serde(default = "default_max_body_size")]
     pub max_body_size_bytes: usize,
+    /// Routes forwarded upstream without scanning, as `"METHOD /path"`. A
+    /// path ending in `/*` matches everything under it. Every other route
+    /// that isn't a scanned route gets `404`. Default:
+    /// `["GET /v1/models", "GET /v1/models/*"]`.
+    #[serde(default = "default_passthrough_paths")]
+    pub passthrough_paths: Vec<String>,
 }
 
 impl ServerConfig {
@@ -122,7 +128,73 @@ impl Default for ServerConfig {
             port: default_port(),
             workers: 0,
             max_body_size_bytes: default_max_body_size(),
+            passthrough_paths: default_passthrough_paths(),
         }
+    }
+}
+
+fn default_passthrough_paths() -> Vec<String> {
+    vec!["GET /v1/models".into(), "GET /v1/models/*".into()]
+}
+
+/// One `server.passthrough_paths` entry, parsed.
+///
+/// # Examples
+///
+/// ```rust
+/// use guardrail_config::schema::PassthroughRoute;
+///
+/// let route = PassthroughRoute::parse("GET /v1/models/*").unwrap();
+/// assert!(route.matches("GET", "/v1/models/gpt-4o"));
+/// assert!(route.matches("GET", "/v1/models"));
+/// assert!(!route.matches("POST", "/v1/models"));
+/// assert!(!route.matches("GET", "/v1/modelsX"));
+/// assert!(PassthroughRoute::parse("/v1/models").is_none());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassthroughRoute {
+    /// Upper-case HTTP method.
+    pub method: String,
+    /// Path, without a trailing `/*`.
+    pub path: String,
+    /// The entry ended in `/*`: also match every path under `path`.
+    pub prefix: bool,
+}
+
+impl PassthroughRoute {
+    /// Parse `"METHOD /path"` or `"METHOD /path/*"`. Returns `None` if the
+    /// entry isn't in that form.
+    pub fn parse(entry: &str) -> Option<Self> {
+        let (method, path) = entry.trim().split_once(char::is_whitespace)?;
+        let path = path.trim();
+        let valid_method = !method.is_empty() && method.bytes().all(|b| b.is_ascii_alphabetic());
+        if !valid_method || !path.starts_with('/') || path.contains(char::is_whitespace) {
+            return None;
+        }
+        let (path, prefix) = match path.strip_suffix("/*") {
+            Some(base) => (base, true),
+            None => (path, false),
+        };
+        Some(Self {
+            method: method.to_ascii_uppercase(),
+            path: path.to_string(),
+            prefix,
+        })
+    }
+
+    /// Whether a request with this method and path (no query string)
+    /// matches.
+    pub fn matches(&self, method: &str, path: &str) -> bool {
+        if !self.method.eq_ignore_ascii_case(method) {
+            return false;
+        }
+        if path == self.path {
+            return true;
+        }
+        self.prefix
+            && path
+                .strip_prefix(self.path.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
     }
 }
 

@@ -14,6 +14,7 @@
 //! |----------|-------------------|
 //! | OpenAI `/v1/chat/completions` | `choices[].message.content` (string) |
 //! | Anthropic `/v1/messages` | `content[]` blocks where `type == "text"`, field `text` |
+//! | OpenAI `/v1/responses` | `output[]` message items, `content[]` parts where `type == "output_text"`, field `text` |
 //!
 //! # Streaming responses
 //!
@@ -169,6 +170,30 @@ pub fn try_redact_response_body(
         }
     }
 
+    // ── OpenAI Responses shape: output[].content[] output_text parts ───────
+    if let Some(items) = value.get_mut("output").and_then(Value::as_array_mut) {
+        let parts = items
+            .iter_mut()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+            .filter_map(|item| item.get_mut("content").and_then(Value::as_array_mut))
+            .flatten()
+            .filter(|part| part.get("type").and_then(Value::as_str) == Some("output_text"));
+        for part in parts {
+            if let Some(text_field) = part.get_mut("text") {
+                if let Some(text) = text_field.as_str() {
+                    if let Some((sanitized, records)) = redactor.redact_response_text(text) {
+                        for r in &records {
+                            entity_set.insert(format!("{:?}", r.entity_type).to_lowercase());
+                        }
+                        summary.total_redactions += records.len();
+                        *text_field = Value::String(sanitized);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
     if !changed || summary.is_empty() {
         return Ok(None);
     }
@@ -292,6 +317,28 @@ mod tests {
 
         // No PII in the text block, and tool_use blocks are not scanned.
         assert!(redact_response_body(&body, &redactor).is_none());
+    }
+
+    #[test]
+    fn test_redact_responses_api_output() {
+        let redactor = PiiRedactor::default();
+        let body = serde_json::to_vec(&json!({
+            "id": "resp_1",
+            "object": "response",
+            "output": [
+                {"type": "reasoning", "id": "rs_1", "summary": []},
+                {"type": "message", "role": "assistant", "content": [
+                    {"type": "output_text", "text": "Write to help@example.com", "annotations": []}
+                ]}
+            ]
+        }))
+        .unwrap();
+
+        let (new_body, summary) = redact_response_body(&body, &redactor).unwrap();
+        let value: Value = serde_json::from_slice(&new_body).unwrap();
+        assert_eq!(value["output"][1]["content"][0]["text"], "Write to [EMAIL]");
+        assert_eq!(value["output"][0]["type"], "reasoning");
+        assert_eq!(summary.total_redactions, 1);
     }
 
     #[test]
