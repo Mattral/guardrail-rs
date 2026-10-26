@@ -50,9 +50,23 @@ DeBERTa injection model), so these don't fit on a small machine.
 
 ## Planned changes (any machine)
 
-- [ ] Workspace and Cargo cleanup: internal crates as workspace
-  dependencies, unused dependencies removed, per-crate `tokio` features,
-  edition 2024, `[workspace.lints]`, a release profile, a smaller Dockerfile.
+- [ ] Edition 2024 and `resolver = "3"` (the env-override tests no longer
+  call `set_var`, so the migration has nothing left to break), and update
+  `.rustfmt.toml`'s `edition`.
+- [ ] `[workspace.lints]` (`missing_docs = "deny"`, `unsafe_code = "forbid"`)
+  with `[lints] workspace = true` in each crate, replacing the per-crate
+  `#![deny(missing_docs)]`.
+- [ ] `.rustfmt.toml`: remove the nightly-only `imports_granularity` and
+  `group_imports` (ignored on stable).
+- [ ] `[profile.release]` with `lto = "thin"`, `codegen-units = 1`,
+  `strip = "symbols"`; re-measure the binary size quoted in the README.
+- [ ] Dockerfile: drop `libssl-dev` (the tree is rustls-only).
+- [ ] Repo artifacts: delete `.github/NEXT_PUSH_ISSUE.md`; rewrite the
+  "the spec" / "§N" references in `CHANGELOG.md`, `audit.rs`,
+  `audit_log.rs`, `error.rs`, `schema.rs`, `benches/pipeline.rs`, `justfile`
+  and `guardrail-core/Cargo.toml` as plain rationale; remove machine details
+  from `README.md`, `docs/benchmarks.md` and `docs/architecture.md`.
+- [ ] Release 0.4.0 (version bump, CHANGELOG date, tag) once the above is in.
 - [ ] Dependency upgrades: `prometheus` 0.14, `criterion` 0.8, `toml` 1.x,
   `rstest` 0.28, `ort` rc.15; evaluate `reqwest` 0.13 separately (its TLS
   defaults change).
