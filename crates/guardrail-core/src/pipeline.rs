@@ -169,6 +169,7 @@ pub trait Stage: Send + Sync + 'static {
 /// ```
 pub struct Pipeline {
     stages: Vec<(Arc<dyn Stage>, FailMode)>,
+    stage_timeout: Option<Duration>,
 }
 
 impl Pipeline {
@@ -179,6 +180,7 @@ impl Pipeline {
     pub fn new(stages: Vec<Arc<dyn Stage>>) -> Self {
         Self {
             stages: stages.into_iter().map(|s| (s, FailMode::Open)).collect(),
+            stage_timeout: None,
         }
     }
 
@@ -391,7 +393,18 @@ impl Pipeline {
 
             let span = stage_span(stage_name);
             let stage_start = std::time::Instant::now();
-            let result = tracing::Instrument::instrument(stage.evaluate(&req), span.clone()).await;
+            let evaluation = tracing::Instrument::instrument(stage.evaluate(&req), span.clone());
+            let result = match self.stage_timeout {
+                None => evaluation.await,
+                Some(limit) => tokio::time::timeout(limit, evaluation)
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(GuardrailError::Internal(format!(
+                            "stage timed out after {} ms",
+                            limit.as_millis()
+                        )))
+                    }),
+            };
             let elapsed = stage_start.elapsed();
 
             let decision = match result {
@@ -571,6 +584,7 @@ where
 #[derive(Default)]
 pub struct PipelineBuilder {
     stages: Vec<(Arc<dyn Stage>, FailMode)>,
+    stage_timeout: Option<Duration>,
 }
 
 impl PipelineBuilder {
@@ -616,10 +630,24 @@ impl PipelineBuilder {
         self
     }
 
+    /// Give every stage at most `limit` to answer (default: no limit). A
+    /// stage that runs over is treated as an error and resolved with its
+    /// [`FailMode`], so with [`FailMode::Open`] a slow stage is skipped.
+    ///
+    /// Requires a Tokio runtime with the timer enabled. A stage that
+    /// started blocking work (e.g. `spawn_blocking`) keeps running it in
+    /// the background after the timeout.
+    #[must_use]
+    pub fn stage_timeout(mut self, limit: Option<Duration>) -> Self {
+        self.stage_timeout = limit;
+        self
+    }
+
     /// Consume the builder and return a configured `Pipeline`.
     pub fn build(self) -> Pipeline {
         Pipeline {
             stages: self.stages,
+            stage_timeout: self.stage_timeout,
         }
     }
 }
@@ -874,6 +902,50 @@ mod tests {
             other => panic!("expected Block, got {other:?}"),
         }
         assert_eq!(outcomes, vec![("error_stage", StageOutcome::ErrorBlocked)]);
+    }
+
+    /// A stage that takes `.0` to answer.
+    struct SlowStage(Duration);
+
+    #[async_trait::async_trait]
+    impl Stage for SlowStage {
+        fn name(&self) -> &'static str {
+            "slow"
+        }
+        async fn evaluate(&self, _req: &GuardrailRequest) -> Result<Decision, GuardrailError> {
+            tokio::time::sleep(self.0).await;
+            Ok(Decision::Allow)
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_stage_timeout_goes_to_on_error() {
+        use crate::test_helpers::clean_request;
+
+        for (mode, outcome) in [
+            (FailMode::Closed, StageOutcome::ErrorBlocked),
+            (FailMode::Open, StageOutcome::ErrorAllowed),
+        ] {
+            let pipeline = PipelineBuilder::default()
+                .stage_with_fail_mode(SlowStage(Duration::from_secs(5)), mode)
+                .stage_timeout(Some(Duration::from_millis(100)))
+                .build();
+            let mut outcomes = Vec::new();
+            let (decision, _) = pipeline
+                .run_with_events(clean_request(), |e| outcomes.push(e.outcome))
+                .await
+                .unwrap();
+            assert_eq!(outcomes, vec![outcome]);
+            assert_eq!(decision.should_forward(), mode == FailMode::Open);
+        }
+
+        // A stage that answers in time is unaffected.
+        let pipeline = PipelineBuilder::default()
+            .stage_with_fail_mode(SlowStage(Duration::from_millis(10)), FailMode::Closed)
+            .stage_timeout(Some(Duration::from_millis(100)))
+            .build();
+        let (decision, _) = pipeline.run(clean_request()).await.unwrap();
+        assert_eq!(decision, Decision::Allow);
     }
 
     #[tokio::test]

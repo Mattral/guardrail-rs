@@ -154,6 +154,45 @@ fn apply_env_overrides(config: &mut Config) {
     }
 }
 
+#[cfg(feature = "onnx")]
+fn onnx_runtime_options(config: &Config) -> guardrail_classifiers::onnx::OnnxRuntimeOptions {
+    guardrail_classifiers::onnx::OnnxRuntimeOptions {
+        sessions: config.onnx.sessions,
+        intra_threads: config.onnx.intra_threads,
+    }
+    .normalized()
+}
+
+/// A stage timeout is an error, resolved by `on_error`. On a fail-open ONNX
+/// stage, anything slow enough to time out (long input, a loaded machine)
+/// skips the check, so say so at load.
+fn warn_if_timeout_fails_open(config: &Config) {
+    use crate::schema::OnErrorBehavior;
+    for (stage, enabled, on_error) in [
+        (
+            "onnx_injection",
+            config.stages.onnx_injection.enabled,
+            config.stages.onnx_injection.on_error,
+        ),
+        (
+            "toxicity",
+            config.stages.toxicity.enabled,
+            config.stages.toxicity.on_error,
+        ),
+    ] {
+        let mode = OnErrorBehavior::resolve(on_error, config.pipeline.on_error);
+        if enabled && mode == OnErrorBehavior::Allow {
+            tracing::warn!(
+                stage,
+                stage_timeout_ms = config.pipeline.stage_timeout_ms,
+                "pipeline.stage_timeout_ms is set and this stage fails open: requests that take \
+                 longer than the timeout skip it. Set on_error = \"block\" on the stage to \
+                 block them instead."
+            );
+        }
+    }
+}
+
 /// Build a [`Pipeline`] from a validated [`Config`].
 ///
 /// Stages are added in the order specified by `config.pipeline.request_stages`.
@@ -214,10 +253,11 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
             "onnx_injection" if config.stages.onnx_injection.enabled => {
                 let model_path = &config.stages.onnx_injection.model_path;
                 let tokenizer_path = &config.stages.onnx_injection.tokenizer_path;
-                let classifier = guardrail_classifiers::OnnxInjectionClassifier::load(
+                let classifier = guardrail_classifiers::OnnxInjectionClassifier::load_with_options(
                     model_path,
                     tokenizer_path,
                     config.stages.onnx_injection.threshold,
+                    onnx_runtime_options(config),
                 )
                 .map_err(|source| ConfigLoadError::StageBuild {
                     stage: "onnx_injection".into(),
@@ -247,10 +287,11 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
             "toxicity" if config.stages.toxicity.enabled => {
                 let model_path = &config.stages.toxicity.model_path;
                 let tokenizer_path = &config.stages.toxicity.tokenizer_path;
-                let classifier = guardrail_classifiers::ToxicityClassifier::load(
+                let classifier = guardrail_classifiers::ToxicityClassifier::load_with_options(
                     model_path,
                     tokenizer_path,
                     config.stages.toxicity.threshold,
+                    onnx_runtime_options(config),
                 )
                 .map_err(|source| ConfigLoadError::StageBuild {
                     stage: "toxicity".into(),
@@ -288,7 +329,13 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
         }
     }
 
-    Ok(builder.build())
+    let timeout_ms = config.pipeline.stage_timeout_ms;
+    if timeout_ms > 0 {
+        warn_if_timeout_fails_open(config);
+    }
+    Ok(builder
+        .stage_timeout((timeout_ms > 0).then(|| std::time::Duration::from_millis(timeout_ms)))
+        .build())
 }
 
 /// `action = "redact"` has no meaning for a stage that detects rather than

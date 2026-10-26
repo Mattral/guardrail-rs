@@ -50,3 +50,11 @@ criterion  = { version = "0.5", features = ["html_reports", "async_tokio"] }
 [[bench]]
 name = "classifier_benchmarks"
 harness = false
+
+# Throughput and latency of an ONNX stage under concurrent requests.
+# GUARDRAIL_BENCH_MODEL_DIR=<dir with model.onnx and tokenizer.json> \
+#   cargo bench -p guardrail-classifiers --features onnx --bench onnx_concurrency
+[[bench]]
+name = "onnx_concurrency"
+harness = false
+required-features = ["onnx"]

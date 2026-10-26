@@ -35,6 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ONNX session pool.** Each ONNX stage now runs a pool of sessions
+  (`[onnx] sessions`, default one per core divided by
+  `[onnx] intra_threads`, at most 4) instead of a single session behind a
+  mutex, so a stage scores that many requests in parallel. Requests waiting
+  for a session queue without holding a blocking thread. Each session holds
+  its own copy of the model (about 0.85 GB for the DeBERTa injection model),
+  so size `sessions` to your memory. With 4 sessions, throughput on 1 KB
+  prompts went from 3.0 to 9.9 requests/s in our measurements. Graph optimization is set to
+  ONNX Runtime's `Level3` explicitly.
+- `[pipeline] stage_timeout_ms` (default `0`, no limit): a stage that runs
+  longer is handled like a stage error (`on_error`). The proxy warns at load
+  when a fail-open ONNX stage could be skipped this way.
+- `guardrail-core`: `PipelineBuilder::stage_timeout`.
+  `guardrail-classifiers`: `onnx::OnnxRuntimeOptions`,
+  `onnx::default_sessions`, `load_with_options` and `sessions()` on both
+  ONNX classifiers, and an `onnx_concurrency` benchmark.
 - `POST /v1/responses` (OpenAI Responses API) is scanned: `instructions`
   and `input` (a string, or message, `function_call` and
   `function_call_output` items), and its non-streamed output is covered by

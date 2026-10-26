@@ -139,7 +139,42 @@ costs many seconds. Likely improvements, none measured yet: more
 intra-op threads, int8-quantized models, smaller distilled models, and
 batching the windows of a long input into one inference.
 
-To reproduce (models laid out as in `docs/onnx-models.md`):
+### ONNX throughput under concurrent requests
+
+The numbers above are one request at a time. This is the `onnx_injection`
+stage under concurrent load, from the `onnx_concurrency` benchmark: a fixed
+number of requests (32 per row) through `Stage::evaluate`, issued by
+`concurrency` tasks in parallel, with a pool of `sessions` sessions and
+`intra_threads = 1`. Model: `protectai/deberta-v3-base-prompt-injection-v2`
+(`onnx/model.onnx`, fp32). Prompt: 1 KB, one window. One local run.
+
+| sessions | concurrency | req/s | p50 (ms) | p99 (ms) | RSS after load (MiB) |
+|---------:|------------:|------:|---------:|---------:|---------------------:|
+| 1 | 1 | 2.9 | 337 | 468 | 1081 |
+| 1 | 4 | 3.0 | 1353 | 1397 | 1081 |
+| 1 | 8 | 3.0 | 2727 | 2816 | 1081 |
+| 2 | 1 | 3.0 | 331 | 395 | 1964 |
+| 2 | 4 | 5.7 | 686 | 779 | 1964 |
+| 2 | 8 | 5.7 | 1381 | 1493 | 1964 |
+| 4 | 1 | 3.1 | 319 | 490 | 3600 |
+| 4 | 4 | 9.7 | 402 | 506 | 3600 |
+| 4 | 8 | 9.9 | 804 | 821 | 3600 |
+
+**Finding:** with one session (the behavior before the pool), throughput is
+flat at about 3 req/s whatever the load, and latency grows linearly with the
+queue. Each added session adds about 2.4–3 req/s until the cores run out,
+and each costs about 0.85 GB of memory. Requests beyond the pool wait
+asynchronously, so latency still grows with load: put a limit in front of
+the proxy (or set `pipeline.stage_timeout_ms` with `on_error = "block"`)
+for overload.
+
+```bash
+GUARDRAIL_BENCH_MODEL_DIR=models/prompt-injection \
+GUARDRAIL_BENCH_SESSIONS=1,2,4 GUARDRAIL_BENCH_CONCURRENCY=1,4,8 GUARDRAIL_BENCH_REQUESTS=32 \
+  cargo bench -p guardrail-classifiers --features onnx --bench onnx_concurrency
+```
+
+To reproduce the single-request figures (models laid out as in `docs/onnx-models.md`):
 
 ```bash
 GUARDRAIL_BENCH_MODEL_DIR=models \
@@ -347,9 +382,9 @@ For a typical chat-completion request (one system message + one user message,
 
 - **With ONNX classifiers (CPU):** inference-bound. In the two local runs
   above, a 64 B prompt took 34–53 ms per stage and a 1 KB prompt about
-  0.4 s per stage, each on one core. Each inference occupies one Tokio
-  blocking-pool thread for that long. Throughput under load hasn't been
-  measured.
+  0.4 s per stage, each on one core. Throughput per stage is about
+  `sessions / latency`: 3 req/s with one session and 9.9 req/s with four
+  at 1 KB (see [above](#onnx-throughput-under-concurrent-requests)).
 
 - **With ONNX classifiers (CUDA):** not measured.
 
