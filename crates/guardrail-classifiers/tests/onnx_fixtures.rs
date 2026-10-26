@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use guardrail_classifiers::{OnnxInjectionClassifier, ToxicityClassifier};
 use guardrail_core::{
     decision::{BlockCode, Decision},
-    pipeline::Stage,
+    pipeline::{FailMode, OversizeAction, PipelineBuilder, Stage, StageOutcome},
     request::{ChatMessage, GuardrailRequest, MessageContent, Provider, Role},
 };
 
@@ -198,23 +198,85 @@ async fn injection_trigger_anywhere_in_a_long_input_is_found() {
     }
 }
 
-#[tokio::test]
-async fn input_over_the_window_limit_is_an_error() {
-    // Each window after the first adds 512 - 128 = 384 new tokens, so 16
-    // windows cover 512 + 15 * 384 = 6272 tokens.
-    use guardrail_classifiers::onnx::{MAX_WINDOWS, MAX_WINDOW_TOKENS, WINDOW_STRIDE_TOKENS};
-    let limit = MAX_WINDOW_TOKENS + (MAX_WINDOWS - 1) * (MAX_WINDOW_TOKENS - WINDOW_STRIDE_TOKENS);
+/// Number of whitespace-separated words that fill exactly `windows` windows
+/// with the fixture tokenizer (one token per word, no special tokens). Each
+/// window after the first adds 512 - 128 = 384 new tokens.
+fn words_for_windows(windows: usize) -> usize {
+    use guardrail_classifiers::onnx::{MAX_WINDOW_TOKENS, WINDOW_STRIDE_TOKENS};
+    MAX_WINDOW_TOKENS + (windows - 1) * (MAX_WINDOW_TOKENS - WINDOW_STRIDE_TOKENS)
+}
 
-    let stage = injection("keyword_2class.onnx", 0.85);
-    assert!(stage
-        .evaluate(&request(&"hello ".repeat(limit)))
+/// Run `stage` alone in a fail-open pipeline (the default `on_error`), so
+/// any block comes from the oversize policy, never from `on_error`.
+async fn run_fail_open<S: Stage + 'static>(stage: S, text: &str) -> (Decision, Vec<StageOutcome>) {
+    let pipeline = PipelineBuilder::default()
+        .stage_with_fail_mode(stage, FailMode::Open)
+        .build();
+    let mut outcomes = Vec::new();
+    let (decision, _) = pipeline
+        .run_with_events(request(text), |e| outcomes.push(e.outcome))
         .await
-        .is_ok());
-    let err = stage
-        .evaluate(&request(&"hello ".repeat(limit + 1)))
-        .await
-        .expect_err("past the window limit must be an error, so on_error decides");
-    assert!(err.to_string().contains("windows"), "{err}");
+        .unwrap();
+    (decision, outcomes)
+}
+
+#[tokio::test]
+async fn input_over_the_window_limit_is_blocked_by_default() {
+    use guardrail_classifiers::onnx::MAX_WINDOWS;
+    let limit = words_for_windows(MAX_WINDOWS);
+
+    // At the limit: scored normally.
+    let (decision, outcomes) = run_fail_open(
+        injection("keyword_2class.onnx", 0.85),
+        &"hello ".repeat(limit),
+    )
+    .await;
+    assert_eq!(decision, Decision::Allow);
+    assert_eq!(outcomes, vec![StageOutcome::Completed]);
+
+    // One token over (17 windows): blocked, even though on_error is "allow".
+    let (decision, outcomes) = run_fail_open(
+        injection("keyword_2class.onnx", 0.85),
+        &"hello ".repeat(limit + 1),
+    )
+    .await;
+    match decision {
+        Decision::Block { code, .. } => {
+            assert_eq!(code.as_str(), "input_too_long_for_classifier")
+        }
+        other => panic!("expected Block, got {other:?}"),
+    }
+    assert_eq!(outcomes, vec![StageOutcome::OversizeBlocked]);
+}
+
+#[tokio::test]
+async fn oversize_allow_lets_long_input_through_and_reports_it() {
+    use guardrail_classifiers::onnx::MAX_WINDOWS;
+    let text = "hello ".repeat(words_for_windows(MAX_WINDOWS) + 1);
+
+    let stage = toxicity("keyword_2class.onnx", 0.90).with_on_oversize(OversizeAction::Allow);
+    let (decision, outcomes) = run_fail_open(stage, &text).await;
+    assert_eq!(decision, Decision::Allow);
+    assert_eq!(outcomes, vec![StageOutcome::OversizeAllowed]);
+}
+
+#[tokio::test]
+async fn max_windows_is_configurable() {
+    // Two windows' worth of input with a limit of one.
+    let text = padded_trigger(words_for_windows(2) - 1);
+    let stage = injection("keyword_2class.onnx", 0.85).with_max_windows(1);
+    let (decision, outcomes) = run_fail_open(stage, &text).await;
+    assert!(matches!(decision, Decision::Block { .. }), "{decision:?}");
+    assert_eq!(outcomes, vec![StageOutcome::OversizeBlocked]);
+
+    // Raising the limit scores it instead (and finds the trigger).
+    let stage = injection("keyword_2class.onnx", 0.85).with_max_windows(2);
+    let (decision, outcomes) = run_fail_open(stage, &text).await;
+    match decision {
+        Decision::Block { code, .. } => assert_eq!(code, BlockCode::PromptInjection),
+        other => panic!("expected Block, got {other:?}"),
+    }
+    assert_eq!(outcomes, vec![StageOutcome::Completed]);
 }
 
 #[test]

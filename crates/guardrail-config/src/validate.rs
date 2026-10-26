@@ -112,20 +112,20 @@ pub fn validate_config(config: &Config) -> Vec<String> {
     }
 
     // ── ONNX stages ───────────────────────────────────────────────────────
-    for (stage_name, enabled, model_path, _tokenizer_path, threshold) in [
+    for (stage_name, enabled, model_path, threshold, max_windows) in [
         (
             "onnx_injection",
             config.stages.onnx_injection.enabled,
             &config.stages.onnx_injection.model_path,
-            &config.stages.onnx_injection.tokenizer_path,
             config.stages.onnx_injection.threshold,
+            config.stages.onnx_injection.max_windows,
         ),
         (
             "toxicity",
             config.stages.toxicity.enabled,
             &config.stages.toxicity.model_path,
-            &config.stages.toxicity.tokenizer_path,
             config.stages.toxicity.threshold,
+            config.stages.toxicity.max_windows,
         ),
     ] {
         if enabled {
@@ -142,6 +142,11 @@ pub fn validate_config(config: &Config) -> Vec<String> {
             if !(0.0..=1.0).contains(&threshold) {
                 errors.push(format!(
                     "stages.{stage_name}.threshold must be in [0.0, 1.0], got {threshold}"
+                ));
+            }
+            if max_windows == 0 {
+                errors.push(format!(
+                    "stages.{stage_name}.max_windows must be at least 1, got 0"
                 ));
             }
         }
@@ -334,6 +339,43 @@ request_stages = ["regex_injection", "banana_stage"]
         let config: Config = toml::from_str(toml).unwrap();
         let errors = validate_config(&config);
         assert!(errors.iter().any(|e| e.contains("banana_stage")));
+    }
+
+    #[test]
+    fn test_onnx_oversize_settings() {
+        use crate::schema::OnOversize;
+
+        let config: Config = toml::from_str(minimal()).unwrap();
+        assert_eq!(config.stages.onnx_injection.max_windows, 16);
+        assert_eq!(config.stages.onnx_injection.on_oversize, OnOversize::Block);
+        assert_eq!(config.stages.toxicity.max_windows, 16);
+        assert_eq!(config.stages.toxicity.on_oversize, OnOversize::Block);
+
+        let toml = format!(
+            "{}\n[stages.toxicity]\nmax_windows = 4\non_oversize = \"allow\"\n",
+            minimal()
+        );
+        let config: Config = toml::from_str(&toml).unwrap();
+        assert_eq!(config.stages.toxicity.max_windows, 4);
+        assert_eq!(config.stages.toxicity.on_oversize, OnOversize::Allow);
+        assert_eq!(
+            OnOversize::Allow.action(),
+            guardrail_core::OversizeAction::Allow
+        );
+    }
+
+    #[test]
+    fn test_onnx_max_windows_zero_errors() {
+        let toml = format!(
+            "{}\n[stages.onnx_injection]\nenabled = true\nmax_windows = 0\n",
+            minimal()
+        );
+        let config: Config = toml::from_str(&toml).unwrap();
+        let errors = validate_config(&config);
+        assert!(
+            errors.iter().any(|e| e.contains("max_windows")),
+            "{errors:?}"
+        );
     }
 
     #[test]

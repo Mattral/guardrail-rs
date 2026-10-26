@@ -493,6 +493,13 @@ pub struct OnnxStageConfig {
     /// `pipeline.on_error`.
     #[serde(default)]
     pub on_error: Option<OnErrorBehavior>,
+    /// Most windows of 512 tokens scored per request. Default: `16`
+    /// (about 6k tokens).
+    #[serde(default = "default_max_windows")]
+    pub max_windows: usize,
+    /// What to do with input longer than `max_windows`. Default: `"block"`.
+    #[serde(default)]
+    pub on_oversize: OnOversize,
 }
 
 impl Default for OnnxStageConfig {
@@ -504,6 +511,8 @@ impl Default for OnnxStageConfig {
             threshold: default_threshold(),
             action: StageAction::Block,
             on_error: None,
+            max_windows: default_max_windows(),
+            on_oversize: OnOversize::Block,
         }
     }
 }
@@ -533,6 +542,13 @@ pub struct ToxicityStageConfig {
     /// `pipeline.on_error`.
     #[serde(default)]
     pub on_error: Option<OnErrorBehavior>,
+    /// Most windows of 512 tokens scored per request. Default: `16`
+    /// (about 6k tokens).
+    #[serde(default = "default_max_windows")]
+    pub max_windows: usize,
+    /// What to do with input longer than `max_windows`. Default: `"block"`.
+    #[serde(default)]
+    pub on_oversize: OnOversize,
 }
 
 impl Default for ToxicityStageConfig {
@@ -545,12 +561,38 @@ impl Default for ToxicityStageConfig {
             action: StageAction::Block,
             scan_roles: default_scan_roles(),
             on_error: None,
+            max_windows: default_max_windows(),
+            on_oversize: OnOversize::Block,
         }
     }
 }
 
 fn default_threshold() -> f32 {
     0.85
+}
+fn default_max_windows() -> usize {
+    16
+}
+
+/// What an ONNX stage does with input longer than its `max_windows`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OnOversize {
+    /// Block the request with code `input_too_long_for_classifier`.
+    #[default]
+    Block,
+    /// Let the request through without this stage's check.
+    Allow,
+}
+
+impl OnOversize {
+    /// The [`guardrail_core::OversizeAction`] this setting maps to.
+    pub fn action(self) -> guardrail_core::OversizeAction {
+        match self {
+            Self::Block => guardrail_core::OversizeAction::Block,
+            Self::Allow => guardrail_core::OversizeAction::Allow,
+        }
+    }
 }
 fn default_toxicity_threshold() -> f32 {
     0.90

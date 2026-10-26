@@ -13,6 +13,60 @@ use crate::{
 /// errors instead of producing a decision.
 pub const STAGE_ERROR_CODE: &str = "stage_error";
 
+/// Block code returned when a stage reports [`InputTooLong`] with
+/// [`OversizeAction::Block`].
+pub const OVERSIZE_BLOCK_CODE: &str = "input_too_long_for_classifier";
+
+/// What a stage does with input larger than it can check, such as more text
+/// than an ONNX classifier scores per request.
+///
+/// This is a policy decision, separate from [`FailMode`]: an input that is
+/// too long is not a failure of the stage, and failing open on it would let
+/// anyone skip the stage by padding their input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OversizeAction {
+    /// Block the request with code [`OVERSIZE_BLOCK_CODE`] (the default).
+    #[default]
+    Block,
+    /// Let the request continue without this stage's check.
+    Allow,
+}
+
+/// Returned by a stage whose input is larger than it can check, wrapped in
+/// [`GuardrailError::StageFailed`] (see [`InputTooLong::into_error`]).
+///
+/// The pipeline resolves it with [`InputTooLong::action`], not with the
+/// stage's [`FailMode`], and reports [`StageOutcome::OversizeBlocked`] or
+/// [`StageOutcome::OversizeAllowed`].
+///
+/// # Examples
+///
+/// ```rust
+/// use guardrail_core::pipeline::{InputTooLong, OversizeAction};
+///
+/// let err = InputTooLong { size: 17, limit: 16, action: OversizeAction::Block }
+///     .into_error("onnx_injection");
+/// assert_eq!(err.input_too_long().unwrap().size, 17);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("input size {size} is over this stage's limit of {limit}")]
+pub struct InputTooLong {
+    /// How big the input is, in the stage's own unit (for the ONNX
+    /// classifiers, windows of tokens).
+    pub size: usize,
+    /// The most the stage checks, in the same unit.
+    pub limit: usize,
+    /// What the pipeline should do with the request.
+    pub action: OversizeAction,
+}
+
+impl InputTooLong {
+    /// Wrap as the error a stage named `stage` returns.
+    pub fn into_error(self, stage: impl Into<String>) -> GuardrailError {
+        GuardrailError::stage_failed(stage, self)
+    }
+}
+
 /// What the pipeline does when a stage returns `Err` instead of a decision.
 ///
 /// Set per stage with [`PipelineBuilder::stage_with_fail_mode`]. Stages added
@@ -40,6 +94,12 @@ pub enum StageOutcome {
     ErrorAllowed,
     /// The stage errored and the request was blocked ([`FailMode::Closed`]).
     ErrorBlocked,
+    /// The input was too long for the stage, which was configured to let
+    /// it through unchecked ([`OversizeAction::Allow`]).
+    OversizeAllowed,
+    /// The input was too long for the stage and the request was blocked
+    /// ([`OversizeAction::Block`]).
+    OversizeBlocked,
 }
 
 /// One stage evaluation, as reported to [`Pipeline::run_with_events`].
@@ -334,6 +394,10 @@ impl Pipeline {
             let elapsed = stage_start.elapsed();
 
             let decision = match result {
+                Err(e) if e.input_too_long().is_some() => {
+                    let too_long = *e.input_too_long().expect("checked by the guard");
+                    resolve_oversize(stage_name, elapsed, too_long, &mut observer)
+                }
                 Ok(d) => {
                     observer(&StageEvent {
                         stage: stage_name,
@@ -427,6 +491,48 @@ impl Pipeline {
             ))
         }
     }
+}
+
+/// Turn a stage's [`InputTooLong`] into its decision, and report it.
+fn resolve_oversize<F>(
+    stage: &'static str,
+    elapsed: Duration,
+    too_long: InputTooLong,
+    observer: &mut F,
+) -> Decision
+where
+    F: FnMut(&StageEvent),
+{
+    let (outcome, decision) = match too_long.action {
+        OversizeAction::Allow => {
+            tracing::warn!(
+                stage,
+                size = too_long.size,
+                limit = too_long.limit,
+                "input too long for stage; allowed unchecked (on_oversize = allow)"
+            );
+            (StageOutcome::OversizeAllowed, Decision::Allow)
+        }
+        OversizeAction::Block => {
+            tracing::info!(
+                stage,
+                size = too_long.size,
+                limit = too_long.limit,
+                "input too long for stage; blocked"
+            );
+            let decision = Decision::Block {
+                reason: format!("input is too long for stage '{stage}' to check"),
+                code: BlockCode::Custom(OVERSIZE_BLOCK_CODE.into()),
+            };
+            (StageOutcome::OversizeBlocked, decision)
+        }
+    };
+    observer(&StageEvent {
+        stage,
+        elapsed,
+        outcome,
+    });
+    decision
 }
 
 /// Builder for ergonomic pipeline construction.
@@ -748,6 +854,38 @@ mod tests {
             other => panic!("expected Block, got {other:?}"),
         }
         assert_eq!(outcomes, vec![("error_stage", StageOutcome::ErrorBlocked)]);
+    }
+
+    #[tokio::test]
+    async fn test_input_too_long_uses_on_oversize_not_fail_mode() {
+        use crate::test_helpers::{clean_request, TooLongStage};
+
+        // Block wins even on a fail-open stage.
+        let pipeline = PipelineBuilder::default()
+            .stage_with_fail_mode(TooLongStage(OversizeAction::Block), FailMode::Open)
+            .build();
+        let mut outcomes = Vec::new();
+        let (decision, _) = pipeline
+            .run_with_events(clean_request(), |e| outcomes.push(e.outcome))
+            .await
+            .unwrap();
+        match decision {
+            Decision::Block { code, .. } => assert_eq!(code.as_str(), OVERSIZE_BLOCK_CODE),
+            other => panic!("expected Block, got {other:?}"),
+        }
+        assert_eq!(outcomes, vec![StageOutcome::OversizeBlocked]);
+
+        // Allow wins even on a fail-closed stage.
+        let pipeline = PipelineBuilder::default()
+            .stage_with_fail_mode(TooLongStage(OversizeAction::Allow), FailMode::Closed)
+            .build();
+        let mut outcomes = Vec::new();
+        let (decision, _) = pipeline
+            .run_with_events(clean_request(), |e| outcomes.push(e.outcome))
+            .await
+            .unwrap();
+        assert_eq!(decision, Decision::Allow);
+        assert_eq!(outcomes, vec![StageOutcome::OversizeAllowed]);
     }
 
     #[tokio::test]

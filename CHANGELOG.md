@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading from 0.3.0
+
+- With an ONNX stage enabled, requests longer than its window limit (16
+  windows, about 6k tokens) are now blocked with `403
+  input_too_long_for_classifier` instead of being allowed unchecked. To keep
+  the old behavior, set `on_oversize = "allow"` on `[stages.onnx_injection]`
+  and `[stages.toxicity]`; to check longer input, raise `max_windows`.
+- With `redact_responses = true`, upstream responses in a `content-encoding`
+  the proxy can't decode are refused with `502 response_unredactable`.
+- Rust API: `OnnxStageConfig` and `ToxicityStageConfig` have new public
+  fields (`max_windows`, `on_oversize`), so building one with a struct
+  literal needs them added (or `..Default::default()`).
+
 ### Security
 
 - **Response PII redaction was bypassed for compressed responses.** The
@@ -32,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message, in both its string and text-block forms, and PII redactions are
   written back into the same field. Policy rules using `has_system_prompt`
   now see it too.
+- **Long inputs skipped the ONNX stages by default.** Input needing more than
+  16 windows (about 6k tokens) was reported as an inference error, and the
+  default `on_error = "allow"` then let it through unchecked, so padding a
+  prompt (or any large RAG prompt) bypassed `onnx_injection` and `toxicity`.
+  Over-long input is now a policy outcome, set per stage with `on_oversize`,
+  and is **blocked by default** with code `input_too_long_for_classifier`.
 - Updated the lockfile to pick up fixes for RUSTSEC-2026-0381 (`webpki-roots`),
   RUSTSEC-2026-0382 (`rustls-webpki`) and RUSTSEC-2026-0386 (`tokio`,
   unsound). Resolved with MSRV-aware resolution, so the lockfile still builds
@@ -39,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `stages.onnx_injection` / `stages.toxicity`: `max_windows` (default `16`)
+  and `on_oversize = "block" | "allow"` (default `"block"`), and the
+  `guardrail_stage_oversize_total{stage, outcome}` metric.
+- `guardrail-core`: `pipeline::OversizeAction`, `pipeline::InputTooLong`
+  (returned by a stage whose input is too long to check, and resolved by the
+  pipeline with its own action rather than the stage's `FailMode`),
+  `StageOutcome::OversizeAllowed` / `OversizeBlocked`,
+  `GuardrailError::input_too_long`, and `test_helpers::TooLongStage`.
+  `guardrail-classifiers`: `with_max_windows` / `with_on_oversize` on both
+  ONNX classifiers.
 - `guardrail_response_redaction_skipped_total{reason}` counts responses that
   response redaction was on for but couldn't inspect (`unknown_encoding`,
   `unparseable_body`, `unknown_content_type`); each one is also logged at

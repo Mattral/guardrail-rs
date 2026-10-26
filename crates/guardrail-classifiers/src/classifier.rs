@@ -302,8 +302,14 @@ fn run_onnx_binary_classification(
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
 ) -> Result<ClassifierScore, GuardrailError> {
-    let positive_score =
-        crate::onnx::max_window_score(session, tokenizer, text, crate::onnx::two_class_score)?;
+    let positive_score = crate::onnx::max_window_score(
+        "onnx_classifier",
+        session,
+        tokenizer,
+        text,
+        crate::onnx::WindowLimit::default(),
+        crate::onnx::two_class_score,
+    )?;
 
     let label = if positive_score >= 0.5 {
         "positive"

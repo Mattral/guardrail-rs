@@ -93,6 +93,15 @@ impl GuardrailError {
         }
     }
 
+    /// The [`InputTooLong`](crate::pipeline::InputTooLong) this error
+    /// carries, if a stage reported its input as too long to check.
+    pub fn input_too_long(&self) -> Option<&crate::pipeline::InputTooLong> {
+        match self {
+            GuardrailError::StageFailed { source, .. } => source.downcast_ref(),
+            _ => None,
+        }
+    }
+
     /// Construct an `Upstream` error from a message string.
     ///
     /// Available regardless of the `reqwest-errors` feature, so call sites

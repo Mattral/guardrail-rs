@@ -18,7 +18,7 @@
 use guardrail_core::{
     decision::{BlockCode, Decision},
     error::GuardrailError,
-    pipeline::Stage,
+    pipeline::{InputTooLong, OversizeAction, Stage},
     request::{GuardrailRequest, Role},
 };
 use std::path::Path;
@@ -36,11 +36,28 @@ pub const MAX_WINDOW_TOKENS: usize = 512;
 /// window boundary is still seen whole by one of them.
 pub const WINDOW_STRIDE_TOKENS: usize = 128;
 
-/// Most windows scored for one request. Longer input is an inference error
-/// (handled by the stage's `on_error`) rather than an unbounded number of
-/// inferences: at the default 10 MiB body limit an attacker could otherwise
-/// force thousands of model runs per request.
+/// Default for the most windows scored for one request (about 6k tokens).
+/// Longer input is not scored at all: at the default 10 MiB body limit an
+/// attacker could otherwise force thousands of model runs per request.
+/// What happens to it instead is the stage's [`OversizeAction`] (blocked by
+/// default). Change both with `with_max_windows` / `with_on_oversize`.
 pub const MAX_WINDOWS: usize = 16;
+
+/// How much input a stage scores, and what happens to input past that.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WindowLimit {
+    pub(crate) max_windows: usize,
+    pub(crate) on_oversize: OversizeAction,
+}
+
+impl Default for WindowLimit {
+    fn default() -> Self {
+        Self {
+            max_windows: MAX_WINDOWS,
+            on_oversize: OversizeAction::Block,
+        }
+    }
+}
 
 fn internal(e: impl std::fmt::Display) -> GuardrailError {
     GuardrailError::Internal(e.to_string())
@@ -86,19 +103,26 @@ fn lock_session(session: &Mutex<ort::session::Session>) -> MutexGuard<'_, ort::s
 /// model on each, and return the highest score `score` gives any window.
 ///
 /// Scoring every window and keeping the maximum means padding a message
-/// with filler can't push the harmful part out of view.
+/// with filler can't push the harmful part out of view. Input needing more
+/// than `limit.max_windows` windows is not scored: it returns
+/// [`InputTooLong`], which the pipeline resolves with `limit.on_oversize`.
 pub(crate) fn max_window_score(
+    stage: &'static str,
     session: &Mutex<ort::session::Session>,
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
+    limit: WindowLimit,
     score: fn(&[f32]) -> Result<f32, GuardrailError>,
 ) -> Result<f32, GuardrailError> {
     let first = tokenizer.encode(text, true).map_err(internal)?;
     let windows = 1 + first.get_overflowing().len();
-    if windows > MAX_WINDOWS {
-        return Err(internal(format!(
-            "input needs {windows} windows of {MAX_WINDOW_TOKENS} tokens; the limit is {MAX_WINDOWS}"
-        )));
+    if windows > limit.max_windows {
+        return Err(InputTooLong {
+            size: windows,
+            limit: limit.max_windows,
+            action: limit.on_oversize,
+        }
+        .into_error(stage));
     }
 
     let mut best = f32::NEG_INFINITY;
@@ -202,6 +226,8 @@ pub struct OnnxInjectionClassifier {
     threshold: f32,
     /// Log positives instead of blocking them (`action = "log_only"`).
     log_only: bool,
+    /// Most input scored, and what happens to longer input.
+    limit: WindowLimit,
 }
 
 impl std::fmt::Debug for OnnxInjectionClassifier {
@@ -242,6 +268,7 @@ impl OnnxInjectionClassifier {
             tokenizer,
             threshold,
             log_only: false,
+            limit: WindowLimit::default(),
         })
     }
 
@@ -253,16 +280,41 @@ impl OnnxInjectionClassifier {
         self
     }
 
+    /// Score at most `max_windows` windows of [`MAX_WINDOW_TOKENS`] tokens
+    /// per request (default [`MAX_WINDOWS`]). Values below 1 are treated
+    /// as 1.
+    #[must_use]
+    pub fn with_max_windows(mut self, max_windows: usize) -> Self {
+        self.limit.max_windows = max_windows.max(1);
+        self
+    }
+
+    /// What to do with input longer than `max_windows` windows: block it
+    /// (the default) or let it through unchecked.
+    #[must_use]
+    pub fn with_on_oversize(mut self, on_oversize: OversizeAction) -> Self {
+        self.limit.on_oversize = on_oversize;
+        self
+    }
+
     /// Run inference on `text` and return the injection probability in
     /// `[0.0, 1.0]`. Blocks the calling thread; [`Stage::evaluate`] runs it
     /// inside `spawn_blocking`.
     ///
     /// # Errors
     ///
-    /// Returns an error if tokenization or inference fails, or if the model
-    /// doesn't return exactly two logits.
+    /// Returns an error if tokenization or inference fails, if the model
+    /// doesn't return exactly two logits, or ([`InputTooLong`]) if `text`
+    /// needs more windows than the limit.
     pub fn score(&self, text: &str) -> Result<f32, GuardrailError> {
-        max_window_score(&self.session, &self.tokenizer, text, two_class_score)
+        max_window_score(
+            "onnx_injection",
+            &self.session,
+            &self.tokenizer,
+            text,
+            self.limit,
+            two_class_score,
+        )
     }
 }
 
@@ -276,8 +328,10 @@ impl Stage for OnnxInjectionClassifier {
     ///
     /// # Errors
     ///
-    /// Returns an error if inference fails. The pipeline then applies this
-    /// stage's fail mode (`on_error`).
+    /// Returns an error if inference fails; the pipeline then applies this
+    /// stage's fail mode (`on_error`). Input over the window limit returns
+    /// [`InputTooLong`] instead, which the pipeline resolves with the
+    /// stage's `on_oversize`.
     async fn evaluate(&self, req: &GuardrailRequest) -> Result<Decision, GuardrailError> {
         let text = req.user_text();
         if text.trim().is_empty() {
@@ -287,9 +341,17 @@ impl Stage for OnnxInjectionClassifier {
         let threshold = self.threshold;
         let session = self.session.clone();
         let tokenizer = self.tokenizer.clone();
+        let limit = self.limit;
 
         let score = tokio::task::spawn_blocking(move || {
-            max_window_score(&session, &tokenizer, &text, two_class_score)
+            max_window_score(
+                "onnx_injection",
+                &session,
+                &tokenizer,
+                &text,
+                limit,
+                two_class_score,
+            )
         })
         .await
         .map_err(internal)??;
@@ -342,6 +404,8 @@ pub struct ToxicityClassifier {
     log_only: bool,
     /// Message roles whose text is scored. Default: user messages only.
     scan_roles: Vec<Role>,
+    /// Most input scored, and what happens to longer input.
+    limit: WindowLimit,
 }
 
 impl std::fmt::Debug for ToxicityClassifier {
@@ -371,6 +435,7 @@ impl ToxicityClassifier {
             threshold,
             log_only: false,
             scan_roles: vec![Role::User],
+            limit: WindowLimit::default(),
         })
     }
 
@@ -379,6 +444,23 @@ impl ToxicityClassifier {
     #[must_use]
     pub fn with_log_only(mut self, log_only: bool) -> Self {
         self.log_only = log_only;
+        self
+    }
+
+    /// Score at most `max_windows` windows of [`MAX_WINDOW_TOKENS`] tokens
+    /// per request (default [`MAX_WINDOWS`]). Values below 1 are treated
+    /// as 1.
+    #[must_use]
+    pub fn with_max_windows(mut self, max_windows: usize) -> Self {
+        self.limit.max_windows = max_windows.max(1);
+        self
+    }
+
+    /// What to do with input longer than `max_windows` windows: block it
+    /// (the default) or let it through unchecked.
+    #[must_use]
+    pub fn with_on_oversize(mut self, on_oversize: OversizeAction) -> Self {
+        self.limit.on_oversize = on_oversize;
         self
     }
 
@@ -395,10 +477,18 @@ impl ToxicityClassifier {
     ///
     /// # Errors
     ///
-    /// Returns an error if tokenization or inference fails, or if the model
-    /// returns fewer than two logits.
+    /// Returns an error if tokenization or inference fails, if the model
+    /// returns fewer than two logits, or ([`InputTooLong`]) if `text` needs
+    /// more windows than the limit.
     pub fn score(&self, text: &str) -> Result<f32, GuardrailError> {
-        max_window_score(&self.session, &self.tokenizer, text, toxicity_score)
+        max_window_score(
+            "toxicity",
+            &self.session,
+            &self.tokenizer,
+            text,
+            self.limit,
+            toxicity_score,
+        )
     }
 }
 
@@ -417,9 +507,17 @@ impl Stage for ToxicityClassifier {
         let threshold = self.threshold;
         let session = self.session.clone();
         let tokenizer = self.tokenizer.clone();
+        let limit = self.limit;
 
         let score = tokio::task::spawn_blocking(move || {
-            max_window_score(&session, &tokenizer, &text, toxicity_score)
+            max_window_score(
+                "toxicity",
+                &session,
+                &tokenizer,
+                &text,
+                limit,
+                toxicity_score,
+            )
         })
         .await
         .map_err(internal)??;

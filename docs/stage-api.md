@@ -72,9 +72,17 @@ let pipeline = PipelineBuilder::default()
     .build();
 ```
 
+Input that is too big for the stage to check (more text than a model
+scores per request) is not an error. Return
+`InputTooLong { size, limit, action }.into_error(self.name())` instead, with
+`action` taken from the stage's own setting (`OversizeAction::Block` or
+`Allow`). The pipeline then blocks with code `input_too_long_for_classifier`
+or allows, whatever the `FailMode`: failing open on long input would let
+anyone skip the stage by padding their prompt.
+
 `Pipeline::run_with_events` reports each stage's outcome
-(`StageOutcome::Completed`, `ErrorAllowed` or `ErrorBlocked`), so callers can
-count fail-open events.
+(`StageOutcome::Completed`, `ErrorAllowed`, `ErrorBlocked`, `OversizeAllowed`
+or `OversizeBlocked`), so callers can count fail-open and oversize events.
 
 ### 4. Non-blocking async
 Never call blocking I/O or CPU-intensive code directly inside `evaluate`.

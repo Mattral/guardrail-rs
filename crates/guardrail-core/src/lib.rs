@@ -53,5 +53,8 @@ pub mod test_helpers;
 
 pub use decision::{BlockCode, Decision};
 pub use error::GuardrailError;
-pub use pipeline::{FailMode, Pipeline, PipelineBuilder, Stage, StageEvent, StageOutcome};
+pub use pipeline::{
+    FailMode, InputTooLong, OversizeAction, Pipeline, PipelineBuilder, Stage, StageEvent,
+    StageOutcome,
+};
 pub use request::{ChatMessage, ContentPart, GuardrailRequest, MessageContent, Provider, Role};
