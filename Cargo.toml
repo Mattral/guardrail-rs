@@ -25,7 +25,7 @@ resolver = "2"
 # actually being released. Grep for `version = "X.Y.Z"` (the *current*
 # version string, i.e. whatever this line said before your edit) under
 # `crates/` and update every match alongside this line.
-version     = "0.3.0"
+version     = "0.3.1"
 edition     = "2021"
 # Keep in sync with the "MSRV (1.88)" job in .github/workflows/ci.yml and
 # the MSRV badge in README.md — all three should always agree.
