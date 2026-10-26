@@ -76,6 +76,11 @@ threshold = 0.85
 action = "block"
 # Optional: overrides [pipeline].on_error for this stage only.
 # on_error = "block"
+# Most 512-token windows scored per request (16 = 6,272 tokens), and what to
+# do with longer input: "block" (default, 403 input_too_long_for_classifier)
+# or "allow" (forward it without this check).
+max_windows = 16
+on_oversize = "block"
 
 # ── Stage 3: PII detection and redaction ──────────────────────────────────────
 # Detects and replaces PII before it reaches the upstream LLM or the
@@ -127,6 +132,8 @@ action = "block"
 scan_roles = ["user"]
 # Optional: overrides [pipeline].on_error for this stage only.
 # on_error = "block"
+max_windows = 16
+on_oversize = "block"
 
 # ── Stage 5: user-defined policy rules ─────────────────────────────────────────
 # Evaluated last, in order. The first enabled rule whose `when` condition

@@ -96,6 +96,26 @@ impl Stage for ErrorStage {
     }
 }
 
+/// A stage that always reports its input as too long to check
+/// ([`crate::pipeline::InputTooLong`]), resolved with the given action.
+pub struct TooLongStage(pub crate::pipeline::OversizeAction);
+
+#[async_trait::async_trait]
+impl Stage for TooLongStage {
+    fn name(&self) -> &'static str {
+        "too_long"
+    }
+
+    async fn evaluate(&self, _req: &GuardrailRequest) -> Result<Decision, GuardrailError> {
+        Err(crate::pipeline::InputTooLong {
+            size: 17,
+            limit: 16,
+            action: self.0,
+        }
+        .into_error(self.name()))
+    }
+}
+
 /// A stage that always returns `Redact` with a configurable reason and
 /// entity-type list. Useful for testing pipeline-level redaction
 /// aggregation across multiple redacting stages.

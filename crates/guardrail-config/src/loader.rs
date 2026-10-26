@@ -225,8 +225,10 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                 })?;
                 let action = config.stages.onnx_injection.action;
                 warn_if_redact_on_detection_stage("onnx_injection", action);
-                let classifier =
-                    classifier.with_log_only(action == crate::schema::StageAction::LogOnly);
+                let classifier = classifier
+                    .with_log_only(action == crate::schema::StageAction::LogOnly)
+                    .with_max_windows(config.stages.onnx_injection.max_windows)
+                    .with_on_oversize(config.stages.onnx_injection.on_oversize.action());
                 let mode = crate::schema::OnErrorBehavior::resolve(
                     config.stages.onnx_injection.on_error,
                     config.pipeline.on_error,
@@ -258,6 +260,8 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                 warn_if_redact_on_detection_stage("toxicity", action);
                 let classifier = classifier
                     .with_log_only(action == crate::schema::StageAction::LogOnly)
+                    .with_max_windows(config.stages.toxicity.max_windows)
+                    .with_on_oversize(config.stages.toxicity.on_oversize.action())
                     .with_scan_roles(
                         config
                             .stages

@@ -44,6 +44,10 @@ pub struct Metrics {
     /// stage's `on_error` resolved them: `"allowed"` (fail-open: the request
     /// continued without that stage's check) or `"blocked"` (fail-closed).
     pub pipeline_errors_total: IntCounterVec,
+    /// Total number of requests whose input was too long for a stage to
+    /// check (ONNX `max_windows`), labeled by stage and by how
+    /// `on_oversize` resolved it (`"blocked"` or `"allowed"`).
+    pub stage_oversize_total: IntCounterVec,
     /// Current number of in-flight HTTP connections being served.
     pub active_connections: Gauge,
     /// The registry these metrics are registered in.
@@ -164,6 +168,16 @@ impl Metrics {
         )
         .expect("valid metric definition");
 
+        let stage_oversize_total = IntCounterVec::new(
+            Opts::new(
+                "guardrail_stage_oversize_total",
+                "Total number of requests whose input was too long for a stage to check, \
+                 labeled by stage and outcome (blocked, or allowed unchecked).",
+            ),
+            &["stage", "outcome"],
+        )
+        .expect("valid metric definition");
+
         let active_connections = Gauge::new(
             "guardrail_active_connections",
             "Current number of in-flight HTTP connections being served.",
@@ -201,6 +215,9 @@ impl Metrics {
             .register(Box::new(pipeline_errors_total.clone()))
             .expect("register pipeline_errors_total");
         registry
+            .register(Box::new(stage_oversize_total.clone()))
+            .expect("register stage_oversize_total");
+        registry
             .register(Box::new(active_connections.clone()))
             .expect("register active_connections");
 
@@ -215,6 +232,7 @@ impl Metrics {
             request_duration_seconds,
             upstream_errors_total,
             pipeline_errors_total,
+            stage_oversize_total,
             active_connections,
             registry,
         }

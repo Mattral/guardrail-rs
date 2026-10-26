@@ -117,6 +117,8 @@ see [`docs/onnx-models.md`](onnx-models.md).
 | `threshold` | float | `0.85` (injection) / `0.90` (toxicity) | Decision threshold in `[0.0, 1.0]`. Scores at or above this value result in the configured `action`. |
 | `action` | `"block"` \| `"log_only"` | `"block"` | What to do on a positive classification. `"log_only"` logs the score via `tracing::warn!` and allows the request (dry-run). `"redact"` behaves like `"block"`, with a warning at load. |
 | `on_error` | `"allow"` \| `"block"` | unset (uses `pipeline.on_error`) | What to do if inference fails on a request. Overrides `pipeline.on_error` for this stage only. A model that fails to *load* is a startup error, not an inference error: the proxy refuses to start (or a reload is rejected) regardless of this setting. |
+| `max_windows` | integer ≥ 1 | `16` | Most windows of 512 tokens (overlapping by 128) scored per request; 16 covers 6,272 tokens. Each window is one inference, so this bounds the cost of one request. |
+| `on_oversize` | `"block"` \| `"allow"` | `"block"` | What to do with input longer than `max_windows`. `"block"` answers `403` with code `input_too_long_for_classifier`. `"allow"` forwards it without this stage's check (logged at `warn`). Both are counted in `guardrail_stage_oversize_total{stage, outcome}`. Separate from `on_error`. See [Long input](onnx-models.md). |
 
 `[stages.toxicity]` additionally supports:
 

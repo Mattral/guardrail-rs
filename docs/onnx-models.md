@@ -140,10 +140,14 @@ and the request gets the highest score. This overrides any `truncation`
 setting in `tokenizer.json`. Without it, RoBERTa (toxicity) fails outright
 past 514 positions. Under the default `on_error = "allow"`, padding a toxic
 message with 2.9 KB of filler then skipped the check entirely (tested
-against `unitary/unbiased-toxic-roberta`). At most 16 windows are scored
-(6,272 tokens). Longer input is an
-inference error, so `on_error` decides; set it to `"block"`, or lower
-`server.max_body_size_bytes`, if that matters for your traffic.
+against `unitary/unbiased-toxic-roberta`). At most `max_windows` windows
+are scored (16 by default: 6,272 tokens). Longer input is not scored at all;
+`on_oversize` decides what happens to it. The default, `"block"`, answers
+`403` with code `input_too_long_for_classifier`. `"allow"` lets it through
+without this stage's check. Either way it is counted in
+`guardrail_stage_oversize_total{stage, outcome}`. It never goes through
+`on_error`: an input that is too long is not an inference failure, and
+failing open on it would let anyone skip the stage by padding their prompt.
 
 Requests with no user-message text skip both stages (allowed without
 running inference).

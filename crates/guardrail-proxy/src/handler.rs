@@ -559,12 +559,26 @@ fn record_redaction_skipped(state: &AppState, reason: &'static str) {
 /// Record one stage evaluation: its latency, and, if it errored, a
 /// `guardrail_pipeline_errors_total` increment labeled with how `on_error`
 /// resolved it. Stages that failed open are appended to `failed_open` for
-/// the request's audit record.
+/// the request's audit record. Input too long for a stage is counted in
+/// `guardrail_stage_oversize_total`.
 fn observe_stage_event(metrics: &Metrics, event: &StageEvent, failed_open: &mut Vec<String>) {
     metrics
         .stage_duration_seconds
         .with_label_values(&[event.stage])
         .observe(event.elapsed.as_secs_f64());
+
+    let oversize = match event.outcome {
+        StageOutcome::OversizeAllowed => Some("allowed"),
+        StageOutcome::OversizeBlocked => Some("blocked"),
+        _ => None,
+    };
+    if let Some(outcome) = oversize {
+        metrics
+            .stage_oversize_total
+            .with_label_values(&[event.stage, outcome])
+            .inc();
+        return;
+    }
 
     let outcome = match event.outcome {
         StageOutcome::ErrorAllowed => {
@@ -700,6 +714,38 @@ mod tests {
                 .with_label_values(&["passthrough"])
                 .get_sample_count(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oversize_is_counted_per_stage_and_outcome() {
+        use guardrail_core::pipeline::{FailMode, OversizeAction, PipelineBuilder};
+        use guardrail_core::test_helpers::{clean_request, TooLongStage};
+
+        let metrics = Metrics::new();
+        for action in [OversizeAction::Allow, OversizeAction::Block] {
+            let pipeline = PipelineBuilder::default()
+                .stage_with_fail_mode(TooLongStage(action), FailMode::Open)
+                .build();
+            let mut failed_open = Vec::new();
+            pipeline
+                .run_with_events(clean_request(), |e| {
+                    observe_stage_event(&metrics, e, &mut failed_open)
+                })
+                .await
+                .unwrap();
+            assert!(failed_open.is_empty(), "oversize is not a stage error");
+        }
+
+        let counter = &metrics.stage_oversize_total;
+        assert_eq!(counter.with_label_values(&["too_long", "allowed"]).get(), 1);
+        assert_eq!(counter.with_label_values(&["too_long", "blocked"]).get(), 1);
+        assert_eq!(
+            metrics
+                .pipeline_errors_total
+                .with_label_values(&["too_long", "allowed"])
+                .get(),
+            0
         );
     }
 
