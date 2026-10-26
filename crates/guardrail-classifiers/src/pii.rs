@@ -11,7 +11,7 @@ use guardrail_core::{
     decision::Decision,
     error::GuardrailError,
     pipeline::Stage,
-    request::{ChatMessage, GuardrailRequest, MessageContent},
+    request::{ChatMessage, ContentPart, GuardrailRequest, MessageContent},
 };
 use regex::{Regex, RegexSet};
 use std::borrow::Cow;
@@ -385,18 +385,37 @@ impl PiiRedactor {
             .messages
             .iter()
             .map(|msg| {
-                let original_text = msg.content.as_text();
-                let (redacted_text, records) = self.redact_text_with_records(&original_text);
-
-                if !records.is_empty() {
+                // Redact each text part in place, so multi-part content keeps
+                // its shape (image parts, part order) after redaction.
+                let mut redact = |text: &str| -> Option<String> {
+                    let (redacted, records) = self.redact_text_with_records(text);
+                    if records.is_empty() {
+                        return None;
+                    }
                     any_changed = true;
                     all_records.extend(records);
-                    ChatMessage {
-                        role: msg.role.clone(),
-                        content: MessageContent::Text(redacted_text),
-                    }
-                } else {
-                    msg.clone()
+                    Some(redacted)
+                };
+                let content = match &msg.content {
+                    MessageContent::Text(text) => match redact(text) {
+                        Some(redacted) => MessageContent::Text(redacted),
+                        None => return msg.clone(),
+                    },
+                    MessageContent::Parts(parts) => MessageContent::Parts(
+                        parts
+                            .iter()
+                            .map(|part| match part {
+                                ContentPart::Text { text } => ContentPart::Text {
+                                    text: redact(text).unwrap_or_else(|| text.clone()),
+                                },
+                                other => other.clone(),
+                            })
+                            .collect(),
+                    ),
+                };
+                ChatMessage {
+                    role: msg.role.clone(),
+                    content,
                 }
             })
             .collect();
@@ -541,6 +560,53 @@ mod tests {
     fn test_default_redactor_compiles() {
         let r = PiiRedactor::default();
         assert!(!r.patterns.is_empty());
+    }
+
+    #[test]
+    fn test_redact_request_keeps_multipart_shape() {
+        use guardrail_core::request::{ImageUrl, Provider, Role};
+
+        let req = GuardrailRequest::new(
+            vec![ChatMessage {
+                role: Role::User,
+                content: MessageContent::Parts(vec![
+                    ContentPart::Text {
+                        text: "no pii here".into(),
+                    },
+                    ContentPart::ImageUrl {
+                        image_url: ImageUrl {
+                            url: "https://example.com/a.png".into(),
+                            detail: None,
+                        },
+                    },
+                    ContentPart::Text {
+                        text: "mail bob@example.com".into(),
+                    },
+                ]),
+            }],
+            "gpt-4o".into(),
+            Provider::OpenAI,
+        );
+
+        let (mutated, records) = PiiRedactor::default().redact_request(&req).unwrap();
+        assert_eq!(records.len(), 1);
+        let MessageContent::Parts(parts) = &mutated.messages[0].content else {
+            panic!("content flattened: {:?}", mutated.messages[0].content);
+        };
+        assert_eq!(parts.len(), 3);
+        assert_eq!(
+            parts[0],
+            ContentPart::Text {
+                text: "no pii here".into()
+            }
+        );
+        assert!(matches!(parts[1], ContentPart::ImageUrl { .. }));
+        assert_eq!(
+            parts[2],
+            ContentPart::Text {
+                text: "mail [EMAIL]".into()
+            }
+        );
     }
 
     // ── Email ────────────────────────────────────────────────────────────────
