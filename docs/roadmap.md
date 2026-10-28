@@ -60,7 +60,11 @@ DeBERTa injection model), so these don't fit on a small machine.
   `group_imports` (ignored on stable).
 - [ ] `[profile.release]` with `lto = "thin"`, `codegen-units = 1`,
   `strip = "symbols"`; re-measure the binary size quoted in the README.
-- [ ] Dockerfile: drop `libssl-dev` (the tree is rustls-only).
+- [ ] Dockerfile: correct the comment on `pkg-config` and `libssl-dev`.
+  The default build is rustls-only, but ONNX builds need both:
+  `ort-sys` → `ureq` → `native-tls` → `openssl-sys`, a build dependency
+  that downloads ONNX Runtime (`cargo tree -i openssl-sys --features
+  guardrail-cli/onnx`). Keep installing them.
 - [ ] Repo artifacts: delete `.github/NEXT_PUSH_ISSUE.md`; rewrite the
   "the spec" / "§N" references in `CHANGELOG.md`, `audit.rs`,
   `audit_log.rs`, `error.rs`, `schema.rs`, `benches/pipeline.rs`, `justfile`
