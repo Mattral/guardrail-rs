@@ -355,9 +355,11 @@ request_stages = ["regex_injection", "banana_stage"]
     }
 
     #[test]
-    fn test_body_limit_defaults_to_4_mib() {
+    fn test_body_limit_defaults_to_10_mib() {
+        // Room for inline images and documents (base64), which no stage
+        // tokenizes.
         let config: Config = toml::from_str(minimal()).unwrap();
-        assert_eq!(config.server.max_body_size_bytes, 4 * 1024 * 1024);
+        assert_eq!(config.server.max_body_size_bytes, 10 * 1024 * 1024);
     }
 
     #[test]

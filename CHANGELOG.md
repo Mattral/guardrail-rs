@@ -36,10 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `over_limit`, or `unmeasured` for input longer than the stage measures.
   Rust API: `InputTooLong` has a `reason` field (`OversizeReason`), and
   `StageOutcome::OversizeAllowed` / `OversizeBlocked` carry it.
-- `server.max_body_size_bytes` now defaults to 4 MiB (was 10 MiB); larger
-  requests get `413`. If clients send images or documents inline (base64),
-  set it in `[server]`, for example `max_body_size_bytes = 10485760` for the
-  old limit.
 
 ### Security
 
@@ -53,8 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   away takes about 0.1 s and holds no session. Longer input whose first part
   fits, at more than 32 bytes per token (runs of dashes, `ÃÂ` mojibake or
   unknown characters), is oversize too, counted with
-  `reason="unmeasured"`. The default body limit is also lower (above). Affects
-  0.3.1 and earlier.
+  `reason="unmeasured"`. Affects 0.3.1 and earlier.
 
 ### Added
 

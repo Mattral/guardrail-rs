@@ -193,7 +193,7 @@ is intercepted, guardrail-rs provides no protection.
 
 ### Denial of service (resource exhaustion)
 
-`server.max_body_size_bytes` (default 4 MiB) is enforced while the body is
+`server.max_body_size_bytes` (default 10 MiB) is enforced while the body is
 read. Reading stops once the limit is passed, and a declared
 `Content-Length` over the limit is rejected before anything is read, so a
 client can't make the proxy buffer more than that per request.
@@ -262,8 +262,8 @@ measuring all of it would cost what the limit is there to bound. It is
 counted in `guardrail_stage_oversize_total` with `reason="unmeasured"`
 (`"over_limit"` otherwise). So turning away a large input costs about as
 much as a small one. Before 0.4.0 the stage took a session first and
-tokenized all of the input. Through the proxy with both stages and
-`max_body_size_bytes = 10485760` (the old default), 3 runs:
+tokenized all of the input. Through the proxy with both stages, at the
+default body limit of 10 MiB, 3 runs:
 
 | | before | after |
 |---|---:|---:|
@@ -273,7 +273,8 @@ tokenized all of the input. Through the proxy with both stages and
 | a short request sent alongside: answered after | 4.1–4.3 s | 0.47–0.57 s |
 | rise in peak memory, 4 at once | about 2.7 GB | about 0.25 GB |
 
-The short request takes 0.48–0.67 s alone. Input built to take few tokens
+The short request takes 0.48–0.67 s alone. Images and base64
+documents in a request are not tokenized by either stage. Input built to take few tokens
 per byte, as 4 MiB bodies (3 runs):
 
 | 4 MiB of | bytes per token, `onnx_injection` / `toxicity` | `403` after, both stages | `toxicity` alone |
@@ -291,9 +292,7 @@ and for 32 `ÃÂ` pairs (its longest, 128 bytes). Peak memory rose by at most
 alongside 4 of them was answered in under 0.1 s with both stages, and in
 up to 0.65 s with `toxicity` alone. That, and the 0.8–1 s for one request
 with `toxicity` alone, is the PII redactor, which runs before it, scanning
-4 MiB of non-ASCII text. At the new default body limit,
-4 MiB, a 10 MiB request is refused with `413` in under 1 ms, before any
-stage runs.
+4 MiB of non-ASCII text.
 
 For a deployment that accepts traffic it doesn't trust:
 

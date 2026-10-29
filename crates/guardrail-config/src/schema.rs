@@ -106,7 +106,7 @@ pub struct ServerConfig {
     /// Number of Tokio worker threads. `0` = number of logical CPUs (default).
     #[serde(default)]
     pub workers: usize,
-    /// Maximum allowed request body size in bytes (default: 4 MiB).
+    /// Maximum allowed request body size in bytes (default: 10 MiB).
     #[serde(default = "default_max_body_size")]
     pub max_body_size_bytes: usize,
     /// Routes forwarded upstream without scanning, as `"METHOD /path"`. A
@@ -208,7 +208,7 @@ fn default_port() -> u16 {
     8080
 }
 fn default_max_body_size() -> usize {
-    4 * 1024 * 1024
+    10 * 1024 * 1024
 }
 
 // ── Upstream ──────────────────────────────────────────────────────────────────
