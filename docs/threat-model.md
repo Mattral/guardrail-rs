@@ -232,8 +232,10 @@ They time out and are handled by the stage's `on_error`, and with the
 default `"allow"` that means **forwarded without the check**. With a
 timeout, set `on_error = "block"` on the ONNX stages, so that they answer
 `403 stage_error` instead. That turns a stall into quick errors for
-everyone else; it doesn't give the capacity back. Only `max_windows` bounds
-how long one request holds a session. With 4 such requests at once on 4 sessions:
+everyone else; it doesn't give the capacity back.
+
+**Lowering `max_windows` doesn't help.** The cost is per window, about the
+same whatever the limit. With 4 such requests at once on 4 sessions:
 
 | `max_windows` | longest input scored | `onnx_injection` | `toxicity` |
 |---:|---|---:|---:|
@@ -241,10 +243,17 @@ how long one request holds a session. With 4 such requests at once on 4 sessions
 | 8 | 3,200 tokens, about 19 KB | 15.5 s | 9.4 s |
 | 4 | 1,664 tokens, about 10 KB | 7.6 s | 4.5 s |
 
-Halving `max_windows` halves how long a session can be held, so a client
-has to send twice as many requests to keep the pool busy. Longer input is
-resolved by `on_oversize` without running the model. It is still tokenized
-first, holding a session. Through the proxy with the defaults (one run), a
+A lower limit shortens how long one request holds a session, but a client
+keeps the pool just as busy with twice as many requests of half the size,
+for the same bytes per second. Meanwhile every legitimate request between
+the new limit and the old one is refused: at `max_windows = 8`, input of
+3,200–6,272 tokens gets `403 input_too_long_for_classifier` (or skips the
+check with `on_oversize = "allow"`). The default stays at 16. What would
+bound this is admission control in front of each pool (a bounded wait,
+then `503` with `Retry-After`), which guardrail-rs doesn't have yet.
+
+Input over the limit is resolved by `on_oversize` without running the
+model. It is still tokenized first, holding a session. Through the proxy with the defaults (one run), a
 10 MiB message (the default body limit) was blocked after 3.3 s and raised
 the proxy's peak memory by about 0.8 GB. 4 of them at once held all 4
 `onnx_injection` sessions for 4–5 s; a short request sent alongside took
@@ -253,36 +262,31 @@ the proxy's peak memory by about 0.8 GB. 4 of them at once held all 4
 
 For a deployment that accepts traffic it doesn't trust:
 
-1. **Limit request size in front of the proxy**, or lower
-   `server.max_body_size_bytes`, to about the longest input you need to
-   scan. A body also carries the conversation history and JSON, so this is
-   a coarse bound. A per-client limit on concurrent requests or request rate
-   at the reverse proxy is what keeps one client from holding the pool.
+1. **Limit requests in front of the proxy.** A per-client limit on
+   concurrent requests or request rate at the reverse proxy is what keeps
+   one client from holding the pool. A request size limit there, or a
+   lower `server.max_body_size_bytes`, caps what one request can carry; a
+   body also includes the conversation history and JSON, so it is a coarse
+   bound.
 2. **Set `pipeline.stage_timeout_ms` with `on_error = "block"`** on both
    ONNX stages, so that requests stuck behind long ones are rejected rather
    than kept waiting or let through.
-3. **Lower `max_windows`** to the longest input you need classified. With
-   `on_oversize = "block"` longer input is rejected with
-   `input_too_long_for_classifier`; with `"allow"` it is forwarded without
-   this stage's check (logged and counted).
 
 The timeout applies to each stage, and it has to cover the longest input
-you allow at your load, or that input is rejected too. With
-`max_windows = 4`, `onnx_injection` took 7.6 s with all 4 sessions busy on
-long input, so 10 s leaves room on that machine; measure yours with the
-`onnx_concurrency` benchmark (`GUARDRAIL_BENCH_WINDOWS`):
+you accept at your load, or that input is rejected too. A 16-window
+request took 31 s in `onnx_injection` with all 4 sessions busy on long
+input, on that machine; measure yours with the `onnx_concurrency` benchmark
+(`GUARDRAIL_BENCH_WINDOWS`):
 
 ```toml
 [pipeline]
-stage_timeout_ms = 10000
+stage_timeout_ms = 40000
 
 [stages.onnx_injection]
 on_error = "block"
-max_windows = 4
 
 [stages.toxicity]
 on_error = "block"
-max_windows = 4
 ```
 
 More `intra_threads` also shortens a long request (16 windows in
