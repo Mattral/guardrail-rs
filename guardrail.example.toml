@@ -12,7 +12,7 @@ port = 8080
 workers = 0
 
 # Maximum accepted client request body size, in bytes.
-max_body_size_bytes = 4194304  # 4 MiB
+max_body_size_bytes = 10485760  # 10 MiB
 
 # Routes forwarded WITHOUT scanning, as "METHOD /path" ("/*" matches
 # everything under a path). Scanned routes are /v1/chat/completions,
