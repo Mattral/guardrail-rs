@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/benchmarks.md`: ONNX measurements on an 8-core machine, for both
   models: throughput by pool size and by `sessions` × `intra_threads`, why
   throughput levels off, the cost of long input (4, 8 and 16 windows, alone
-  and under load), both stages through the proxy, and 2, 4 and 8 CPUs.
+  and under load), both stages through the proxy, and 2, 4 and 8 cores.
 - `docs/configuration.md`: how to size `[onnx] sessions` and
   `intra_threads`, counting threads across all enabled ONNX stages, with the
   memory each model's session takes.

@@ -285,16 +285,16 @@ the benchmark:
   run for 120 s each and counted every 10 s, held 8.7–9.6 and
   10.9–12.0 req/s with no downward trend. That rules out a sustained
   power or thermal limit setting in after a short boost.
-- **Half the cores give the same ceiling.** Restricted to 4 cores (8 CPUs,
-  `taskset -c 0-7`), the automatic 4 × 2 pool reaches 12.6 req/s, the same
-  as the best on all 8 cores (12.9). By the probe, 4 busy cores do about
-  40% fewer multiply-adds than 8 (186 against 302 GFLOP/s in total).
+- **Compute grows faster than throughput.** From 4 to 8 busy threads, the
+  probe's total multiply-add rate grows 1.6× (186 to 302 GFLOP/s), while
+  `onnx_injection` throughput grows 1.25× (9.7 to 12.1 req/s).
 
-The limit is shared by all cores, not per core. Clocks are steady over
-time, and losing compute (fewer cores, or a compute-only neighbor) costs
-less than sharing memory traffic. Memory bandwidth is therefore the most
-likely limit, with lower all-core clocks second. We didn't measure the
-models' own memory traffic.
+Clocks are steady over time. Throughput grows less than the compute
+available, and a neighbor streaming memory costs twice as much as one that
+only computes. That is consistent with memory bandwidth as the limit, but
+doesn't prove it: we didn't measure the models' own memory traffic, and
+couldn't control which physical cores the threads ran on (see
+[smaller machines](#smaller-machines)).
 
 To reproduce the probe figures:
 
@@ -365,45 +365,64 @@ all enabled ONNX stages; see [configuration](configuration.md#onnx).
 
 #### Smaller machines
 
-The same runs restricted with `taskset` to 2, 4 and 8 CPUs (1, 2 and 4
-cores), with the automatic pool size, which then follows the CPUs
-available.
+The same runs restricted with `taskset` to 2, 4 and 8 logical CPUs, with
+the automatic pool size, which then follows the CPUs available.
+
+The OS lists logical CPUs 0–1, 2–3 and so on as the two threads of one core,
+but `taskset` didn't keep the work on those pairs. Pinned to the same CPU
+sets, `cpu_probe compute` got about as much per thread as threads on
+separate cores (2 threads on CPUs 0–1: 47.5 GFLOP/s each, 95 in all; one
+core does 57 at most). So by the probe, each run had one physical core per
+logical CPU, with one thread on each. The table says so in its first
+column. These are **not** like cloud instances whose vCPUs are SMT pairs,
+where 2 vCPUs are one core: expect less from those.
+
+| `taskset -c` | logical CPUs | `cpu_probe compute`, total (GFLOP/s) | physical cores × threads, by the probe |
+|---|---:|---:|---|
+| `0-1` | 2 | 95 | 2 × 1 |
+| `0-3` | 4 | 175 | 4 × 1 |
+| `0-7` | 8 | 293 | 8 × 1 |
+| (none) | 16 | 302 | 8 × 2 |
 
 `onnx_injection` alone. *Alone* is concurrency 1; the last three columns
 are at concurrency 8.
 
-| CPUs (cores) | `intra_threads` | automatic pool | p50 alone (ms) | req/s | p50 (ms) | RSS after load (MiB) |
+| physical cores × threads per core | `intra_threads` | automatic pool (sessions × intra threads) | p50 alone (ms) | req/s | p50 (ms) | RSS after load (MiB) |
 |---|---:|---|---:|---:|---:|---:|
-| 2 (1) | 1 | 2 × 1 | 307 | 5.8 | 1363 | 2026 |
-| 2 (1) | 2 | 1 × 2 | 183 | 5.5 | 1465 | 1228 |
-| 4 (2) | 1 | 4 × 1 | 306 | 9.3 | 851 | 3645 |
-| 4 (2) | 2 | 2 × 2 | 181 | 9.3 | 853 | 2037 |
-| 8 (4) | 1 | 4 × 1 | 305 | 9.5 | 828 | 3601 |
-| 8 (4) | 2 | 4 × 2 | 181 | 12.6 | 636 | 3620 |
+| 2 × 1 | 1 | 2 × 1 | 307 | 5.8 | 1363 | 2026 |
+| 2 × 1 | 2 | 1 × 2 | 183 | 5.5 | 1465 | 1228 |
+| 4 × 1 | 1 | 4 × 1 | 306 | 9.3 | 851 | 3645 |
+| 4 × 1 | 2 | 2 × 2 | 181 | 9.3 | 853 | 2037 |
+| 8 × 1 | 1 | 4 × 1 | 305 | 9.5 | 828 | 3601 |
+| 8 × 1 | 2 | 4 × 2 | 181 | 12.6 | 636 | 3620 |
 
 Both stages through the proxy (`onnx-proxy.sh` with `PROXY_CPUS`; the mock
 upstream and `oha` run on other CPUs). Memory is the proxy's peak resident
 set.
 
-| CPUs (cores) | `intra_threads` | automatic pool, per stage | p50 alone (ms) | req/s | p50 (ms) | peak RSS (MiB) |
+| physical cores × threads per core | `intra_threads` | automatic pool per stage (sessions × intra threads) | p50 alone (ms) | req/s | p50 (ms) | peak RSS (MiB) |
 |---|---:|---|---:|---:|---:|---:|
-| 2 (1) | 1 | 2 × 1 | 564 | 3.2 | 2506 | 2992 |
-| 2 (1) | 2 | 1 × 2 | 323 | 2.9 | 2762 | 1646 |
-| 4 (2) | 1 | 4 × 1 | 555 | 5.2 | 1529 | 5824 |
-| 4 (2) | 2 | 2 × 2 | 329 | 4.8 | 1689 | 3032 |
-| 8 (4) | 1 | 4 × 1 | 556 | 6.7 | 1179 | 5836 |
-| 8 (4) | 2 | 4 × 2 | 337 | 6.5 | 1228 | 5889 |
+| 2 × 1 | 1 | 2 × 1 | 564 | 3.2 | 2506 | 2992 |
+| 2 × 1 | 2 | 1 × 2 | 323 | 2.9 | 2762 | 1646 |
+| 4 × 1 | 1 | 4 × 1 | 555 | 5.2 | 1529 | 5824 |
+| 4 × 1 | 2 | 2 × 2 | 329 | 4.8 | 1689 | 3032 |
+| 8 × 1 | 1 | 4 × 1 | 556 | 6.7 | 1179 | 5836 |
+| 8 × 1 | 2 | 4 × 2 | 337 | 6.5 | 1228 | 5889 |
 
 With `intra_threads = 2` the automatic pool has half as many sessions:
 
 - the latency of one request is about 40% lower on every size;
-- on 2 and 4 CPUs, memory is 40–48% lower;
+- on 2 and 4 cores, memory is 40–48% lower;
 - throughput at concurrency 8 is the same or up to 5% lower for one stage
-  on 2 and 4 CPUs, and 33% higher on 8 CPUs; with both stages it is 3–9%
+  on 2 and 4 cores, and 33% higher on 8 cores; with both stages it is 3–9%
   lower.
 
 With `intra_threads = 1` and both stages, 4 CPUs get the same pools as 8
 (4 × 1 per stage, 8 threads), and so the same 5.7 GiB of memory.
+
+The rows match the unrestricted runs with the same number of busy threads
+(2 sessions: 5.8 and 5.9 req/s; 4 × 2: 12.6 and 12.9), which is what one
+core per logical CPU predicts.
 
 #### Reproducing
 
@@ -431,7 +450,10 @@ SESSIONS=0 INTRA=2 CONCURRENCY=8 PROXY_CPUS=0-3 LOAD_CPUS=8-15 just load-test-on
 ```
 
 For a smaller machine, run the benchmark under `taskset -c 0-3 cargo bench …`;
-the automatic pool size follows the CPUs the process is allowed. Run one
+the automatic pool size follows the CPUs the process is allowed. Check
+with `taskset -c 0-3 ./cpu_probe compute 4 6` which cores that gives you:
+about one core's rate per thread means separate cores, about half means
+SMT pairs. Run one
 configuration per process, so the memory figures belong to that row.
 
 ### Full pipeline: measured, gated, and passing (single-run snapshot)
