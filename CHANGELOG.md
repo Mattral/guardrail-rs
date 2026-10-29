@@ -54,7 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `onnx::default_sessions`, `load_with_options` and `sessions()` on both
   ONNX classifiers, and an `onnx_concurrency` benchmark (either ONNX
   stage; pool size, intra threads, concurrency, and a prompt of an exact
-  window count; reports RSS and peak RSS).
+  window count; reports the actual pool size, RSS and peak RSS, and
+  optionally throughput per interval of a long run).
 - `POST /v1/responses` (OpenAI Responses API) is scanned: `instructions`
   and `input` (a string, or message, `function_call` and
   `function_call_output` items), and its non-streamed output is covered by

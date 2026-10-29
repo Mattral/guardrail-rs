@@ -14,12 +14,16 @@
 //! - `GUARDRAIL_BENCH_SESSIONS` (e.g. `1,2,4`), `GUARDRAIL_BENCH_INTRA_THREADS`
 //!   (e.g. `1,4`, default `1`) and `GUARDRAIL_BENCH_CONCURRENCY` (e.g.
 //!   `1,4,16`). Every combination of sessions and intra threads is loaded in
-//!   turn and run at each concurrency.
+//!   turn and run at each concurrency. Sessions `0` is the automatic pool
+//!   size; the `sessions` column shows the size the pool actually has.
 //! - `GUARDRAIL_BENCH_REQUESTS`: requests per row (default 64).
 //! - `GUARDRAIL_BENCH_PROMPT_BYTES`: prompt length (default 1024), or
 //!   `GUARDRAIL_BENCH_WINDOWS`: a prompt that is exactly this many windows,
 //!   each one full, built with the model's own tokenizer. The run fails if
 //!   the stage counts a different number of windows.
+//! - `GUARDRAIL_BENCH_PROGRESS_SECS`: after each row, also print the
+//!   throughput of every interval of this many seconds, to see whether it
+//!   holds up over a long run.
 //!
 //! Before measuring, each pool is checked to score the bench request (so a
 //! stage that ignores its role can't report a fast no-op), and its window
@@ -77,6 +81,25 @@ fn reset_peak_rss() {
 fn percentile(sorted: &[Duration], p: f64) -> Duration {
     let i = ((sorted.len() as f64 - 1.0) * p).round() as usize;
     sorted[i]
+}
+
+/// Requests per second in each `interval` of the run, from the sorted times
+/// (since the start) at which requests finished. A last partial interval
+/// is left out.
+fn print_progress(finished: &[Duration], interval: Duration) {
+    let mut end = interval;
+    let mut counted = 0;
+    while end <= *finished.last().unwrap_or(&Duration::ZERO) {
+        let done = finished.partition_point(|&t| t <= end);
+        println!(
+            "#   {:.0}-{:.0} s: {:.1} req/s",
+            (end - interval).as_secs_f64(),
+            end.as_secs_f64(),
+            (done - counted) as f64 / interval.as_secs_f64()
+        );
+        counted = done;
+        end += interval;
+    }
 }
 
 fn request(text: &str) -> GuardrailRequest {
@@ -144,6 +167,13 @@ impl Loaded {
         match self {
             Self::Injection(s) => s,
             Self::Toxicity(s) => s,
+        }
+    }
+
+    fn sessions(&self) -> usize {
+        match self {
+            Self::Injection(s) => s.sessions(),
+            Self::Toxicity(s) => s.sessions(),
         }
     }
 
@@ -237,6 +267,7 @@ fn main() {
     let intra_threads = env_list("GUARDRAIL_BENCH_INTRA_THREADS", &[1]);
     let concurrency = env_list("GUARDRAIL_BENCH_CONCURRENCY", &[1, 4, 16]);
     let requests = env_usize("GUARDRAIL_BENCH_REQUESTS").unwrap_or(64);
+    let progress = env_usize("GUARDRAIL_BENCH_PROGRESS_SECS").filter(|&s| s > 0);
     let target_windows = env_usize("GUARDRAIL_BENCH_WINDOWS");
 
     let window_tokenizer = window_tokenizer(&tokenizer);
@@ -279,13 +310,14 @@ fn main() {
     );
 
     for &n_intra in &intra_threads {
-        for &n_sessions in &sessions {
+        for &requested in &sessions {
             reset_peak_rss();
             let options = OnnxRuntimeOptions {
-                sessions: n_sessions,
+                sessions: requested,
                 intra_threads: n_intra,
             };
             let loaded = Loaded::load(kind, &model, &tokenizer, options).with_max_windows(1);
+            let n_sessions = loaded.sessions();
             let rss = mib(status_mib("VmRSS:"));
 
             let stage_count = runtime.block_on(async {
@@ -323,7 +355,7 @@ fn main() {
             });
 
             for &workers in &concurrency {
-                let (elapsed, mut latencies) = runtime.block_on(async {
+                let (elapsed, mut latencies, mut finished) = runtime.block_on(async {
                     let next = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                     let start = Instant::now();
                     let tasks: Vec<_> = (0..workers)
@@ -333,24 +365,29 @@ fn main() {
                             let req = req.clone();
                             tokio::spawn(async move {
                                 let mut lat = Vec::new();
+                                let mut done = Vec::new();
                                 while next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                                     < requests
                                 {
                                     let t = Instant::now();
                                     stage.evaluate(&req).await.unwrap();
                                     lat.push(t.elapsed());
+                                    done.push(start.elapsed());
                                 }
-                                lat
+                                (lat, done)
                             })
                         })
                         .collect();
-                    let mut all = Vec::new();
+                    let (mut all, mut finished) = (Vec::new(), Vec::new());
                     for t in tasks {
-                        all.extend(t.await.unwrap());
+                        let (lat, done) = t.await.unwrap();
+                        all.extend(lat);
+                        finished.extend(done);
                     }
-                    (start.elapsed(), all)
+                    (start.elapsed(), all, finished)
                 });
                 latencies.sort();
+                finished.sort();
                 println!(
                     "| {n_sessions} | {n_intra} | {workers} | {:.1} | {:.0} | {:.0} | {rss} | {} |",
                     requests as f64 / elapsed.as_secs_f64(),
@@ -358,6 +395,9 @@ fn main() {
                     percentile(&latencies, 0.99).as_secs_f64() * 1000.0,
                     mib(status_mib("VmHWM:")),
                 );
+                if let Some(secs) = progress {
+                    print_progress(&finished, Duration::from_secs(secs as u64));
+                }
             }
             drop(stage);
         }
