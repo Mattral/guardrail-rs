@@ -23,6 +23,15 @@ Open work, grouped by what it needs to run. Measurements go in
 
 ## Planned changes (any machine)
 
+- [ ] Size the automatic ONNX pools for all enabled stages together. Each
+  stage takes `available CPUs / intra_threads` sessions (at most 4) as if it
+  were alone, so with both stages enabled their threads add up: on 4 CPUs
+  with `intra_threads = 1`, 8 inference threads and 5.7 GiB; on 16 CPUs with
+  `intra_threads = 2`, 16 threads, which lost throughput at full load
+  (6.9 → 6.1 requests/s) where 2 × 2 per stage held 6.6–6.7 with half the
+  memory (see [benchmarks](benchmarks.md#through-the-proxy-both-stages)).
+  Divide by the number of enabled ONNX stages, together with the decision
+  on the `intra_threads` default.
 - [ ] Edition 2024 and `resolver = "3"` (the env-override tests no longer
   call `set_var`, so the migration has nothing left to break), and update
   `.rustfmt.toml`'s `edition`.
