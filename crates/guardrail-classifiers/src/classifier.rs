@@ -302,17 +302,19 @@ fn run_onnx_binary_classification(
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
 ) -> Result<ClassifierScore, GuardrailError> {
-    // A panic while holding the lock leaves the session usable; recover it
-    // rather than failing every later call.
-    let mut session = session.lock().unwrap_or_else(|p| p.into_inner());
-    let positive_score = crate::onnx::max_window_score(
+    // Tokenize before taking the session, so input over the window limit
+    // never holds it.
+    let encoding = crate::onnx::windows(
         "onnx_classifier",
-        &mut session,
         tokenizer,
         text,
         crate::onnx::WindowLimit::default(),
-        crate::onnx::two_class_score,
     )?;
+    // A panic while holding the lock leaves the session usable; recover it
+    // rather than failing every later call.
+    let mut session = session.lock().unwrap_or_else(|p| p.into_inner());
+    let positive_score =
+        crate::onnx::max_window_score(&mut session, &encoding, crate::onnx::two_class_score)?;
 
     let label = if positive_score >= 0.5 {
         "positive"

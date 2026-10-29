@@ -193,7 +193,7 @@ is intercepted, guardrail-rs provides no protection.
 
 ### Denial of service (resource exhaustion)
 
-`server.max_body_size_bytes` (default 10 MiB) is enforced while the body is
+`server.max_body_size_bytes` (default 4 MiB) is enforced while the body is
 read. Reading stops once the limit is passed, and a declared
 `Content-Length` over the limit is rejected before anything is read, so a
 client can't make the proxy buffer more than that per request.
@@ -253,12 +253,24 @@ bound this is admission control in front of each pool (a bounded wait,
 then `503` with `Retry-After`), which guardrail-rs doesn't have yet.
 
 Input over the limit is resolved by `on_oversize` without running the
-model. It is still tokenized first, holding a session. Through the proxy with the defaults (one run), a
-10 MiB message (the default body limit) was blocked after 3.3 s and raised
-the proxy's peak memory by about 0.8 GB. 4 of them at once held all 4
-`onnx_injection` sessions for 4–5 s; a short request sent alongside took
-4.4 s instead of 0.5 s, and peak memory rose by about 3 GB. Lowering
-`server.max_body_size_bytes` bounds this.
+model, and without taking a session. It is tokenized first, and only as far
+as could fit the limit (32 bytes for each token the limit covers, 196 KiB
+at `max_windows = 16`), so turning away a large input costs about as much
+as a small one. Before 0.4.0 the stage took a session first and tokenized
+all of the input. Through the proxy with both stages and
+`max_body_size_bytes = 10485760` (the old default), 3 runs:
+
+| | before | after |
+|---|---:|---:|
+| one 10 MiB message: `403` after | 3.4–3.8 s | 0.11–0.13 s |
+| its rise in the proxy's peak memory | about 0.8 GB | about 50 MB |
+| 4 at once: `403` after | 3.8–4.7 s | 0.12–0.17 s |
+| a short request sent alongside: answered after | 4.1–4.3 s | 0.47–0.57 s |
+| rise in peak memory, 4 at once | about 2.7 GB | about 0.25 GB |
+
+The short request takes 0.48–0.67 s alone. At the new default body limit,
+4 MiB, a 10 MiB request is refused with `413` in under 1 ms, before any
+stage runs.
 
 For a deployment that accepts traffic it doesn't trust:
 

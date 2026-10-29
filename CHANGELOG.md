@@ -32,6 +32,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `translate::parse_body` and `ScannedBody::apply`.
   `forward::forward_request` takes the JSON body (`&serde_json::Value`)
   instead of a `GuardrailRequest`.
+- `server.max_body_size_bytes` now defaults to 4 MiB (was 10 MiB); larger
+  requests get `413`. If clients send images or documents inline (base64),
+  set it in `[server]`, for example `max_body_size_bytes = 10485760` for the
+  old limit.
+
+### Security
+
+- **Input over an ONNX stage's window limit held a session while it was
+  tokenized.** The stage took a session (or, before the pool, the session
+  lock) and then tokenized the whole input just to find it too long. A
+  10 MiB message held an `onnx_injection` session for about 3.5 s and
+  0.8 GB of memory before its `403`; 4 at once stalled every other request
+  for about 4 s. Input is now tokenized before a session is taken, and only
+  as far as could fit the limit, so turning it away takes about 0.1 s and
+  holds no session. The default body limit is also lower (above). Affects
+  0.3.1 and earlier.
 
 ### Added
 

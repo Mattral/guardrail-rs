@@ -7,7 +7,9 @@
 //! Each classifier loads a pool of identical ONNX Runtime sessions once at
 //! startup ([`OnnxRuntimeOptions`]). A session runs one inference at a time,
 //! so the pool size is how many requests a stage scores in parallel. A
-//! request first waits (asynchronously) for a free slot, then runs in
+//! request is tokenized first, without a session, so input over the window
+//! limit is turned away before it can wait for or hold one. It then waits
+//! (asynchronously) for a free slot and runs in
 //! `tokio::task::spawn_blocking` with a session to itself, so waiting
 //! requests never hold a blocking thread.
 //!
@@ -37,7 +39,7 @@ pub const MAX_WINDOW_TOKENS: usize = 512;
 pub const WINDOW_STRIDE_TOKENS: usize = 128;
 
 /// Default for the most windows scored for one request (about 6k tokens).
-/// Longer input is not scored at all: at the default 10 MiB body limit an
+/// Longer input is not scored at all: at the default body limit an
 /// attacker could otherwise force thousands of model runs per request.
 /// What happens to it instead is the stage's [`OversizeAction`] (blocked by
 /// default). Change both with `with_max_windows` / `with_on_oversize`.
@@ -48,6 +50,24 @@ pub const MAX_WINDOWS: usize = 16;
 pub(crate) struct WindowLimit {
     pub(crate) max_windows: usize,
     pub(crate) on_oversize: OversizeAction,
+}
+
+/// Most bytes per token assumed when deciding how much of a long input to
+/// tokenize. Text runs at about 2 to 8; the margin is so that no real input
+/// over the limit is cut short of it.
+const MAX_BYTES_PER_TOKEN: usize = 32;
+
+impl WindowLimit {
+    /// Most bytes of input worth tokenizing: beyond that, input over the
+    /// limit is over it already in that much.
+    fn max_bytes(self) -> usize {
+        let tokens = MAX_WINDOW_TOKENS.saturating_add(
+            self.max_windows
+                .saturating_sub(1)
+                .saturating_mul(MAX_WINDOW_TOKENS - WINDOW_STRIDE_TOKENS),
+        );
+        tokens.saturating_mul(MAX_BYTES_PER_TOKEN)
+    }
 }
 
 impl Default for WindowLimit {
@@ -223,8 +243,8 @@ fn load_tokenizer(tokenizer_path: &Path) -> Result<Arc<tokenizers::Tokenizer>, G
     Ok(Arc::new(tokenizer))
 }
 
-/// Run one request's scoring on a session from `pool`, in a blocking
-/// thread, once a slot is free.
+/// Run one request's scoring: tokenize it in a blocking thread, then, once
+/// a slot is free, run the model on a session from `pool` in another.
 async fn score_in_pool(
     stage: &'static str,
     pool: &Arc<SessionPool>,
@@ -233,35 +253,51 @@ async fn score_in_pool(
     limit: WindowLimit,
     score: fn(&[f32]) -> Result<f32, GuardrailError>,
 ) -> Result<f32, GuardrailError> {
+    // Before taking a slot, so that input over the limit never waits for a
+    // session or holds one.
+    let tokenizer = tokenizer.clone();
+    let encoding = tokio::task::spawn_blocking(move || windows(stage, &tokenizer, &text, limit))
+        .await
+        .map_err(internal)??;
+
     let permit = pool.reserve().await;
     let pool = pool.clone();
-    let tokenizer = tokenizer.clone();
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let mut session = pool.checkout();
-        max_window_score(stage, session.get(), &tokenizer, &text, limit, score)
+        max_window_score(session.get(), &encoding, score)
     })
     .await
     .map_err(internal)?
 }
 
-/// Tokenize `text` into windows of at most [`MAX_WINDOW_TOKENS`], run the
-/// model on each, and return the highest score `score` gives any window.
+/// Tokenize `text` into windows of at most [`MAX_WINDOW_TOKENS`] (the first
+/// encoding, with the rest as its overflow). Runs no model, so it needs no
+/// session.
 ///
-/// Scoring every window and keeping the maximum means padding a message
-/// with filler can't push the harmful part out of view. Input needing more
-/// than `limit.max_windows` windows is not scored: it returns
+/// Input needing more than `limit.max_windows` windows returns
 /// [`InputTooLong`], which the pipeline resolves with `limit.on_oversize`.
-pub(crate) fn max_window_score(
+/// Only the first [`WindowLimit::max_bytes`] are tokenized to find out, so
+/// turning away a large input costs no more than a small one; `size` is
+/// then the window count of that part.
+pub(crate) fn windows(
     stage: &'static str,
-    session: &mut ort::session::Session,
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
     limit: WindowLimit,
-    score: fn(&[f32]) -> Result<f32, GuardrailError>,
-) -> Result<f32, GuardrailError> {
-    let first = tokenizer.encode(text, true).map_err(internal)?;
-    let windows = 1 + first.get_overflowing().len();
+) -> Result<tokenizers::Encoding, GuardrailError> {
+    let mut cut = limit.max_bytes().min(text.len());
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let count = |e: &tokenizers::Encoding| 1 + e.get_overflowing().len();
+    let mut first = tokenizer.encode(&text[..cut], true).map_err(internal)?;
+    if cut < text.len() && count(&first) <= limit.max_windows {
+        // That much fit, at over MAX_BYTES_PER_TOKEN bytes per token: not
+        // text, but few tokens, so tokenizing all of it is cheap in memory.
+        first = tokenizer.encode(text, true).map_err(internal)?;
+    }
+    let windows = count(&first);
     if windows > limit.max_windows {
         return Err(InputTooLong {
             size: windows,
@@ -270,9 +306,21 @@ pub(crate) fn max_window_score(
         }
         .into_error(stage));
     }
+    Ok(first)
+}
 
+/// Run the model on each window from [`windows`] and return the highest
+/// score `score` gives any of them.
+///
+/// Scoring every window and keeping the maximum means padding a message
+/// with filler can't push the harmful part out of view.
+pub(crate) fn max_window_score(
+    session: &mut ort::session::Session,
+    first: &tokenizers::Encoding,
+    score: fn(&[f32]) -> Result<f32, GuardrailError>,
+) -> Result<f32, GuardrailError> {
     let mut best = f32::NEG_INFINITY;
-    for encoding in std::iter::once(&first).chain(first.get_overflowing()) {
+    for encoding in std::iter::once(first).chain(first.get_overflowing()) {
         best = best.max(score(&run_encoding(session, encoding)?)?);
     }
     Ok(best)
@@ -477,15 +525,9 @@ impl OnnxInjectionClassifier {
     /// doesn't return exactly two logits, or ([`InputTooLong`]) if `text`
     /// needs more windows than the limit.
     pub fn score(&self, text: &str) -> Result<f32, GuardrailError> {
+        let encoding = windows("onnx_injection", &self.tokenizer, text, self.limit)?;
         let mut session = self.pool.checkout();
-        max_window_score(
-            "onnx_injection",
-            session.get(),
-            &self.tokenizer,
-            text,
-            self.limit,
-            two_class_score,
-        )
+        max_window_score(session.get(), &encoding, two_class_score)
     }
 }
 
@@ -672,15 +714,9 @@ impl ToxicityClassifier {
     /// returns fewer than two logits, or ([`InputTooLong`]) if `text` needs
     /// more windows than the limit.
     pub fn score(&self, text: &str) -> Result<f32, GuardrailError> {
+        let encoding = windows("toxicity", &self.tokenizer, text, self.limit)?;
         let mut session = self.pool.checkout();
-        max_window_score(
-            "toxicity",
-            session.get(),
-            &self.tokenizer,
-            text,
-            self.limit,
-            toxicity_score,
-        )
+        max_window_score(session.get(), &encoding, toxicity_score)
     }
 }
 
@@ -731,6 +767,7 @@ impl Stage for ToxicityClassifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn fixture_pool(sessions: usize) -> Arc<SessionPool> {
         let model = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -792,6 +829,133 @@ mod tests {
         assert!(pending.await.is_err());
         drop(p1);
         let _p3 = pool.reserve().await;
+    }
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/onnx")
+            .join(name)
+    }
+
+    fn one_session() -> OnnxRuntimeOptions {
+        OnnxRuntimeOptions {
+            sessions: 1,
+            intra_threads: 1,
+        }
+    }
+
+    fn user_request(text: String) -> GuardrailRequest {
+        GuardrailRequest::new(
+            vec![guardrail_core::request::ChatMessage {
+                role: Role::User,
+                content: guardrail_core::request::MessageContent::Text(text),
+            }],
+            "gpt-4o".into(),
+            guardrail_core::request::Provider::OpenAI,
+        )
+    }
+
+    /// Far more than one window of the fixture tokenizer.
+    fn oversize_text() -> String {
+        "word ".repeat(2_000)
+    }
+
+    /// Input over the window limit must be turned away without taking a
+    /// session: here the only session is busy, and the answer still has to
+    /// come at once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_oversize_input_does_not_wait_for_a_session() {
+        let injection = OnnxInjectionClassifier::load_with_options(
+            fixture("keyword_2class.onnx"),
+            fixture("tokenizer.json"),
+            0.85,
+            one_session(),
+        )
+        .unwrap()
+        .with_max_windows(1);
+        let toxicity = ToxicityClassifier::load_with_options(
+            fixture("keyword_multilabel.onnx"),
+            fixture("tokenizer.json"),
+            0.9,
+            one_session(),
+        )
+        .unwrap()
+        .with_max_windows(1);
+        let req = user_request(oversize_text());
+
+        let _busy = injection.pool.reserve().await;
+        let result = tokio::time::timeout(Duration::from_secs(5), injection.evaluate(&req))
+            .await
+            .expect("onnx_injection: oversize input waited for a session");
+        assert!(result.unwrap_err().input_too_long().is_some());
+
+        let _busy = toxicity.pool.reserve().await;
+        let result = tokio::time::timeout(Duration::from_secs(5), toxicity.evaluate(&req))
+            .await
+            .expect("toxicity: oversize input waited for a session");
+        assert!(result.unwrap_err().input_too_long().is_some());
+    }
+
+    /// Turning input away costs about the same however long it is: only as
+    /// much is tokenized as could fit the limit. Tokenizing all 32 MiB here
+    /// takes far longer than the timeout.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_oversize_input_is_not_tokenized_in_full() {
+        let stage = OnnxInjectionClassifier::load_with_options(
+            fixture("keyword_2class.onnx"),
+            fixture("tokenizer.json"),
+            0.85,
+            one_session(),
+        )
+        .unwrap()
+        .with_max_windows(1);
+        let req = user_request("word ".repeat(32 << 20 >> 3));
+        let result = tokio::time::timeout(Duration::from_secs(5), stage.evaluate(&req))
+            .await
+            .expect("the whole input was tokenized");
+        assert!(result.unwrap_err().input_too_long().is_some());
+    }
+
+    /// Input that is long in bytes but few in tokens is still scored: the
+    /// fixture tokenizer reads 1 MB of one letter as a single word.
+    #[tokio::test]
+    async fn test_long_input_with_few_tokens_is_scored() {
+        let stage = OnnxInjectionClassifier::load_with_options(
+            fixture("keyword_2class.onnx"),
+            fixture("tokenizer.json"),
+            0.85,
+            one_session(),
+        )
+        .unwrap()
+        .with_max_windows(1);
+        let decision = stage.evaluate(&user_request("a".repeat(1 << 20))).await;
+        assert_eq!(decision.unwrap(), Decision::Allow);
+    }
+
+    /// The same for the blocking `score()`.
+    #[test]
+    fn test_oversize_score_does_not_wait_for_a_session() {
+        let stage = Arc::new(
+            OnnxInjectionClassifier::load_with_options(
+                fixture("keyword_2class.onnx"),
+                fixture("tokenizer.json"),
+                0.85,
+                one_session(),
+            )
+            .unwrap()
+            .with_max_windows(1),
+        );
+        let busy = stage.pool.checkout();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let scorer = {
+            let stage = stage.clone();
+            std::thread::spawn(move || tx.send(stage.score(&oversize_text())).unwrap())
+        };
+        let result = rx.recv_timeout(Duration::from_secs(5));
+        drop(busy);
+        scorer.join().unwrap();
+        let result = result.expect("oversize input waited for a session");
+        assert!(result.unwrap_err().input_too_long().is_some());
     }
 
     #[test]
