@@ -174,6 +174,10 @@ for the length of the inference. In two local runs (Intel Core Ultra 5 226V,
 one inference thread per session), that was 34–53 ms for a 64 B prompt and
 about 0.4 s for 1 KB, per stage; see
 [`benchmarks.md`](benchmarks.md#onnx-classifiers-measured-and-far-over-target).
+Throughput by pool size, the cost of long input, and both stages through
+the proxy, measured on an 8-core machine, are in
+[`benchmarks.md`](benchmarks.md#onnx-on-8-cores-pool-size-long-input-both-stages);
+tuning advice is in [`configuration.md`](configuration.md#tuning-sessions-and-intra_threads).
 Under sustained high concurrency, monitor the
 `guardrail_stage_duration_seconds{stage="onnx_injection"}` and
 `{stage="toxicity"}` histograms (exposed at `/metrics`) and size

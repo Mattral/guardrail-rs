@@ -153,8 +153,52 @@ their turn without holding a thread.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `sessions` | integer | `0` (auto) | Sessions per stage. `0` means one per available core divided by `intra_threads`, capped at 4. **Each session holds its own copy of the model:** about 0.85 GB of RAM for `deberta-v3-base-prompt-injection-v2` (fp32), so budget `sessions × model size` per enabled stage. Throughput grows about linearly with sessions up to the number of cores; see [benchmarks](benchmarks.md#onnx-throughput-under-concurrent-requests). |
-| `intra_threads` | integer ≥ 1 | `1` | Threads ONNX Runtime uses inside one inference. Raising it lowers latency per request; raising `sessions` raises throughput. |
+| `sessions` | integer | `0` (auto) | Sessions per stage. `0` means one per available CPU (hardware thread) divided by `intra_threads`, capped at 4. Each stage works this out on its own, so with both ONNX stages enabled the automatic pools add up; see [tuning](#tuning-sessions-and-intra_threads). **Each session holds its own copy of the model:** about 0.85 GB of RAM for `deberta-v3-base-prompt-injection-v2` and 0.6 GB for `unbiased-toxic-roberta` (fp32), so budget `sessions × model size` per enabled stage. |
+| `intra_threads` | integer ≥ 1 | `1` | Threads ONNX Runtime uses inside one inference. Raising it lowers the latency of one request; raising `sessions` raises how many run at once. A stage keeps up to `sessions × intra_threads` threads busy. |
+
+### Tuning `sessions` and `intra_threads`
+
+From [measurements on an 8-core machine](benchmarks.md#onnx-on-8-cores-pool-size-long-input-both-stages):
+
+- **Count threads across all enabled ONNX stages.** A stage keeps up to
+  `sessions × intra_threads` threads busy, and `[onnx]` applies to every
+  enabled ONNX stage, so the total is that times the number of stages. Keep
+  the total below the CPUs available, leaving some for the rest of the
+  proxy. With both stages on 16 CPUs, 4 × 2 per stage (16 threads) fell from
+  6.9 to 6.1 requests/s once both pools were full, while 2 × 2 per stage
+  (8 threads) held 6.6–6.7 with half the memory.
+- **Throughput levels off at a ceiling the cores share** (most likely
+  memory bandwidth). One stage peaked at about 12.5–13 requests/s for
+  `onnx_injection` at 1 KB and 16 for `toxicity`, and `onnx_injection`
+  reached its peak on 4 cores as well as on 8. Past it, more sessions only
+  cost memory: 16 sessions of `onnx_injection` took 13 GiB and were slower
+  than 8.
+- **For a given thread count, 2 intra threads per session is the best
+  split** on a large machine. With 8 threads for one stage on 8 cores,
+  4 × 2 had the most throughput (12.9 requests/s), half the latency of 8 × 1
+  under full load (310 against 656 ms), and half its memory. A second thread cuts the latency of a 1 KB
+  request by 40% (296 → 176 ms); more than 4 threads per session gained
+  nothing.
+- **Long input** costs about 1 s per full window per stage with one thread
+  (1.2–1.3 s in `onnx_injection`, 0.9 s in `toxicity`).
+  More intra threads shorten it (16 windows: 21 s with 1 thread, 9.5 s with
+  4), but see `max_windows` and [long input](threat-model.md#denial-of-service-resource-exhaustion)
+  for bounding it.
+- **On 2 to 8 CPUs**, with the automatic pool size, `intra_threads = 2`
+  cut the latency of one request by about 40% and, on 2 and 4 CPUs, memory by
+  40–48%. Throughput at concurrency 8 stayed within 9% (it rose by 33% for
+  one stage on 8 CPUs); see [smaller machines](benchmarks.md#smaller-machines).
+  Unless throughput matters more to you than latency and memory, set
+  `intra_threads = 2`.
+
+```toml
+# 16 CPUs (8 cores), both ONNX stages: 2 sessions × 2 threads each, 8 threads in all.
+# Measured 6.6–6.7 requests/s and about 3 GB, against 5.1–5.8 requests/s and
+# about 6 GB for the automatic 4 × 1 per stage on the same machine.
+[onnx]
+sessions = 2
+intra_threads = 2
+```
 
 Read at startup and on reload (a reload loads new sessions). Graph
 optimizations are set to ONNX Runtime's highest level (`Level3`)
