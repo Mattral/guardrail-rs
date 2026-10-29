@@ -93,6 +93,13 @@ bench-save:
 bench-compare:
     cargo bench -p guardrail-classifiers -- --baseline before
 
+# Options are in contrib/load-test/onnx-proxy.sh, e.g.
+# `SESSIONS=4 INTRA=2 just load-test-onnx`. Needs oha and the models.
+# Load-test the proxy with both ONNX stages against an instant mock upstream.
+load-test-onnx:
+    cargo build --release -p guardrail-cli --features onnx
+    contrib/load-test/onnx-proxy.sh
+
 # ── Security ──────────────────────────────────────────────────────────────────
 
 # Check licenses and advisories.
