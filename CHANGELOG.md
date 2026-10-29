@@ -35,8 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `docs/roadmap.md`: open work, grouped by what it needs to run (a large
-  machine, a GPU, or nothing special).
+- `docs/roadmap.md`: open work, grouped by what it needs to run (a GPU,
+  or nothing special).
+- `docs/benchmarks.md`: ONNX measurements on an 8-core machine, for both
+  models: throughput by pool size and by `sessions` × `intra_threads`, why
+  throughput levels off, the cost of long input (4, 8 and 16 windows, alone
+  and under load), both stages through the proxy, and 2, 4 and 8 CPUs.
 - `contrib/load-test/`: a load test of the proxy with both ONNX stages
   against an instant mock upstream (`just load-test-onnx`), and a small
   probe of per-core compute rate and memory read bandwidth.

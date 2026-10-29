@@ -184,6 +184,256 @@ GUARDRAIL_BENCH_MODEL_DIR=models \
 or run the manual `ONNX real models` workflow, which downloads and exports
 the same pinned model commits and uploads the Criterion output.
 
+### ONNX on 8 cores: pool size, long input, both stages
+
+A separate set of measurements, on a different machine from the tables
+above. Read them on their own; the two sets aren't comparable.
+
+- Machine: 8 physical cores / 16 threads, 23 GiB of memory available.
+- Software: Rust 1.99.1, `ort` 2.0.0-rc.13, ONNX Runtime 1.28.0.
+- Models: `protectai/deberta-v3-base-prompt-injection-v2` at `90c9989b`
+  (`onnx/model.onnx`, fp32) and `unitary/unbiased-toxic-roberta` at
+  `36295dd8` (exported with `optimum-onnx` 0.1.0, fp32).
+- Method: `onnx_concurrency`, one process per row, after a warm-up. Each
+  figure is the median of 3 runs, with the range in brackets where it
+  matters. Every run measured at least 20 s, and nothing was swapped out.
+  The prompt is 1 KB (less than one window) unless a window count is given.
+
+#### Pool size (`onnx_injection`, `intra_threads = 1`)
+
+| sessions | concurrency | req/s | p50 (ms) | p99 (ms) | RSS after load (MiB) |
+|---------:|------------:|------:|---------:|---------:|---------------------:|
+| 1 | 1 | 3.1 | 321 | 359 | 1237 |
+| 1 | 16 | 3.3 | 4792 | 5073 | 1228 |
+| 2 | 4 | 5.9 | 665 | 754 | 2040 |
+| 4 | 4 | 9.7 | 409 | 503 | 3595 |
+| 4 | 16 | 9.5 | 1678 | 1863 | 3637 |
+| 8 | 8 | 12.1 (10.7 – 12.2) | 657 | 825 | 6902 |
+| 8 | 32 | 11.9 | 2656 | 3038 | 6901 |
+| 16 | 8 | 12.0 | 664 | 780 | 13493 |
+| 16 | 16 | 10.8 | 1473 | 1595 | 13516 |
+
+Against one session, 2 sessions give 1.8× the throughput, 4 give 3.0× and
+8 give 3.7×. 16 sessions (one per hardware thread) are no faster than 8.
+Each session adds about 810 MiB.
+
+#### Pool size (`toxicity`, `intra_threads = 1`)
+
+| sessions | concurrency | req/s | p50 (ms) | p99 (ms) | RSS after load (MiB) |
+|---------:|------------:|------:|---------:|---------:|---------------------:|
+| 1 | 1 | 3.9 | 251 | 293 | 649 |
+| 2 | 4 | 7.4 | 530 | 588 | 1255 |
+| 4 | 4 | 12.5 | 317 | 405 | 2373 |
+| 8 | 8 | 16.1 | 486 | 626 | 4715 |
+| 16 | 8 | 16.5 | 483 | 594 | 9342 |
+| 16 | 16 | 15.5 | 1007 | 1254 | 9333 |
+
+The same shape: throughput stops growing at 8 sessions. Each session adds
+about 580 MiB.
+
+#### `sessions` × `intra_threads` (`onnx_injection`)
+
+Single-request latency is at concurrency 1; throughput is at concurrency
+equal to `sessions`.
+
+| sessions × intra_threads | p50 alone (ms) | req/s, pool full | p50, pool full (ms) | RSS after load (MiB) |
+|---|---:|---:|---:|---:|
+| 1 × 8 | 133 | 7.5 | 133 | 1219 |
+| 2 × 4 | 129 | 11.4 | 173 | 2028 |
+| 4 × 2 | 176 | 12.9 | 310 | 3630 |
+| 8 × 1 | 296 | 12.1 | 656 | 6891 |
+| 4 × 4 | 129 | 12.6 | 318 | 3611 |
+| 8 × 2 | 178 | 12.5 | 642 | 6865 |
+| 16 × 1 | 301 | 10.9 | 1452 | 13513 |
+
+With 8 threads in total, 4 × 2 has the most throughput, half the latency
+of 8 × 1 and half its memory. A second inference thread cuts the latency of one
+request by 40% (296 → 176 ms); beyond 4 there is nothing left to gain. Using all 16 hardware threads (bottom three rows) is no faster than
+using 8.
+
+#### Why throughput stops at 8 sessions
+
+What was measured, with
+[`contrib/load-test/cpu_probe.c`](../contrib/load-test/cpu_probe.c) beside
+the benchmark:
+
+| busy probe threads | 1 | 2 | 4 | 8 | 16 |
+|---|---:|---:|---:|---:|---:|
+| read bandwidth, total (GB/s) | 19.8 | 29.8 | 34.9 | 34.7 | 34.1 |
+| fused multiply-add rate, per thread (GFLOP/s) | 56.8 | 50.5 | 46.5 | 37.8 | 23.3 |
+
+- **Memory bandwidth tops out at about 35 GB/s, reached with 4 threads.** In
+  `bandwidth` mode each thread sums its own 256 MiB buffer (far larger than
+  any cache) with AVX2 loads, over and over, for 6 s; the figure is the
+  total bytes read divided by the elapsed time.
+- **Compute per core falls as more cores are busy:** a third lower with 8
+  threads than with 1, consistent with lower all-core clocks. At 16 threads two
+  share each core. In `compute` mode each thread runs fused multiply-adds
+  on registers only, so this doesn't touch memory.
+- **Interference:** 4 sessions at concurrency 4, with 4 more threads busy
+  beside them:
+
+  | beside the benchmark | req/s | p50 (ms) |
+  |---|---:|---:|
+  | nothing | 9.7 | 409 |
+  | `cpu_probe compute 4` | 7.5 | 529 |
+  | `cpu_probe bandwidth 4` (28.4 GB/s) | 5.2 | 758 |
+
+  Threads that only compute cost 23% of the throughput. The same number of
+  threads streaming memory cost 46%, so the extra loss is memory traffic.
+- **No drop over time.** 4 × 1 at concurrency 4 and 8 × 1 at concurrency 8,
+  run for 120 s each and counted every 10 s, held 8.7–9.6 and
+  10.9–12.0 req/s with no downward trend. That rules out a sustained
+  power or thermal limit setting in after a short boost.
+- **Half the cores give the same ceiling.** Restricted to 4 cores (8 CPUs,
+  `taskset -c 0-7`), the automatic 4 × 2 pool reaches 12.6 req/s, the same
+  as the best on all 8 cores (12.9). By the probe, 4 busy cores do about
+  40% fewer multiply-adds than 8 (186 against 302 GFLOP/s in total).
+
+The limit is shared by all cores, not per core. Clocks are steady over
+time, and losing compute (fewer cores, or a compute-only neighbor) costs
+less than sharing memory traffic. Memory bandwidth is therefore the most
+likely limit, with lower all-core clocks second. We didn't measure the
+models' own memory traffic.
+
+To reproduce the probe figures:
+
+```bash
+cc -O2 -mavx2 -mfma -pthread -o cpu_probe contrib/load-test/cpu_probe.c
+for n in 1 2 4 8 16; do ./cpu_probe bandwidth $n 6; done
+for n in 1 2 4 8 16; do ./cpu_probe compute $n 6; done
+```
+
+For the interference rows, start `./cpu_probe compute 4 75 &` (or
+`bandwidth 4 75`) and then the 4-session benchmark.
+
+#### Long input
+
+A prompt of exactly 4, 8 or 16 full windows (`GUARDRAIL_BENCH_WINDOWS`),
+`intra_threads = 1`. *Alone* is one session and one request at a time.
+*Under load* is the automatic pool of 4 sessions with 4 such requests at
+once, which is what 4 long requests sent together cost on the default
+configuration.
+
+| windows | tokens | prompt (this text) | `onnx_injection` alone | under load | `toxicity` alone | under load |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 (1 KB prompt) | < 512 | 1 KB | 0.32 s | 0.41 s | 0.25 s | 0.32 s |
+| 4 | 1,664 | 10 KB | 4.8 s | 7.6 s | 3.3 s | 4.5 s |
+| 8 | 3,200 | 19 KB | 9.5 s | 15.5 s | 6.7 s | 9.4 s |
+| 16 | 6,272 | 38 KB | 21.0 s | 31.3 s | 14.7 s | 18.7 s |
+
+Cost grows linearly with the window count, about 1.2–1.3 s per full window
+for `onnx_injection` when alone. How many bytes fill a window depends on
+the text: this is plain English, and text that tokenizes into more tokens
+per byte (code, many non-Latin scripts) reaches the limit in fewer bytes.
+
+More inference threads shorten one long request, but not in proportion
+(16 windows, one session, one request):
+
+| intra_threads | `onnx_injection` | `toxicity` |
+|---:|---:|---:|
+| 1 | 21.0 s | 14.7 s |
+| 4 | 9.5 s | 5.1 s |
+| 8 | 9.3 s | 4.3 s |
+
+What this means for denial of service is in the
+[threat model](threat-model.md#denial-of-service-resource-exhaustion).
+
+#### Through the proxy, both stages
+
+`contrib/load-test/onnx-proxy.sh`: the proxy with `onnx_injection` and
+`toxicity` enabled, a mock upstream that answers at once, and `oha` sending
+a benign 1.1 KB chat request, so every request runs both models (one after
+the other). All responses were `200`. Memory is the proxy's peak resident
+set.
+
+| pool per stage | ONNX threads, both stages | concurrency | req/s | p50 (ms) | p99 (ms) | peak RSS (MiB) |
+|---|---:|---:|---:|---:|---:|---:|
+| 4 × 1 (automatic) | 8 | 4 | 5.1 | 783 | 922 | 5852 |
+| 4 × 1 (automatic) | 8 | 16 | 5.8 | 2720 | 3204 | 5881 |
+| 4 × 2 | 16 | 4 | 6.9 | 573 | 694 | 5861 |
+| 4 × 2 | 16 | 16 | 6.1 | 2533 | 2984 | 5854 |
+| 2 × 2 | 8 | 4 | 6.6 | 596 | 750 | 2994 |
+| 2 × 2 | 8 | 16 | 6.7 | 2358 | 2632 | 3029 |
+
+Each stage sizes its pool from the machine as if it were alone. With
+4 × 2 per stage, a full load (concurrency 16) keeps both pools busy, which
+is 16 inference threads on 8 cores, and throughput falls from 6.9 to
+6.1 req/s. 2 × 2 per stage, 8 threads in all, holds 6.6–6.7 req/s at both
+loads with half the memory. Size the pools by the total threads across
+all enabled ONNX stages; see [configuration](configuration.md#onnx).
+
+#### Smaller machines
+
+The same runs restricted with `taskset` to 2, 4 and 8 CPUs (1, 2 and 4
+cores), with the automatic pool size, which then follows the CPUs
+available.
+
+`onnx_injection` alone. *Alone* is concurrency 1; the last three columns
+are at concurrency 8.
+
+| CPUs (cores) | `intra_threads` | automatic pool | p50 alone (ms) | req/s | p50 (ms) | RSS after load (MiB) |
+|---|---:|---|---:|---:|---:|---:|
+| 2 (1) | 1 | 2 × 1 | 307 | 5.8 | 1363 | 2026 |
+| 2 (1) | 2 | 1 × 2 | 183 | 5.5 | 1465 | 1228 |
+| 4 (2) | 1 | 4 × 1 | 306 | 9.3 | 851 | 3645 |
+| 4 (2) | 2 | 2 × 2 | 181 | 9.3 | 853 | 2037 |
+| 8 (4) | 1 | 4 × 1 | 305 | 9.5 | 828 | 3601 |
+| 8 (4) | 2 | 4 × 2 | 181 | 12.6 | 636 | 3620 |
+
+Both stages through the proxy (`onnx-proxy.sh` with `PROXY_CPUS`; the mock
+upstream and `oha` run on other CPUs). Memory is the proxy's peak resident
+set.
+
+| CPUs (cores) | `intra_threads` | automatic pool, per stage | p50 alone (ms) | req/s | p50 (ms) | peak RSS (MiB) |
+|---|---:|---|---:|---:|---:|---:|
+| 2 (1) | 1 | 2 × 1 | 564 | 3.2 | 2506 | 2992 |
+| 2 (1) | 2 | 1 × 2 | 323 | 2.9 | 2762 | 1646 |
+| 4 (2) | 1 | 4 × 1 | 555 | 5.2 | 1529 | 5824 |
+| 4 (2) | 2 | 2 × 2 | 329 | 4.8 | 1689 | 3032 |
+| 8 (4) | 1 | 4 × 1 | 556 | 6.7 | 1179 | 5836 |
+| 8 (4) | 2 | 4 × 2 | 337 | 6.5 | 1228 | 5889 |
+
+With `intra_threads = 2` the automatic pool has half as many sessions:
+
+- the latency of one request is about 40% lower on every size;
+- on 2 and 4 CPUs, memory is 40–48% lower;
+- throughput at concurrency 8 is the same or up to 5% lower for one stage
+  on 2 and 4 CPUs, and 33% higher on 8 CPUs; with both stages it is 3–9%
+  lower.
+
+With `intra_threads = 1` and both stages, 4 CPUs get the same pools as 8
+(4 × 1 per stage, 8 threads), and so the same 5.7 GiB of memory.
+
+#### Reproducing
+
+```bash
+# One row: pool, threads, load, and optionally an exact window count
+GUARDRAIL_BENCH_MODEL_DIR=models/prompt-injection \
+GUARDRAIL_BENCH_SESSIONS=4 GUARDRAIL_BENCH_INTRA_THREADS=2 \
+GUARDRAIL_BENCH_CONCURRENCY=4 GUARDRAIL_BENCH_REQUESTS=256 \
+  cargo bench -p guardrail-classifiers --features onnx --bench onnx_concurrency
+
+# toxicity, 16 windows, one at a time
+GUARDRAIL_BENCH_MODEL_DIR=models/toxicity GUARDRAIL_BENCH_STAGE=toxicity \
+GUARDRAIL_BENCH_SESSIONS=1 GUARDRAIL_BENCH_CONCURRENCY=1 \
+GUARDRAIL_BENCH_REQUESTS=4 GUARDRAIL_BENCH_WINDOWS=16 \
+  cargo bench -p guardrail-classifiers --features onnx --bench onnx_concurrency
+
+# 120 s at a steady load, throughput every 10 s
+GUARDRAIL_BENCH_MODEL_DIR=models/prompt-injection \
+GUARDRAIL_BENCH_SESSIONS=4 GUARDRAIL_BENCH_CONCURRENCY=4 \
+GUARDRAIL_BENCH_REQUESTS=1200 GUARDRAIL_BENCH_PROGRESS_SECS=10 \
+  cargo bench -p guardrail-classifiers --features onnx --bench onnx_concurrency
+
+# Both stages through the proxy (needs oha); the proxy on 4 CPUs
+SESSIONS=0 INTRA=2 CONCURRENCY=8 PROXY_CPUS=0-3 LOAD_CPUS=8-15 just load-test-onnx
+```
+
+For a smaller machine, run the benchmark under `taskset -c 0-3 cargo bench …`;
+the automatic pool size follows the CPUs the process is allowed. Run one
+configuration per process, so the memory figures belong to that row.
+
 ### Full pipeline: measured, gated, and passing (single-run snapshot)
 
 Unlike the classifier microbenchmarks above, `guardrail-test-suite/benches/pipeline.rs`
@@ -385,6 +635,14 @@ For a typical chat-completion request (one system message + one user message,
   0.4 s per stage, each on one core. Throughput per stage is about
   `sessions / latency`: 3 req/s with one session and 9.9 req/s with four
   at 1 KB (see [above](#onnx-throughput-under-concurrent-requests)).
+  On the 8-core machine ([measurements](#onnx-on-8-cores-pool-size-long-input-both-stages)),
+  that holds up to about 4 sessions and then flattens: one stage peaks at
+  12–13 req/s (`onnx_injection`) and 16 req/s (`toxicity`) at 1 KB, however
+  the threads are split between sessions and intra threads, because all
+  cores share one limit (most likely memory bandwidth). With both stages in
+  series through the proxy, 6–7 req/s. Long input costs about 1.2 s per
+  full 512-token window per stage on one thread, so one 16-window request
+  takes 21 s in `onnx_injection` and 15 s in `toxicity`.
 
 - **With ONNX classifiers (CUDA):** not measured.
 

@@ -3,33 +3,6 @@
 Open work, grouped by what it needs to run. Measurements go in
 [`benchmarks.md`](benchmarks.md) when they are done; remove the item here.
 
-## Needs a large machine (16 GB+ free RAM, 8+ cores)
-
-Each ONNX session holds its own copy of the model (about 0.85 GB for the
-DeBERTa injection model), so these don't fit on a small machine.
-
-- [ ] **ONNX throughput past 4 sessions.** Re-run `onnx_concurrency` with
-  `GUARDRAIL_BENCH_SESSIONS=1,2,4,8` and `GUARDRAIL_BENCH_CONCURRENCY=1,4,8,16`
-  to show where scaling stops (cores or memory bandwidth). If it keeps
-  scaling, revisit the automatic cap of 4 sessions
-  (`onnx::MAX_DEFAULT_SESSIONS`).
-- [ ] **`sessions` × `intra_threads` trade-off.** Same total threads, split
-  differently (for example 8×1, 4×2, 2×4), to give tuning guidance in
-  `configuration.md`: more sessions for throughput, more intra threads for
-  latency.
-- [ ] **Toxicity model under load.** Export
-  `unitary/unbiased-toxic-roberta` to ONNX (`optimum-onnx` needs PyTorch,
-  several GB; see [`onnx-models.md`](onnx-models.md)) and run the same
-  concurrency benchmark for the `toxicity` stage.
-- [ ] **Long-input cost.** Time a 16-window (about 6k-token) request on each
-  real model. This is the worst case one request can cost, and the number
-  operators need to choose `pipeline.stage_timeout_ms`.
-- [ ] **Both ONNX stages through the proxy.** End-to-end load test with
-  `onnx_injection` and `toxicity` enabled: requests/s, p50/p99, and resident
-  memory with two session pools.
-- [ ] **Real-model smoke tests.** Run `onnx_real_models` with both models:
-  `GUARDRAIL_TEST_MODEL_DIR=… cargo test -p guardrail-classifiers --features onnx --test onnx_real_models -- --ignored`.
-
 ## Needs a GPU (A100 or H100, for example in Colab)
 
 - [ ] **Make `onnx-cuda` actually use the GPU.** The feature builds ONNX
