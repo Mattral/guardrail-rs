@@ -206,6 +206,89 @@ block longer input with `input_too_long_for_classifier` unless
 volumetric DoS, and there is no per-client rate limiting. A reverse proxy or
 WAF in front of guardrail-rs is recommended in public deployments.
 
+#### Long input holds ONNX sessions
+
+The most expensive request a client can send is one just under the
+`max_windows` limit. Each ONNX stage scores one request per session, and
+with the defaults a few such requests occupy every session. Measured with
+the defaults (`max_windows = 16`, `intra_threads = 1`, and the automatic
+pool, 4 sessions per stage) on an 8-core machine
+([benchmarks](benchmarks.md#long-input)):
+
+- 16 windows is 6,272 tokens, about 38 KB of plain English. One such
+  request holds an `onnx_injection` session for 21 s, then a `toxicity`
+  session for 15 s.
+- 4 of them sent together hold all 4 `onnx_injection` sessions for about
+  31 s. Every other request waits behind them. A client that keeps 4 such
+  requests in flight (about 150 KB every 30 s) stalls the ONNX stages for
+  everyone. On a smaller machine the pool is smaller, and fewer requests
+  are needed.
+- `pipeline.stage_timeout_ms` is `0` (no limit) by default, so the waiting
+  requests wait as long as it takes.
+
+A stage timeout doesn't free a session: inference that has started runs to
+the end in the background. What it bounds is how long other requests wait.
+They time out and are handled by the stage's `on_error`, and with the
+default `"allow"` that means **forwarded without the check**. With a
+timeout, set `on_error = "block"` on the ONNX stages, so that they answer
+`403 stage_error` instead. That turns a stall into quick errors for
+everyone else; it doesn't give the capacity back. Only `max_windows` bounds
+how long one request holds a session. With 4 such requests at once on 4 sessions:
+
+| `max_windows` | longest input scored | `onnx_injection` | `toxicity` |
+|---:|---|---:|---:|
+| 16 (default) | 6,272 tokens, about 38 KB | 31 s | 19 s |
+| 8 | 3,200 tokens, about 19 KB | 15.5 s | 9.4 s |
+| 4 | 1,664 tokens, about 10 KB | 7.6 s | 4.5 s |
+
+Halving `max_windows` halves how long a session can be held, so a client
+has to send twice as many requests to keep the pool busy. Longer input is
+resolved by `on_oversize` without running the model. It is still tokenized
+first, holding a session. Through the proxy with the defaults (one run), a
+10 MiB message (the default body limit) was blocked after 3.3 s and raised
+the proxy's peak memory by about 0.8 GB. 4 of them at once held all 4
+`onnx_injection` sessions for 4–5 s; a short request sent alongside took
+4.4 s instead of 0.5 s, and peak memory rose by about 3 GB. Lowering
+`server.max_body_size_bytes` bounds this.
+
+For a deployment that accepts traffic it doesn't trust:
+
+1. **Limit request size in front of the proxy**, or lower
+   `server.max_body_size_bytes`, to about the longest input you need to
+   scan. A body also carries the conversation history and JSON, so this is
+   a coarse bound. A per-client limit on concurrent requests or request rate
+   at the reverse proxy is what keeps one client from holding the pool.
+2. **Set `pipeline.stage_timeout_ms` with `on_error = "block"`** on both
+   ONNX stages, so that requests stuck behind long ones are rejected rather
+   than kept waiting or let through.
+3. **Lower `max_windows`** to the longest input you need classified. With
+   `on_oversize = "block"` longer input is rejected with
+   `input_too_long_for_classifier`; with `"allow"` it is forwarded without
+   this stage's check (logged and counted).
+
+The timeout applies to each stage, and it has to cover the longest input
+you allow at your load, or that input is rejected too. With
+`max_windows = 4`, `onnx_injection` took 7.6 s with all 4 sessions busy on
+long input, so 10 s leaves room on that machine; measure yours with the
+`onnx_concurrency` benchmark (`GUARDRAIL_BENCH_WINDOWS`):
+
+```toml
+[pipeline]
+stage_timeout_ms = 10000
+
+[stages.onnx_injection]
+on_error = "block"
+max_windows = 4
+
+[stages.toxicity]
+on_error = "block"
+max_windows = 4
+```
+
+More `intra_threads` also shortens a long request (16 windows in
+`onnx_injection`: 21 s with 1 thread, 9.5 s with 4), at the cost of
+throughput per core; see [`configuration.md`](configuration.md#onnx).
+
 ---
 
 ## Security properties
