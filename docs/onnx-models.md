@@ -144,10 +144,12 @@ message with 2.9 KB of filler then skipped the check entirely (tested
 against `unitary/unbiased-toxic-roberta`). At most `max_windows` windows
 are scored (16 by default: 6,272 tokens). Longer input is not scored at all;
 `on_oversize` decides what happens to it. It is found before a session is
-taken, by tokenizing only as much of the input as could fit the limit. The default, `"block"`, answers
+taken, by tokenizing only as much of the input as could fit the limit (32
+bytes per token); longer input that takes more bytes per token than that is
+oversize too. The default, `"block"`, answers
 `403` with code `input_too_long_for_classifier`. `"allow"` lets it through
 without this stage's check. Either way it is counted in
-`guardrail_stage_oversize_total{stage, outcome}`. It never goes through
+`guardrail_stage_oversize_total{stage, outcome, reason}`. It never goes through
 `on_error`: an input that is too long is not an inference failure, and
 failing open on it would let anyone skip the stage by padding their prompt.
 

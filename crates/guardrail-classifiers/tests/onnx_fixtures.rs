@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use guardrail_classifiers::{OnnxInjectionClassifier, ToxicityClassifier};
 use guardrail_core::{
     decision::{BlockCode, Decision},
-    pipeline::{FailMode, OversizeAction, PipelineBuilder, Stage, StageOutcome},
+    pipeline::{FailMode, OversizeAction, OversizeReason, PipelineBuilder, Stage, StageOutcome},
     request::{ChatMessage, GuardrailRequest, MessageContent, Provider, Role},
 };
 
@@ -246,7 +246,10 @@ async fn input_over_the_window_limit_is_blocked_by_default() {
         }
         other => panic!("expected Block, got {other:?}"),
     }
-    assert_eq!(outcomes, vec![StageOutcome::OversizeBlocked]);
+    assert_eq!(
+        outcomes,
+        vec![StageOutcome::OversizeBlocked(OversizeReason::OverLimit)]
+    );
 }
 
 #[tokio::test]
@@ -257,7 +260,10 @@ async fn oversize_allow_lets_long_input_through_and_reports_it() {
     let stage = toxicity("keyword_2class.onnx", 0.90).with_on_oversize(OversizeAction::Allow);
     let (decision, outcomes) = run_fail_open(stage, &text).await;
     assert_eq!(decision, Decision::Allow);
-    assert_eq!(outcomes, vec![StageOutcome::OversizeAllowed]);
+    assert_eq!(
+        outcomes,
+        vec![StageOutcome::OversizeAllowed(OversizeReason::OverLimit)]
+    );
 }
 
 #[tokio::test]
@@ -267,7 +273,10 @@ async fn max_windows_is_configurable() {
     let stage = injection("keyword_2class.onnx", 0.85).with_max_windows(1);
     let (decision, outcomes) = run_fail_open(stage, &text).await;
     assert!(matches!(decision, Decision::Block { .. }), "{decision:?}");
-    assert_eq!(outcomes, vec![StageOutcome::OversizeBlocked]);
+    assert_eq!(
+        outcomes,
+        vec![StageOutcome::OversizeBlocked(OversizeReason::OverLimit)]
+    );
 
     // Raising the limit scores it instead (and finds the trigger).
     let stage = injection("keyword_2class.onnx", 0.85).with_max_windows(2);

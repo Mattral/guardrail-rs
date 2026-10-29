@@ -19,7 +19,7 @@ use hyper::{Method, Request, Response, StatusCode};
 
 use guardrail_core::{
     decision::Decision,
-    pipeline::{StageEvent, StageOutcome},
+    pipeline::{OversizeReason, StageEvent, StageOutcome},
     request::Provider,
 };
 
@@ -777,14 +777,18 @@ fn observe_stage_event(metrics: &Metrics, event: &StageEvent, failed_open: &mut 
         .observe(event.elapsed.as_secs_f64());
 
     let oversize = match event.outcome {
-        StageOutcome::OversizeAllowed => Some("allowed"),
-        StageOutcome::OversizeBlocked => Some("blocked"),
+        StageOutcome::OversizeAllowed(reason) => Some(("allowed", reason)),
+        StageOutcome::OversizeBlocked(reason) => Some(("blocked", reason)),
         _ => None,
     };
-    if let Some(outcome) = oversize {
+    if let Some((outcome, reason)) = oversize {
+        let reason = match reason {
+            OversizeReason::OverLimit => "over_limit",
+            OversizeReason::Unmeasured => "unmeasured",
+        };
         metrics
             .stage_oversize_total
-            .with_label_values(&[event.stage, outcome])
+            .with_label_values(&[event.stage, outcome, reason])
             .inc();
         return;
     }
@@ -990,8 +994,23 @@ mod tests {
         }
 
         let counter = &metrics.stage_oversize_total;
-        assert_eq!(counter.with_label_values(&["too_long", "allowed"]).get(), 1);
-        assert_eq!(counter.with_label_values(&["too_long", "blocked"]).get(), 1);
+        let count = |outcome, reason| {
+            counter
+                .with_label_values(&["too_long", outcome, reason])
+                .get()
+        };
+        assert_eq!(count("allowed", "over_limit"), 1);
+        assert_eq!(count("blocked", "over_limit"), 1);
+
+        // Input the stage didn't measure in full gets its own reason.
+        let event = StageEvent {
+            stage: "too_long",
+            elapsed: std::time::Duration::ZERO,
+            outcome: StageOutcome::OversizeBlocked(OversizeReason::Unmeasured),
+        };
+        observe_stage_event(&metrics, &event, &mut Vec::new());
+        assert_eq!(count("blocked", "unmeasured"), 1);
+        assert_eq!(count("blocked", "over_limit"), 1);
         assert_eq!(
             metrics
                 .pipeline_errors_total

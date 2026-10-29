@@ -253,11 +253,16 @@ bound this is admission control in front of each pool (a bounded wait,
 then `503` with `Retry-After`), which guardrail-rs doesn't have yet.
 
 Input over the limit is resolved by `on_oversize` without running the
-model, and without taking a session. It is tokenized first, and only as far
-as could fit the limit (32 bytes for each token the limit covers, 196 KiB
-at `max_windows = 16`), so turning away a large input costs about as much
-as a small one. Before 0.4.0 the stage took a session first and tokenized
-all of the input. Through the proxy with both stages and
+model, and without taking a session. It is tokenized first, and never
+further than could fit the limit: 32 bytes for each token the limit covers,
+196 KiB at `max_windows = 16`, where text runs at 2–8 bytes per token.
+Longer input whose first 196 KiB fit within the limit is oversize as well:
+it takes more than 32 bytes per token, which some input does (below), and
+measuring all of it would cost what the limit is there to bound. It is
+counted in `guardrail_stage_oversize_total` with `reason="unmeasured"`
+(`"over_limit"` otherwise). So turning away a large input costs about as
+much as a small one. Before 0.4.0 the stage took a session first and
+tokenized all of the input. Through the proxy with both stages and
 `max_body_size_bytes = 10485760` (the old default), 3 runs:
 
 | | before | after |
@@ -268,7 +273,25 @@ all of the input. Through the proxy with both stages and
 | a short request sent alongside: answered after | 4.1–4.3 s | 0.47–0.57 s |
 | rise in peak memory, 4 at once | about 2.7 GB | about 0.25 GB |
 
-The short request takes 0.48–0.67 s alone. At the new default body limit,
+The short request takes 0.48–0.67 s alone. Input built to take few tokens
+per byte, as 4 MiB bodies (3 runs):
+
+| 4 MiB of | bytes per token, `onnx_injection` / `toxicity` | `403` after, both stages | `toxicity` alone |
+|---|---|---:|---:|
+| `-` or `=` | 1 / 64 | 0.12–0.17 s | 0.09–0.12 s |
+| spaces | no tokens / 1 | 0.02–0.03 s | 0.11–0.12 s |
+| newlines | no tokens / 2 | 0.03 s | 0.09 s |
+| U+E000 (private use) | 2 tokens in all / 1.5 | 0.03 s | 0.82–0.91 s |
+| `ÃÂ` (mojibake) | 4 / 128 | 0.05–0.06 s | 0.90–1.01 s |
+
+The DeBERTa tokenizer drops whitespace and fuses a run of unknown
+characters into one token; the RoBERTa one has single tokens for 64 dashes
+and for 32 `ÃÂ` pairs (its longest, 128 bytes). Peak memory rose by at most
+83 MiB for one request and 131 MiB for 4 at once. A short request sent
+alongside 4 of them was answered in under 0.1 s with both stages, and in
+up to 0.65 s with `toxicity` alone. That, and the 0.8–1 s for one request
+with `toxicity` alone, is the PII redactor, which runs before it, scanning
+4 MiB of non-ASCII text. At the new default body limit,
 4 MiB, a 10 MiB request is refused with `413` in under 1 ms, before any
 stage runs.
 
