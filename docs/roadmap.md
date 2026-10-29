@@ -33,6 +33,12 @@ Open work, grouped by what it needs to run. Measurements go in
   memory (see [benchmarks](benchmarks.md#through-the-proxy-both-stages)).
   Divide by the number of enabled ONNX stages, together with the decision
   on the `intra_threads` default.
+- [ ] Admission control for each ONNX stage. Today requests wait for a
+  session without limit, so a few long requests stall everyone behind them
+  (see [long input](threat-model.md#long-input-holds-onnx-sessions)). Bound
+  the wait queue per stage and answer `503` with `Retry-After` when it is
+  full, ideally with permits weighted by window count, so that one 16-window
+  request takes as much of the pool as 16 short ones.
 - [ ] Reject input over `max_windows` without holding a session. The
   stage takes a session, then tokenizes all of the input to count windows,
   so a 10 MiB message holds a session for about 3 s and about 0.8 GB of
