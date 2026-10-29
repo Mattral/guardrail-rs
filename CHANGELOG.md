@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `docs/roadmap.md`: open work, grouped by what it needs to run (a large
   machine, a GPU, or nothing special).
+- `contrib/load-test/`: a load test of the proxy with both ONNX stages
+  against an instant mock upstream (`just load-test-onnx`), and a small
+  probe of per-core compute rate and memory read bandwidth.
 - **ONNX session pool.** Each ONNX stage now runs a pool of sessions
   (`[onnx] sessions`, default one per core divided by
   `[onnx] intra_threads`, at most 4) instead of a single session behind a
