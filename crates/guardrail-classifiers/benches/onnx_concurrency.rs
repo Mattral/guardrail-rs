@@ -320,17 +320,20 @@ fn main() {
             let n_sessions = loaded.sessions();
             let rss = mib(status_mib("VmRSS:"));
 
-            let stage_count = runtime.block_on(async {
-                let checked = loaded.as_stage();
+            runtime.block_on(async {
                 assert!(
-                    checked
+                    loaded
+                        .as_stage()
                         .evaluate(&probe)
                         .await
                         .is_err_and(|e| e.input_too_long().is_some()),
                     "the stage did not score the bench request's role"
                 );
-                stage_windows(checked, &req).await
             });
+            // One window under the prompt's count: the stage measures all of
+            // the prompt and reports its size.
+            let loaded = loaded.with_max_windows(windows.saturating_sub(1).max(1));
+            let stage_count = runtime.block_on(stage_windows(loaded.as_stage(), &req));
             assert_eq!(
                 stage_count, windows,
                 "the stage counts {stage_count} windows, the bench tokenizer {windows}"
