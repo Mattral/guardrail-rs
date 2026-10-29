@@ -355,6 +355,12 @@ request_stages = ["regex_injection", "banana_stage"]
     }
 
     #[test]
+    fn test_body_limit_defaults_to_4_mib() {
+        let config: Config = toml::from_str(minimal()).unwrap();
+        assert_eq!(config.server.max_body_size_bytes, 4 * 1024 * 1024);
+    }
+
+    #[test]
     fn test_onnx_oversize_settings() {
         use crate::schema::OnOversize;
 
