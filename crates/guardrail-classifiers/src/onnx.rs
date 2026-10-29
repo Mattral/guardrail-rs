@@ -22,7 +22,7 @@
 use guardrail_core::{
     decision::{BlockCode, Decision},
     error::GuardrailError,
-    pipeline::{InputTooLong, OversizeAction, Stage},
+    pipeline::{InputTooLong, OversizeAction, OversizeReason, Stage},
     request::{GuardrailRequest, Role},
 };
 use std::path::Path;
@@ -53,8 +53,10 @@ pub(crate) struct WindowLimit {
 }
 
 /// Most bytes per token assumed when deciding how much of a long input to
-/// tokenize. Text runs at about 2 to 8; the margin is so that no real input
-/// over the limit is cut short of it.
+/// tokenize. Text runs at about 2 to 8. Runs of punctuation or unknown
+/// characters can take far more (up to 128 for the RoBERTa tokenizer, and
+/// none at all for whitespace or fused unknowns with DeBERTa's), and input
+/// like that is not measured past this.
 const MAX_BYTES_PER_TOKEN: usize = 32;
 
 impl WindowLimit {
@@ -277,9 +279,12 @@ async fn score_in_pool(
 ///
 /// Input needing more than `limit.max_windows` windows returns
 /// [`InputTooLong`], which the pipeline resolves with `limit.on_oversize`.
-/// Only the first [`WindowLimit::max_bytes`] are tokenized to find out, so
-/// turning away a large input costs no more than a small one; `size` is
-/// then the window count of that part.
+/// Only the first [`WindowLimit::max_bytes`] are ever tokenized, so turning
+/// away a large input costs no more than a small one. Input longer than
+/// that is oversize whatever its first part holds: over the limit there
+/// ([`OversizeReason::OverLimit`]), or not, at more than
+/// [`MAX_BYTES_PER_TOKEN`] bytes per token ([`OversizeReason::Unmeasured`]).
+/// Either way `size` is the window count of the part tokenized.
 pub(crate) fn windows(
     stage: &'static str,
     tokenizer: &tokenizers::Tokenizer,
@@ -290,23 +295,22 @@ pub(crate) fn windows(
     while !text.is_char_boundary(cut) {
         cut -= 1;
     }
-    let count = |e: &tokenizers::Encoding| 1 + e.get_overflowing().len();
-    let mut first = tokenizer.encode(&text[..cut], true).map_err(internal)?;
-    if cut < text.len() && count(&first) <= limit.max_windows {
-        // That much fit, at over MAX_BYTES_PER_TOKEN bytes per token: not
-        // text, but few tokens, so tokenizing all of it is cheap in memory.
-        first = tokenizer.encode(text, true).map_err(internal)?;
+    let first = tokenizer.encode(&text[..cut], true).map_err(internal)?;
+    let windows = 1 + first.get_overflowing().len();
+    let reason = if windows > limit.max_windows {
+        OversizeReason::OverLimit
+    } else if cut < text.len() {
+        OversizeReason::Unmeasured
+    } else {
+        return Ok(first);
+    };
+    Err(InputTooLong {
+        size: windows,
+        limit: limit.max_windows,
+        reason,
+        action: limit.on_oversize,
     }
-    let windows = count(&first);
-    if windows > limit.max_windows {
-        return Err(InputTooLong {
-            size: windows,
-            limit: limit.max_windows,
-            action: limit.on_oversize,
-        }
-        .into_error(stage));
-    }
-    Ok(first)
+    .into_error(stage))
 }
 
 /// Run the model on each window from [`windows`] and return the highest
@@ -916,10 +920,13 @@ mod tests {
         assert!(result.unwrap_err().input_too_long().is_some());
     }
 
-    /// Input that is long in bytes but few in tokens is still scored: the
-    /// fixture tokenizer reads 1 MB of one letter as a single word.
+    /// Input longer than the stage tokenizes, whose tokenized part doesn't
+    /// reach the limit (here 1 MB of one letter, a single word to the
+    /// fixture tokenizer), is not tokenized further: it is oversize.
+    /// Tokenizing all of it would hand back the cost the limit is there to
+    /// bound.
     #[tokio::test]
-    async fn test_long_input_with_few_tokens_is_scored() {
+    async fn test_input_too_long_to_measure_is_oversize() {
         let stage = OnnxInjectionClassifier::load_with_options(
             fixture("keyword_2class.onnx"),
             fixture("tokenizer.json"),
@@ -928,8 +935,16 @@ mod tests {
         )
         .unwrap()
         .with_max_windows(1);
-        let decision = stage.evaluate(&user_request("a".repeat(1 << 20))).await;
-        assert_eq!(decision.unwrap(), Decision::Allow);
+        let result = stage.evaluate(&user_request("a".repeat(1 << 20))).await;
+        let reason = match &result {
+            Err(e) => e.input_too_long().map(|t| t.reason),
+            Ok(_) => None,
+        };
+        assert_eq!(
+            reason,
+            Some(OversizeReason::Unmeasured),
+            "expected unmeasured oversize, got {result:?}"
+        );
     }
 
     /// The same for the blocking `score()`.

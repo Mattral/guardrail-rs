@@ -32,30 +32,49 @@ pub enum OversizeAction {
     Allow,
 }
 
+/// Why a stage found its input too large to check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OversizeReason {
+    /// The input's size is over the stage's limit.
+    OverLimit,
+    /// The input is larger than the stage will measure, and the part it
+    /// did measure doesn't settle whether it is over the limit. Measuring
+    /// the rest would cost what the limit is there to bound.
+    Unmeasured,
+}
+
 /// Returned by a stage whose input is larger than it can check, wrapped in
 /// [`GuardrailError::StageFailed`] (see [`InputTooLong::into_error`]).
 ///
 /// The pipeline resolves it with [`InputTooLong::action`], not with the
 /// stage's [`FailMode`], and reports [`StageOutcome::OversizeBlocked`] or
-/// [`StageOutcome::OversizeAllowed`].
+/// [`StageOutcome::OversizeAllowed`] with its [`InputTooLong::reason`].
 ///
 /// # Examples
 ///
 /// ```rust
-/// use guardrail_core::pipeline::{InputTooLong, OversizeAction};
+/// use guardrail_core::pipeline::{InputTooLong, OversizeAction, OversizeReason};
 ///
-/// let err = InputTooLong { size: 17, limit: 16, action: OversizeAction::Block }
-///     .into_error("onnx_injection");
+/// let err = InputTooLong {
+///     size: 17,
+///     limit: 16,
+///     reason: OversizeReason::OverLimit,
+///     action: OversizeAction::Block,
+/// }
+/// .into_error("onnx_injection");
 /// assert_eq!(err.input_too_long().unwrap().size, 17);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("input size {size} is over this stage's limit of {limit}")]
 pub struct InputTooLong {
     /// How big the input is, in the stage's own unit (for the ONNX
-    /// classifiers, windows of tokens).
+    /// classifiers, windows of tokens). With [`OversizeReason::Unmeasured`],
+    /// the size of the part that was measured.
     pub size: usize,
     /// The most the stage checks, in the same unit.
     pub limit: usize,
+    /// Why the input is too large to check.
+    pub reason: OversizeReason,
     /// What the pipeline should do with the request.
     pub action: OversizeAction,
 }
@@ -96,10 +115,10 @@ pub enum StageOutcome {
     ErrorBlocked,
     /// The input was too long for the stage, which was configured to let
     /// it through unchecked ([`OversizeAction::Allow`]).
-    OversizeAllowed,
+    OversizeAllowed(OversizeReason),
     /// The input was too long for the stage and the request was blocked
     /// ([`OversizeAction::Block`]).
-    OversizeBlocked,
+    OversizeBlocked(OversizeReason),
 }
 
 /// One stage evaluation, as reported to [`Pipeline::run_with_events`].
@@ -542,22 +561,27 @@ where
                 stage,
                 size = too_long.size,
                 limit = too_long.limit,
+                reason = ?too_long.reason,
                 "input too long for stage; allowed unchecked (on_oversize = allow)"
             );
-            (StageOutcome::OversizeAllowed, Decision::Allow)
+            (
+                StageOutcome::OversizeAllowed(too_long.reason),
+                Decision::Allow,
+            )
         }
         OversizeAction::Block => {
             tracing::info!(
                 stage,
                 size = too_long.size,
                 limit = too_long.limit,
+                reason = ?too_long.reason,
                 "input too long for stage; blocked"
             );
             let decision = Decision::Block {
                 reason: format!("input is too long for stage '{stage}' to check"),
                 code: BlockCode::Custom(OVERSIZE_BLOCK_CODE.into()),
             };
-            (StageOutcome::OversizeBlocked, decision)
+            (StageOutcome::OversizeBlocked(too_long.reason), decision)
         }
     };
     observer(&StageEvent {
@@ -965,7 +989,10 @@ mod tests {
             Decision::Block { code, .. } => assert_eq!(code.as_str(), OVERSIZE_BLOCK_CODE),
             other => panic!("expected Block, got {other:?}"),
         }
-        assert_eq!(outcomes, vec![StageOutcome::OversizeBlocked]);
+        assert_eq!(
+            outcomes,
+            vec![StageOutcome::OversizeBlocked(OversizeReason::OverLimit)]
+        );
 
         // Allow wins even on a fail-closed stage.
         let pipeline = PipelineBuilder::default()
@@ -977,7 +1004,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(decision, Decision::Allow);
-        assert_eq!(outcomes, vec![StageOutcome::OversizeAllowed]);
+        assert_eq!(
+            outcomes,
+            vec![StageOutcome::OversizeAllowed(OversizeReason::OverLimit)]
+        );
     }
 
     #[tokio::test]

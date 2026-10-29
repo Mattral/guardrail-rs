@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `translate::parse_body` and `ScannedBody::apply`.
   `forward::forward_request` takes the JSON body (`&serde_json::Value`)
   instead of a `GuardrailRequest`.
+- `guardrail_stage_oversize_total` has a third label, `reason`:
+  `over_limit`, or `unmeasured` for input longer than the stage measures.
+  Rust API: `InputTooLong` has a `reason` field (`OversizeReason`), and
+  `StageOutcome::OversizeAllowed` / `OversizeBlocked` carry it.
 - `server.max_body_size_bytes` now defaults to 4 MiB (was 10 MiB); larger
   requests get `413`. If clients send images or documents inline (base64),
   set it in `[server]`, for example `max_body_size_bytes = 10485760` for the
@@ -44,9 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock) and then tokenized the whole input just to find it too long. A
   10 MiB message held an `onnx_injection` session for about 3.5 s and
   0.8 GB of memory before its `403`; 4 at once stalled every other request
-  for about 4 s. Input is now tokenized before a session is taken, and only
-  as far as could fit the limit, so turning it away takes about 0.1 s and
-  holds no session. The default body limit is also lower (above). Affects
+  for about 4 s. Input is now tokenized before a session is taken, and never
+  further than could fit the limit (196 KiB at 16 windows), so turning it
+  away takes about 0.1 s and holds no session. Longer input whose first part
+  fits, at more than 32 bytes per token (runs of dashes, `ÃÂ` mojibake or
+  unknown characters), is oversize too, counted with
+  `reason="unmeasured"`. The default body limit is also lower (above). Affects
   0.3.1 and earlier.
 
 ### Added

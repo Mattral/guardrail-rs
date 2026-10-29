@@ -82,7 +82,11 @@ anyone skip the stage by padding their prompt.
 
 `Pipeline::run_with_events` reports each stage's outcome
 (`StageOutcome::Completed`, `ErrorAllowed`, `ErrorBlocked`, `OversizeAllowed`
-or `OversizeBlocked`), so callers can count fail-open and oversize events.
+or `OversizeBlocked`, the last two with the `OversizeReason`), so callers
+can count fail-open and oversize events. Set `reason` to
+`OversizeReason::OverLimit` when the input's size is known to be over the
+limit, and to `Unmeasured` when the stage stopped measuring before it could
+tell.
 
 ### 4. Non-blocking async
 Never call blocking I/O or CPU-intensive code directly inside `evaluate`.

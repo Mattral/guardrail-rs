@@ -46,7 +46,9 @@ pub struct Metrics {
     pub pipeline_errors_total: IntCounterVec,
     /// Total number of requests whose input was too long for a stage to
     /// check (ONNX `max_windows`), labeled by stage and by how
-    /// `on_oversize` resolved it (`"blocked"` or `"allowed"`).
+    /// `on_oversize` resolved it (`"blocked"` or `"allowed"`), and by why
+    /// (`"over_limit"`, or `"unmeasured"` for input longer than the stage
+    /// measures).
     pub stage_oversize_total: IntCounterVec,
     /// Current number of in-flight HTTP connections being served.
     pub active_connections: Gauge,
@@ -172,9 +174,10 @@ impl Metrics {
             Opts::new(
                 "guardrail_stage_oversize_total",
                 "Total number of requests whose input was too long for a stage to check, \
-                 labeled by stage and outcome (blocked, or allowed unchecked).",
+                 labeled by stage, outcome (blocked, or allowed unchecked) and reason \
+                 (over_limit, or unmeasured: longer than the stage measures).",
             ),
-            &["stage", "outcome"],
+            &["stage", "outcome", "reason"],
         )
         .expect("valid metric definition");
 

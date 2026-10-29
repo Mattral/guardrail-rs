@@ -110,6 +110,7 @@ impl Stage for TooLongStage {
         Err(crate::pipeline::InputTooLong {
             size: 17,
             limit: 16,
+            reason: crate::pipeline::OversizeReason::OverLimit,
             action: self.0,
         }
         .into_error(self.name()))
