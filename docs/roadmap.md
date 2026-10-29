@@ -32,6 +32,13 @@ Open work, grouped by what it needs to run. Measurements go in
   memory (see [benchmarks](benchmarks.md#through-the-proxy-both-stages)).
   Divide by the number of enabled ONNX stages, together with the decision
   on the `intra_threads` default.
+- [ ] Reject input over `max_windows` without holding a session. The
+  stage takes a session, then tokenizes all of the input to count windows,
+  so a 10 MiB message holds a session for about 3 s and about 0.8 GB of
+  memory before it is blocked (see
+  [long input](threat-model.md#long-input-holds-onnx-sessions); one run).
+  Stop tokenizing once the window count is over the limit, or check a cheap
+  bound on the input length first.
 - [ ] Edition 2024 and `resolver = "3"` (the env-override tests no longer
   call `set_var`, so the migration has nothing left to break), and update
   `.rustfmt.toml`'s `edition`.
