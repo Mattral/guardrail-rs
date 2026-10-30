@@ -952,6 +952,7 @@ dependencies = [
  "arc-swap",
  "guardrail-classifiers",
  "guardrail-core",
+ "regex-automata",
  "serde",
  "tempfile",
  "thiserror 2.0.21",

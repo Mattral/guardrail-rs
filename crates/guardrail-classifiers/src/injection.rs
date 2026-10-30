@@ -179,6 +179,11 @@ impl RegexInjectionScanner {
     pub fn bundled_rule_source() -> &'static str {
         BUNDLED_RULES
     }
+
+    /// The rules this scanner was built from, in order.
+    pub fn rules(&self) -> &[String] {
+        &self.rule_names
+    }
 }
 
 #[async_trait::async_trait]

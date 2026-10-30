@@ -24,6 +24,7 @@ toml        = { workspace = true }
 thiserror   = { workspace = true }
 tracing     = { workspace = true }
 arc-swap    = { workspace = true }
+regex-automata = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -44,7 +44,7 @@ Please include:
   via `rules_file` or `extra_rules`, this guarantee still holds because
   `regex` never backtracks. Linear time can still be slow: a Unicode word
   boundary (`\b`) makes `regex` scan non-ASCII text about 100 times slower,
-  so write custom rules with `(?-u:\b)`. Reports of pathological
+  so guardrail-rs refuses custom rules that have one: write `(?-u:\b)`. Reports of pathological
   *performance* (not correctness) on custom rule sets are still welcome.
 - **Bypass of detection stages:** if you find an input that should be
   blocked/redacted by a stage but isn't, this is a valid security report,

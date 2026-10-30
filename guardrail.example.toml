@@ -65,7 +65,9 @@ stage_timeout_ms = 0
 enabled = true
 
 # Path to a custom rule file (one regex per line, # for comments).
-# Empty string = use the bundled rule set.
+# Empty string = use the bundled rule set. Write word boundaries as (?-u:\b):
+# a rule with a Unicode \b is refused at startup (it makes scanning non-ASCII
+# text about 100 times slower).
 rules_file = ""
 
 # Additional patterns appended to whichever rule set is active.
