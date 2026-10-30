@@ -324,7 +324,12 @@ configuration and 10 MiB messages, 3 runs:
 | U+E000, 32 | 4.8–11.1 s | 4.4–5.0 s | 0.38–0.59 s | 63–193 ms |
 
 A request the regex stage blocks, sent alongside, waited as long as
-`/healthz`. The patterns now use ASCII word boundaries (`(?-u:\b)`) and
+`/healthz`. The stall starts when the slow requests in flight reach the
+number of worker threads, one per CPU by default (`server.workers`): the table
+is on 16 CPUs, where 8 at once didn't stall and 16 did. With the proxy
+restricted to 2 CPUs, one 10 MiB Chinese message took 2.3–2.4 s and
+`/healthz` stayed at 1 ms; two at once stalled `/healthz` for 2.2 s, and
+four for 2.3–3.1 s (now: under 0.05 s). The patterns now use ASCII word boundaries (`(?-u:\b)`) and
 ASCII digits, and a test checks that every bundled PII pattern and
 injection rule can be searched by the lazy DFA. The same applies to custom
 `regex_injection` rules: one rule with a Unicode `\b` made the whole rule
