@@ -203,6 +203,11 @@ From [measurements on an 8-core machine](benchmarks.md#onnx-on-8-cores-pool-size
   memory was 40% lower (one session instead of two). If memory allows,
   `intra_threads = 1` is the better choice there; see
   [a 2-vCPU cloud instance](benchmarks.md#a-2-vcpu-cloud-instance).
+- **Both ONNX stages on 2 vCPUs:** the automatic size gives each stage one
+  session whatever `intra_threads` is (2 CPUs / (1 × 2 stages) = 1, and
+  2 / (2 × 2) rounds up to the minimum of 1). So `intra_threads = 2` saves
+  no memory there, and with both stages busy it runs 4 inference threads on
+  2 vCPUs; `intra_threads = 1` runs 2. Not measured with both stages.
 
 ```toml
 # SMT host, 8 cores × 2 threads, both ONNX stages: 8 / (2 × 2) = 2 sessions
