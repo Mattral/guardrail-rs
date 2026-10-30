@@ -73,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/configuration.md`: how to size `[onnx] sessions` and
   `intra_threads`, counting threads across all enabled ONNX stages, with the
   memory each model's session takes.
-- `docs/threat-model.md`: how long input holds the ONNX sessions, measured
+- `docs/threat-model.md`: what long input costs the ONNX stages, measured
   for `max_windows` 4, 8 and 16, and what to set against it (a request size
   limit in front of the proxy, `stage_timeout_ms` with `on_error = "block"`),
   and why a lower `max_windows` doesn't help.

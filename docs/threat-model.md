@@ -203,10 +203,14 @@ CPU; see [`benchmarks.md`](benchmarks.md#onnx-classifiers-measured-and-far-over-
 They score at most `max_windows` windows of 512 tokens (16 by default) and
 block longer input with `input_too_long_for_classifier` unless
 `on_oversize = "allow"`. These are basic limits: guardrail-rs is not designed to defend against
-volumetric DoS, and there is no per-client rate limiting. A reverse proxy or
-WAF in front of guardrail-rs is recommended in public deployments.
+volumetric DoS, and there is no per-client rate limiting and no limit on
+concurrent requests. Each request's body is held in memory while it is
+scanned, so memory grows with the number of requests in flight: 32 at once
+with 10 MiB bodies raised it by about 1.5 GB with the default stages. A
+reverse proxy or WAF in front of guardrail-rs is recommended in public
+deployments; a built-in limit is on the [roadmap](roadmap.md).
 
-#### Long input holds ONNX sessions
+#### Long input to the ONNX stages
 
 The most expensive request a client can send is one just under the
 `max_windows` limit. Each ONNX stage scores one request per session, and

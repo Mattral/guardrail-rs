@@ -33,10 +33,19 @@ Open work, grouped by what it needs to run. Measurements go in
   are real.
 - [ ] Admission control for each ONNX stage. Today requests wait for a
   session without limit, so a few long requests stall everyone behind them
-  (see [long input](threat-model.md#long-input-holds-onnx-sessions)). Bound
+  (see [long input](threat-model.md#long-input-to-the-onnx-stages)). Bound
   the wait queue per stage and answer `503` with `Retry-After` when it is
   full, ideally with permits weighted by window count, so that one 16-window
   request takes as much of the pool as 16 short ones.
+- [ ] A built-in limit on concurrent requests, or on request body bytes in
+  flight. Each request's body is held in memory while it is scanned, so
+  memory grows with concurrency in any configuration, and only a reverse
+  proxy in front bounds it today. With over-long input turned away early,
+  16 concurrent 10 MiB bodies still raise the proxy's memory by about
+  1.1 GB with both ONNX stages, and 32 by about 1.5 GB with the default
+  stages. A limit taken before the body is read (by `Content-Length`, or
+  as chunks arrive), answering `503` with `Retry-After` when full, would
+  bound it in the proxy itself.
 - [ ] Edition 2024 and `resolver = "3"` (the env-override tests no longer
   call `set_var`, so the migration has nothing left to break), and update
   `.rustfmt.toml`'s `edition`.
