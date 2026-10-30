@@ -158,9 +158,19 @@ fn apply_env_overrides(config: &mut Config, lookup: impl Fn(&str) -> Option<Stri
 
 #[cfg(feature = "onnx")]
 fn onnx_runtime_options(config: &Config) -> guardrail_classifiers::onnx::OnnxRuntimeOptions {
+    // The ONNX stages that will run: enabled, and listed in request_stages.
+    let listed = |id: &str| config.pipeline.request_stages.iter().any(|s| s == id);
+    let stages = [
+        ("onnx_injection", config.stages.onnx_injection.enabled),
+        ("toxicity", config.stages.toxicity.enabled),
+    ]
+    .into_iter()
+    .filter(|&(id, enabled)| enabled && listed(id))
+    .count();
     guardrail_classifiers::onnx::OnnxRuntimeOptions {
         sessions: config.onnx.sessions,
         intra_threads: config.onnx.intra_threads,
+        stages,
     }
     .normalized()
 }
@@ -609,6 +619,30 @@ mod tests {
     use super::*;
     use crate::validate_config;
     use std::io::Write;
+
+    /// The automatic pool size is shared by the ONNX stages that will
+    /// actually run: enabled, and listed in `request_stages`.
+    #[cfg(feature = "onnx")]
+    #[test]
+    fn test_onnx_pools_are_sized_for_the_enabled_onnx_stages() {
+        let stages = |listed: &str, injection: bool, toxicity: bool| {
+            let config: Config = toml::from_str(&format!(
+                "[server]\nhost = \"127.0.0.1\"\nport = 8080\n\n\
+                 [upstream]\nurl = \"https://api.openai.com\"\n\n\
+                 [pipeline]\nrequest_stages = {listed}\n\n\
+                 [stages.onnx_injection]\nenabled = {injection}\n\n\
+                 [stages.toxicity]\nenabled = {toxicity}\n"
+            ))
+            .unwrap();
+            onnx_runtime_options(&config).stages
+        };
+        let both = r#"["onnx_injection", "toxicity"]"#;
+        assert_eq!(stages(both, true, true), 2);
+        assert_eq!(stages(both, true, false), 1);
+        assert_eq!(stages(both, false, true), 1);
+        assert_eq!(stages(r#"["toxicity"]"#, true, true), 1);
+        assert_eq!(stages(r#"["regex_injection"]"#, true, true), 1);
+    }
 
     fn write_temp_config(contents: &str) -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().unwrap();

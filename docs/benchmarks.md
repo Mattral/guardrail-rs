@@ -429,6 +429,23 @@ The rows match the unrestricted runs with the same number of busy threads
 (2 sessions: 5.8 and 5.9 req/s; 4 × 2: 12.6 and 12.9), which is what one
 core per logical CPU predicts.
 
+#### Pools sized for both stages
+
+The automatic pool size divides the CPUs between the enabled ONNX stages
+(it used to give each stage the whole machine). Both stages through the
+proxy, `intra_threads = 2`, the same CPU sets as above, 3 runs on the same
+day for both rows (that day's runs were about 10% slower than the tables
+above, so compare within this table only):
+
+| logical CPUs | automatic pool per stage | p50 alone (ms) | req/s at concurrency 8 | peak RSS (MiB) |
+|---:|---|---:|---:|---:|
+| 4 | 2 × 2, each stage alone | 362 | 4.4 (4.2 – 4.4) | 2991 |
+| 4 | 1 × 2, divided | 369 | 4.3 (3.6 – 4.3) | 1647 |
+| 8 | 4 × 2, each stage alone | 356 | 5.7 (5.1 – 5.9) | 5868 |
+| 8 | 2 × 2, divided | 361 | 5.8 (5.7 – 5.8) | 2998 |
+
+Dividing the pools halved the memory at the same throughput and latency.
+
 #### Reproducing
 
 ```bash

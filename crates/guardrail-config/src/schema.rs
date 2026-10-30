@@ -329,8 +329,8 @@ fn default_response_stages() -> Vec<String> {
 pub struct OnnxRuntimeConfig {
     /// Sessions per stage: how many requests a stage scores in parallel.
     /// Each session holds its own copy of the model in memory. `0` (the
-    /// default) means one per available core divided by `intra_threads`,
-    /// capped at 4.
+    /// default) means the available CPUs divided by `intra_threads` and by
+    /// the number of enabled ONNX stages, capped at 4.
     #[serde(default)]
     pub sessions: usize,
     /// Threads ONNX Runtime uses inside one inference. Default: `2`.

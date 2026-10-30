@@ -88,7 +88,7 @@ impl Default for WindowLimit {
 /// ```rust
 /// use guardrail_classifiers::onnx::OnnxRuntimeOptions;
 ///
-/// let options = OnnxRuntimeOptions { sessions: 2, intra_threads: 1 };
+/// let options = OnnxRuntimeOptions { sessions: 2, intra_threads: 1, stages: 1 };
 /// assert_eq!(options.normalized().sessions, 2);
 /// assert!(OnnxRuntimeOptions::default().sessions >= 1);
 /// ```
@@ -100,19 +100,25 @@ pub struct OnnxRuntimeOptions {
     pub sessions: usize,
     /// Threads ONNX Runtime uses inside one inference. `0` is treated as 1.
     pub intra_threads: usize,
+    /// ONNX stages whose pools share the machine, this one included. The
+    /// automatic pool size divides the CPUs between them. `0` is treated
+    /// as 1.
+    pub stages: usize,
 }
 
 impl OnnxRuntimeOptions {
     /// Replace `0`s with the defaults.
     pub fn normalized(self) -> Self {
         let intra_threads = self.intra_threads.max(1);
+        let stages = self.stages.max(1);
         let sessions = match self.sessions {
-            0 => default_sessions(intra_threads),
+            0 => default_sessions(intra_threads, stages),
             n => n,
         };
         Self {
             sessions,
             intra_threads,
+            stages,
         }
     }
 }
@@ -122,6 +128,7 @@ impl Default for OnnxRuntimeOptions {
         Self {
             sessions: 0,
             intra_threads: DEFAULT_INTRA_THREADS,
+            stages: 1,
         }
         .normalized()
     }
@@ -138,11 +145,14 @@ pub const DEFAULT_INTRA_THREADS: usize = 2;
 /// explicitly to go higher.
 pub const MAX_DEFAULT_SESSIONS: usize = 4;
 
-/// Default pool size: one session per available core (divided by
-/// `intra_threads`), at least 1 and at most [`MAX_DEFAULT_SESSIONS`].
-pub fn default_sessions(intra_threads: usize) -> usize {
-    let cores = std::thread::available_parallelism().map_or(1, usize::from);
-    (cores / intra_threads.max(1)).clamp(1, MAX_DEFAULT_SESSIONS)
+/// Default pool size for one of `stages` ONNX stages sharing the machine:
+/// the available CPUs divided by `intra_threads` and by `stages`, so that
+/// the stages together keep about one thread per CPU busy. At least 1 and
+/// at most [`MAX_DEFAULT_SESSIONS`].
+pub fn default_sessions(intra_threads: usize, stages: usize) -> usize {
+    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+    let threads_per_session = intra_threads.max(1).saturating_mul(stages.max(1));
+    (cpus / threads_per_session).clamp(1, MAX_DEFAULT_SESSIONS)
 }
 
 fn internal(e: impl std::fmt::Display) -> GuardrailError {
@@ -786,6 +796,7 @@ mod tests {
             OnnxRuntimeOptions {
                 sessions,
                 intra_threads: 1,
+                stages: 1,
             },
         )
         .unwrap()
@@ -850,6 +861,7 @@ mod tests {
         OnnxRuntimeOptions {
             sessions: 1,
             intra_threads: 1,
+            stages: 1,
         }
     }
 
@@ -983,16 +995,40 @@ mod tests {
         let options = OnnxRuntimeOptions {
             sessions: 0,
             intra_threads: 0,
+            stages: 0,
         }
         .normalized();
         assert_eq!(options.intra_threads, 1);
-        assert_eq!(options.sessions, default_sessions(1));
-        assert!(default_sessions(1) >= 1);
-        assert_eq!(default_sessions(usize::MAX), 1);
+        assert_eq!(options.sessions, default_sessions(1, 1));
+        assert!(default_sessions(1, 1) >= 1);
+        assert_eq!(default_sessions(usize::MAX, 1), 1);
 
         let default = OnnxRuntimeOptions::default();
         assert_eq!(default.intra_threads, 2);
-        assert_eq!(default.sessions, default_sessions(2));
+        assert_eq!(default.stages, 1);
+        assert_eq!(default.sessions, default_sessions(2, 1));
+    }
+
+    #[test]
+    fn test_automatic_pool_is_shared_by_the_stages() {
+        assert!(default_sessions(1, 2) <= default_sessions(1, 1));
+        assert_eq!(default_sessions(1, usize::MAX), 1);
+        let shared = OnnxRuntimeOptions {
+            sessions: 0,
+            intra_threads: 1,
+            stages: 2,
+        }
+        .normalized();
+        assert_eq!(shared.sessions, default_sessions(1, 2));
+        // No stages counted is treated as one.
+        let alone = OnnxRuntimeOptions {
+            sessions: 0,
+            intra_threads: 1,
+            stages: 0,
+        }
+        .normalized();
+        assert_eq!(alone.stages, 1);
+        assert_eq!(alone.sessions, default_sessions(1, 1));
     }
 
     #[test]

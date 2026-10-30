@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the memory), and one request takes about 40% less time; throughput at
   full load moved by -9% to +33% in our measurements. Set
   `intra_threads = 1` to keep the old behavior.
+- The automatic pool size (`[onnx] sessions = 0`) is divided between the
+  enabled ONNX stages, so with both `onnx_injection` and `toxicity` on, each
+  gets half as many sessions where the cap of 4 doesn't apply (fewer than
+  16 CPUs at `intra_threads = 2`). On 4 and 8 CPUs that halved memory at the
+  same throughput. Rust API: `OnnxRuntimeOptions` has a `stages` field, and
+  `onnx::default_sessions` takes the number of stages.
 - `guardrail_stage_oversize_total` has a third label, `reason`:
   `over_limit`, or `unmeasured` for input longer than the stage measures.
   Rust API: `InputTooLong` has a `reason` field (`OversizeReason`), and
@@ -75,8 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against an instant mock upstream (`just load-test-onnx`), and a small
   probe of per-core compute rate and memory read bandwidth.
 - **ONNX session pool.** Each ONNX stage now runs a pool of sessions
-  (`[onnx] sessions`, default one per core divided by
-  `[onnx] intra_threads`, at most 4) instead of a single session behind a
+  (`[onnx] sessions`, default the CPUs divided by `[onnx] intra_threads`
+  and by the number of enabled ONNX stages, at most 4) instead of a single
+  session behind a
   mutex, so a stage scores that many requests in parallel. Requests waiting
   for a session queue without holding a blocking thread. Each session holds
   its own copy of the model (about 0.85 GB for the DeBERTa injection model),

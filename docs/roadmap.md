@@ -23,14 +23,14 @@ Open work, grouped by what it needs to run. Measurements go in
 
 ## Planned changes (any machine)
 
-- [ ] Size the automatic ONNX pools for all enabled stages together. Each
-  stage takes `available CPUs / intra_threads` sessions (at most 4) as if it
-  were alone, so with both stages enabled their threads add up: on
-  8 cores × 2 threads with the default `intra_threads = 2`, 16 threads,
-  which lost throughput at full load (6.9 → 6.1 requests/s) where 2 × 2 per
-  stage held 6.6–6.7 with half the memory (see
-  [benchmarks](benchmarks.md#through-the-proxy-both-stages)). Divide by the
-  number of enabled ONNX stages.
+- [ ] Size the automatic ONNX pools by physical cores on SMT machines. The
+  automatic size divides the hardware threads between the enabled stages,
+  so on 8 cores × 2 threads both stages get 4 × 2 (16 threads), which lost
+  throughput at full load (6.9 → 6.1 requests/s) where 2 × 2 per stage held
+  6.6–6.7 with half the memory (see
+  [benchmarks](benchmarks.md#through-the-proxy-both-stages)). Needs a
+  reliable physical core count, and a check on a machine whose SMT pairs
+  are real.
 - [ ] Admission control for each ONNX stage. Today requests wait for a
   session without limit, so a few long requests stall everyone behind them
   (see [long input](threat-model.md#long-input-holds-onnx-sessions)). Bound

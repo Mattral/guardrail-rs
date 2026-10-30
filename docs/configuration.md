@@ -153,7 +153,7 @@ their turn without holding a thread.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `sessions` | integer | `0` (auto) | Sessions per stage. `0` means one per available CPU (hardware thread) divided by `intra_threads`, capped at 4. Each stage works this out on its own, so with both ONNX stages enabled the automatic pools add up; see [tuning](#tuning-sessions-and-intra_threads). **Each session holds its own copy of the model:** about 0.85 GB of RAM for `deberta-v3-base-prompt-injection-v2` and 0.6 GB for `unbiased-toxic-roberta` (fp32), so budget `sessions × model size` per enabled stage. |
+| `sessions` | integer | `0` (auto) | Sessions per stage. `0` means the available CPUs (hardware threads) divided by `intra_threads` and by the number of enabled ONNX stages, capped at 4 per stage: with both stages on 8 CPUs and `intra_threads = 2`, 2 sessions each. See [tuning](#tuning-sessions-and-intra_threads). **Each session holds its own copy of the model:** about 0.85 GB of RAM for `deberta-v3-base-prompt-injection-v2` and 0.6 GB for `unbiased-toxic-roberta` (fp32), so budget `sessions × model size` per enabled stage. |
 | `intra_threads` | integer ≥ 1 | `2` | Threads ONNX Runtime uses inside one inference. Raising it lowers the latency of one request; raising `sessions` raises how many run at once. A stage keeps up to `sessions × intra_threads` threads busy. |
 
 ### Tuning `sessions` and `intra_threads`
@@ -162,11 +162,12 @@ From [measurements on an 8-core machine](benchmarks.md#onnx-on-8-cores-pool-size
 
 - **Count threads across all enabled ONNX stages.** A stage keeps up to
   `sessions × intra_threads` threads busy, and `[onnx]` applies to every
-  enabled ONNX stage, so the total is that times the number of stages. Keep
-  the total below the CPUs available, leaving some for the rest of the
-  proxy. With both stages on 8 cores × 2 threads, 4 × 2 per stage (16 threads) fell from
-  6.9 to 6.1 requests/s once both pools were full, while 2 × 2 per stage
-  (8 threads) held 6.6–6.7 with half the memory.
+  enabled ONNX stage, so the total is that times the number of stages. The
+  automatic size keeps the total at about the CPUs available. With SMT that
+  is twice the physical cores, and less can be better: with both stages on
+  8 cores × 2 threads, 4 × 2 per stage (16 threads, the automatic size
+  there) fell from 6.9 to 6.1 requests/s once both pools were full, while
+  2 × 2 per stage (8 threads) held 6.6–6.7 with half the memory.
 - **Throughput levels off at a ceiling the cores share.** One stage peaked
   at about 12.5–13 requests/s for `onnx_injection` at 1 KB and 16 for
   `toxicity`, with 8 busy threads. Throughput grew less than the compute
