@@ -210,16 +210,16 @@ WAF in front of guardrail-rs is recommended in public deployments.
 
 The most expensive request a client can send is one just under the
 `max_windows` limit. Each ONNX stage scores one request per session, and
-with the defaults a few such requests occupy every session. Measured with
-the defaults (`max_windows = 16`, `intra_threads = 1`, and the automatic
-pool, 4 sessions per stage) on an 8-core machine
-([benchmarks](benchmarks.md#long-input)):
+with the defaults a few such requests occupy every session. Measured on an
+8-core machine with `max_windows = 16` and the automatic pool, 4 sessions
+per stage, at `intra_threads = 2` (the default) and, in brackets, 1 (the
+default before 0.4.0) ([benchmarks](benchmarks.md#long-input)):
 
 - 16 windows is 6,272 tokens, about 38 KB of plain English. One such
-  request holds an `onnx_injection` session for 21 s, then a `toxicity`
-  session for 15 s.
+  request holds an `onnx_injection` session for 11.7 s (21 s), then a
+  `toxicity` session for 7.6 s (15 s).
 - 4 of them sent together hold all 4 `onnx_injection` sessions for about
-  31 s. Every other request waits behind them. A client that keeps 4 such
+  27 s (31 s). Every other request waits behind them. A client that keeps 4 such
   requests in flight (about 150 KB every 30 s) stalls the ONNX stages for
   everyone. On a smaller machine the pool is smaller, and fewer requests
   are needed.
@@ -235,7 +235,8 @@ timeout, set `on_error = "block"` on the ONNX stages, so that they answer
 everyone else; it doesn't give the capacity back.
 
 **Lowering `max_windows` doesn't help.** The cost is per window, about the
-same whatever the limit. With 4 such requests at once on 4 sessions:
+same whatever the limit. With 4 such requests at once on 4 sessions, at
+`intra_threads = 1`:
 
 | `max_windows` | longest input scored | `onnx_injection` | `toxicity` |
 |---:|---|---:|---:|
@@ -308,8 +309,8 @@ For a deployment that accepts traffic it doesn't trust:
 
 The timeout applies to each stage, and it has to cover the longest input
 you accept at your load, or that input is rejected too. A 16-window
-request took 31 s in `onnx_injection` with all 4 sessions busy on long
-input, on that machine; measure yours with the `onnx_concurrency` benchmark
+request took 27 s in `onnx_injection` with all 4 sessions busy on long
+input, on that machine (31 s with 1 thread); measure yours with the `onnx_concurrency` benchmark
 (`GUARDRAIL_BENCH_WINDOWS`):
 
 ```toml
@@ -324,8 +325,8 @@ on_error = "block"
 ```
 
 More `intra_threads` also shortens a long request (16 windows in
-`onnx_injection`: 21 s with 1 thread, 9.5 s with 4), at the cost of
-throughput per core; see [`configuration.md`](configuration.md#onnx).
+`onnx_injection`: 21 s with 1 thread, 11.7 s with 2, 9.5 s with 4), at the
+cost of throughput per core; see [`configuration.md`](configuration.md#onnx).
 
 ---
 

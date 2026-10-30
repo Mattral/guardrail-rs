@@ -333,7 +333,7 @@ pub struct OnnxRuntimeConfig {
     /// capped at 4.
     #[serde(default)]
     pub sessions: usize,
-    /// Threads ONNX Runtime uses inside one inference. Default: `1`.
+    /// Threads ONNX Runtime uses inside one inference. Default: `2`.
     #[serde(default = "default_intra_threads")]
     pub intra_threads: usize,
 }
@@ -348,7 +348,7 @@ impl Default for OnnxRuntimeConfig {
 }
 
 fn default_intra_threads() -> usize {
-    1
+    2
 }
 
 /// Behavior when a pipeline stage returns an error.

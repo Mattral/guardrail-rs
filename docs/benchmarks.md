@@ -312,8 +312,8 @@ For the interference rows, start `./cpu_probe compute 4 75 &` (or
 A prompt of exactly 4, 8 or 16 full windows (`GUARDRAIL_BENCH_WINDOWS`),
 `intra_threads = 1`. *Alone* is one session and one request at a time.
 *Under load* is the automatic pool of 4 sessions with 4 such requests at
-once, which is what 4 long requests sent together cost on the default
-configuration.
+once, which is what 4 long requests sent together cost on the automatic
+pool with `intra_threads = 1`, the default before 0.4.0.
 
 | windows | tokens | prompt (this text) | `onnx_injection` alone | under load | `toxicity` alone | under load |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -333,8 +333,13 @@ More inference threads shorten one long request, but not in proportion
 | intra_threads | `onnx_injection` | `toxicity` |
 |---:|---:|---:|
 | 1 | 21.0 s | 14.7 s |
+| 2 | 11.7 s | 7.6 s |
 | 4 | 9.5 s | 5.1 s |
 | 8 | 9.3 s | 4.3 s |
+
+With the automatic pool at `intra_threads = 2` (4 × 2 here) and 4 such
+requests at once, a 16-window request took 26.8 s in `onnx_injection`
+(26.8–27.6) and 14.0 s in `toxicity` (13.7–14.2).
 
 What this means for denial of service is in the
 [threat model](threat-model.md#denial-of-service-resource-exhaustion).

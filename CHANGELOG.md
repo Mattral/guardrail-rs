@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `translate::parse_body` and `ScannedBody::apply`.
   `forward::forward_request` takes the JSON body (`&serde_json::Value`)
   instead of a `GuardrailRequest`.
+- `[onnx] intra_threads` now defaults to 2 (was 1). The automatic pool has
+  half as many sessions per stage on machines with fewer than 8 CPUs (half
+  the memory), and one request takes about 40% less time; throughput at
+  full load moved by -9% to +33% in our measurements. Set
+  `intra_threads = 1` to keep the old behavior.
 - `guardrail_stage_oversize_total` has a third label, `reason`:
   `over_limit`, or `unmeasured` for input longer than the stage measures.
   Rust API: `InputTooLong` has a `reason` field (`OversizeReason`), and
