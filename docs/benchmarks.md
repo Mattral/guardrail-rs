@@ -56,7 +56,7 @@ pattern (once for audit records, once to replace). Now it scans once per
 pattern, and skips patterns that a combined `RegexSet` scan says can't
 match. The output is identical, which is checked by property tests against
 the old implementation. Measured back to back in one session on one machine
-(Intel Core Ultra 5 226V, Rust 1.99.0, Windows 11; Criterion point
+(8 cores, 8 threads, 15.5 GB of memory, Rust 1.99.0; Criterion point
 estimates):
 
 | Input | Before | After | Change |
@@ -69,7 +69,7 @@ estimates):
 
 **Target status: still not reliably met.** Three runs of the new code at
 4.1 KB on this machine gave 19.2, 19.7 and 23.2 µs, so it sits right at the
-20 µs line on a fast laptop, and CI's shared runners are slower in every
+20 µs line on that machine, and CI's shared runners are slower in every
 other row. The CI row stays ❌ until the dashboard shows otherwise. The next
 step would be to avoid re-running the `RegexSet` after every pattern that
 changes the text. The 4.1 KB size (`pii_redactor/4079B`) was added to the
@@ -105,8 +105,7 @@ They come from two local runs of the `onnx_injection` and `toxicity` groups
 in `classifier_benchmarks.rs`, on 2026-10-14 and 2026-10-15 (Criterion, 30
 samples each, point estimate shown). The README quotes run 2.
 
-- Machine: Intel Core Ultra 5 226V laptop (8 cores), 15.5 GB RAM, Windows 11,
-  Balanced power plan.
+- Machine: 8 cores, 8 threads, 15.5 GB of memory.
 - Toolchain and code: Rust 1.99.0, the code from the PR that added these
   rows.
 - Models: `protectai/deberta-v3-base-prompt-injection-v2` at commit
@@ -126,7 +125,7 @@ samples each, point estimate shown). The README quotes run 2.
 
 Ranges are Criterion's 95% confidence interval within each run. The gap
 between runs, up to 44% for `toxicity` at 1.8 KB, is larger than those
-intervals. On this laptop, run-to-run variance dominates, so treat any single
+intervals. On this machine, run-to-run variance dominates, so treat any single
 figure as approximate. Run 2 was on code that also includes the PII rewrite
 and the config-wiring changes, which don't touch the timed `score()` path.
 
@@ -544,8 +543,7 @@ The latency numbers quoted in the README come from this one local run, not
 from CI. The CI figures above are medians over shared runners; this run is a
 quieter machine, so it reads somewhat faster.
 
-- Machine: Intel Core Ultra 5 226V laptop (8 cores), 15.5 GB RAM, Windows 11,
-  Balanced power plan, on AC power.
+- Machine: 8 cores, 8 threads, 15.5 GB of memory.
 - Code: `main` at `b610ed6`, which includes the single-pass PII redactor.
   Rust 1.99.0.
 - Date: 2026-10-15.
