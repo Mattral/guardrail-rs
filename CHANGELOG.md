@@ -35,8 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `[onnx] intra_threads` now defaults to 2 (was 1). The automatic pool has
   half as many sessions per stage on machines with fewer than 8 CPUs (half
   the memory), and one request takes about 40% less time; throughput at
-  full load moved by -9% to +33% in our measurements. Set
-  `intra_threads = 1` to keep the old behavior.
+  full load moved by -9% to +33% in our measurements. On a 2-vCPU cloud
+  instance (likely one core with SMT) the gain in latency was only about
+  7% and throughput fell 7–13%. Set `intra_threads = 1` to keep the old
+  behavior.
 - The automatic pool size (`[onnx] sessions = 0`) is divided between the
   enabled ONNX stages, so with both `onnx_injection` and `toxicity` on, each
   gets half as many sessions where the cap of 4 doesn't apply (fewer than
@@ -88,7 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/benchmarks.md`: ONNX measurements on an 8-core machine, for both
   models: throughput by pool size and by `sessions` × `intra_threads`, why
   throughput levels off, the cost of long input (4, 8 and 16 windows, alone
-  and under load), both stages through the proxy, and 2, 4 and 8 cores.
+  and under load), both stages through the proxy, 2, 4 and 8 cores, and a
+  2-vCPU cloud instance.
 - `docs/configuration.md`: how to size `[onnx] sessions` and
   `intra_threads`, counting threads across all enabled ONNX stages, with the
   memory each model's session takes, and setting `sessions` by hand on an

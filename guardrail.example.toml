@@ -153,7 +153,8 @@ on_oversize = "block"
 # at most 4 per stage. CPUs here are hardware threads: on an SMT host with both
 # ONNX stages, set sessions = physical cores / (intra_threads × 2) instead.
 # intra_threads: threads inside one inference (2 by default; 1 trades about
-# 40% more latency per request for up to 9% more throughput on small machines).
+# 40% more latency per request for up to 9% more throughput on small machines,
+# and is the better choice on a 2-vCPU instance with SMT if memory allows).
 [onnx]
 sessions = 0
 intra_threads = 2
