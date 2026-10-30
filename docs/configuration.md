@@ -207,7 +207,11 @@ From [measurements on an 8-core machine](benchmarks.md#onnx-on-8-cores-pool-size
   session whatever `intra_threads` is (2 CPUs / (1 × 2 stages) = 1, and
   2 / (2 × 2) rounds up to the minimum of 1). So `intra_threads = 2` saves
   no memory there, and with both stages busy it runs 4 inference threads on
-  2 vCPUs; `intra_threads = 1` runs 2. Not measured with both stages.
+  2 vCPUs; `intra_threads = 1` runs 2. Measured through the proxy on 2
+  cores (one thread each, not an SMT pair), `intra_threads = 2` cut the
+  latency of one request by 27% and cost about 6% of throughput at
+  concurrency 4, at the same memory; see
+  [both stages on 2 cores](benchmarks.md#both-stages-on-2-cores).
 
 ```toml
 # SMT host, 8 cores × 2 threads, both ONNX stages: 8 / (2 × 2) = 2 sessions

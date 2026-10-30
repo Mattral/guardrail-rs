@@ -428,6 +428,23 @@ The rows match the unrestricted runs with the same number of busy threads
 (2 sessions: 5.8 and 5.9 req/s; 4 × 2: 12.6 and 12.9), which is what one
 core per logical CPU predicts.
 
+#### Both stages on 2 cores
+
+Both stages through the proxy (`onnx-proxy.sh`, `PROXY_CPUS=0-1`, the mock
+upstream and `oha` on other CPUs), automatic pool size, which gives each
+stage one session at either setting. The two logical CPUs are separate
+cores here (see above), not an SMT pair. 3 runs:
+
+| `intra_threads` | automatic pool per stage | p50 alone (ms) | req/s at concurrency 4 | p50 at concurrency 4 (ms) | peak RSS (MiB) |
+|---:|---|---:|---:|---:|---:|
+| 1 | 1 × 1 | 666–687 | 2.21–2.36 | 1668–1823 | 1606–1671 |
+| 2 | 1 × 2 | 486–492 | 2.17–2.28 | 1745–1837 | 1568–1693 |
+
+With 2 intra threads, a request alone takes 27% less time; at concurrency
+4, where both stages are busy and 4 inference threads share 2 cores,
+throughput is about 6% lower (medians 2.20 and 2.35 req/s). Memory is the
+same: one session per stage either way.
+
 #### A 2-vCPU cloud instance
 
 A different machine: a 2-vCPU cloud instance, likely one core with SMT (not
