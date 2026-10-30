@@ -50,17 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Input over an ONNX stage's window limit held a session while it was
-  tokenized.** The stage took a session (or, before the pool, the session
-  lock) and then tokenized the whole input just to find it too long. A
-  10 MiB message held an `onnx_injection` session for about 3.5 s and
-  0.8 GB of memory before its `403`; 4 at once stalled every other request
-  for about 4 s. Input is now tokenized before a session is taken, and never
-  further than could fit the limit (196 KiB at 16 windows), so turning it
-  away takes about 0.1 s and holds no session. Longer input whose first part
-  fits, at more than 32 bytes per token (runs of dashes, `ÃÂ` mojibake or
-  unknown characters), is oversize too, counted with
-  `reason="unmeasured"`. Affects 0.3.1 and earlier.
+- **Over-long input to an ONNX stage cost memory without bound.** To find
+  out that a request was over the window limit, the stages tokenized all of
+  its text, with nothing limiting how many did so at once. A 10 MiB message
+  took about 3.5 s and 0.8 GB before its `403`, and 16 at once raised the
+  proxy's memory by about 12 GB, enough for a few dozen to run it out of
+  memory. Input is now tokenized only as far as could fit the limit
+  (196 KiB at 16 windows), before a session is taken, so turning it away
+  takes about 0.1 s and 50 MB. Longer input whose first part fits, at more
+  than 32 bytes per token (runs of dashes, `ÃÂ` mojibake or unknown
+  characters), is oversize too, counted with `reason="unmeasured"`. Affects
+  0.3.1 and earlier with an ONNX stage enabled.
 
 ### Added
 
