@@ -421,7 +421,7 @@ request_stages = ["regex_injection", "banana_stage"]
     fn test_onnx_runtime_and_stage_timeout_settings() {
         let config: Config = toml::from_str(minimal()).unwrap();
         assert_eq!(config.onnx.sessions, 0);
-        assert_eq!(config.onnx.intra_threads, 1);
+        assert_eq!(config.onnx.intra_threads, 2);
         assert_eq!(config.pipeline.stage_timeout_ms, 0);
 
         let toml = format!(

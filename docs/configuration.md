@@ -135,7 +135,7 @@ see [`docs/onnx-models.md`](onnx-models.md).
 | `threshold` | float | `0.85` (injection) / `0.90` (toxicity) | Decision threshold in `[0.0, 1.0]`. Scores at or above this value result in the configured `action`. |
 | `action` | `"block"` \| `"log_only"` | `"block"` | What to do on a positive classification. `"log_only"` logs the score via `tracing::warn!` and allows the request (dry-run). `"redact"` behaves like `"block"`, with a warning at load. |
 | `on_error` | `"allow"` \| `"block"` | unset (uses `pipeline.on_error`) | What to do if inference fails on a request. Overrides `pipeline.on_error` for this stage only. A model that fails to *load* is a startup error, not an inference error: the proxy refuses to start (or a reload is rejected) regardless of this setting. |
-| `max_windows` | integer ≥ 1 | `16` | Most windows of 512 tokens (overlapping by 128) scored per request; 16 covers 6,272 tokens. Each window is one inference, so this bounds the cost of one request: with `intra_threads = 1`, about 1.2 s per window for the DeBERTa injection model, so 16 windows hold a session for about 21 s, and longer when other requests are running. Lowering it doesn't make a stall harder to cause, because the cost is per window, and it refuses longer legitimate input; see [long input](threat-model.md#long-input-holds-onnx-sessions). |
+| `max_windows` | integer ≥ 1 | `16` | Most windows of 512 tokens (overlapping by 128) scored per request; 16 covers 6,272 tokens. Each window is one inference, so this bounds the cost of one request: for the DeBERTa injection model, 16 windows hold a session for about 12 s with `intra_threads = 2` (21 s with 1), and longer when other requests are running. Lowering it doesn't make a stall harder to cause, because the cost is per window, and it refuses longer legitimate input; see [long input](threat-model.md#long-input-holds-onnx-sessions). |
 | `on_oversize` | `"block"` \| `"allow"` | `"block"` | What to do with input longer than `max_windows`. `"block"` answers `403` with code `input_too_long_for_classifier`. `"allow"` forwards it without this stage's check (logged at `warn`). Both are counted in `guardrail_stage_oversize_total{stage, outcome, reason}`. Input longer than the stage tokenizes (32 bytes per token the limit covers) is oversize even when that part fits, with `reason="unmeasured"`. Separate from `on_error`. See [Long input](onnx-models.md). |
 
 `[stages.toxicity]` additionally supports:
@@ -154,7 +154,7 @@ their turn without holding a thread.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `sessions` | integer | `0` (auto) | Sessions per stage. `0` means one per available CPU (hardware thread) divided by `intra_threads`, capped at 4. Each stage works this out on its own, so with both ONNX stages enabled the automatic pools add up; see [tuning](#tuning-sessions-and-intra_threads). **Each session holds its own copy of the model:** about 0.85 GB of RAM for `deberta-v3-base-prompt-injection-v2` and 0.6 GB for `unbiased-toxic-roberta` (fp32), so budget `sessions × model size` per enabled stage. |
-| `intra_threads` | integer ≥ 1 | `1` | Threads ONNX Runtime uses inside one inference. Raising it lowers the latency of one request; raising `sessions` raises how many run at once. A stage keeps up to `sessions × intra_threads` threads busy. |
+| `intra_threads` | integer ≥ 1 | `2` | Threads ONNX Runtime uses inside one inference. Raising it lowers the latency of one request; raising `sessions` raises how many run at once. A stage keeps up to `sessions × intra_threads` threads busy. |
 
 ### Tuning `sessions` and `intra_threads`
 
@@ -188,14 +188,15 @@ From [measurements on an 8-core machine](benchmarks.md#onnx-on-8-cores-pool-size
   the automatic pool size, `intra_threads = 2` cut the latency of one
   request by about 40% and, on 2 and 4 cores, memory by 40–48%. Throughput
   at concurrency 8 stayed within 9% (it rose by 33% for one stage on
-  8 cores); see [smaller machines](benchmarks.md#smaller-machines).
-  Unless throughput matters more to you than latency and memory, set
-  `intra_threads = 2`.
+  8 cores); see [smaller machines](benchmarks.md#smaller-machines). That is
+  why the default is 2. Where throughput matters more than latency and
+  memory on a small machine, `intra_threads = 1` gets up to 9% more.
 
 ```toml
 # 8 cores × 2 threads, both ONNX stages: 2 sessions × 2 threads each, 8 threads in all.
-# Measured 6.6–6.7 requests/s and about 3 GB, against 5.1–5.8 requests/s and
-# about 6 GB for the automatic 4 × 1 per stage on the same machine.
+# Measured 6.6–6.7 requests/s and about 3 GB, against 6.9 falling to 6.1
+# requests/s at full load and about 6 GB for the automatic 4 × 2 per stage
+# (16 threads) on the same machine.
 [onnx]
 sessions = 2
 intra_threads = 2

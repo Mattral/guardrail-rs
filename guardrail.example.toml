@@ -150,9 +150,11 @@ on_oversize = "block"
 # Each enabled ONNX stage gets its own pool of sessions; each session scores
 # one request at a time and holds its own copy of the model (~0.85 GB for the
 # DeBERTa injection model). 0 = one per core / intra_threads, at most 4.
+# intra_threads: threads inside one inference (2 by default; 1 trades about
+# 40% more latency per request for up to 9% more throughput on small machines).
 [onnx]
 sessions = 0
-intra_threads = 1
+intra_threads = 2
 
 # ── Stage 5: user-defined policy rules ─────────────────────────────────────────
 # Evaluated last, in order. The first enabled rule whose `when` condition
