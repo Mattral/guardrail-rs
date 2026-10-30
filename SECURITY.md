@@ -4,7 +4,12 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | :white_check_mark: |
+| 0.4.x   | :white_check_mark: |
+| < 0.4   | :x: |
+
+Fixes are released for the latest minor version only. Versions before
+0.4.0 are affected by the denial-of-service issues fixed in 0.4.0 (see
+`CHANGELOG.md`); upgrade.
 
 ## Reporting a Vulnerability
 
