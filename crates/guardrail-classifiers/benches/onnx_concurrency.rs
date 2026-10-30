@@ -315,6 +315,7 @@ fn main() {
             let options = OnnxRuntimeOptions {
                 sessions: requested,
                 intra_threads: n_intra,
+                stages: 1,
             };
             let loaded = Loaded::load(kind, &model, &tokenizer, options).with_max_windows(1);
             let n_sessions = loaded.sessions();
