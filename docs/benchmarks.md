@@ -380,7 +380,7 @@ separate cores (2 threads on CPUs 0–1: 47.5 GFLOP/s each, 95 in all; one
 core does 57 at most). So by the probe, each run had one physical core per
 logical CPU, with one thread on each. The table says so in its first
 column. These are **not** like cloud instances whose vCPUs are SMT pairs,
-where 2 vCPUs are one core: expect less from those.
+where 2 vCPUs are one core: see [a 2-vCPU cloud instance](#a-2-vcpu-cloud-instance).
 
 | `taskset -c` | logical CPUs | `cpu_probe compute`, total (GFLOP/s) | physical cores × threads, by the probe |
 |---|---:|---:|---|
@@ -428,6 +428,29 @@ With `intra_threads = 1` and both stages, 4 CPUs get the same pools as 8
 The rows match the unrestricted runs with the same number of busy threads
 (2 sessions: 5.8 and 5.9 req/s; 4 × 2: 12.6 and 12.9), which is what one
 core per logical CPU predicts.
+
+#### A 2-vCPU cloud instance
+
+A different machine: a 2-vCPU cloud instance, likely one core with SMT (not
+confirmed), 12 GB of memory, the same Rust, `ort`, ONNX Runtime and model
+revision. The OS lists the two vCPUs as the two threads of one core.
+`cpu_probe compute` got 18.1 GFLOP/s with one thread and 26.2 with two
+(1.45×, each thread 28% slower with the other running), between what one
+shared core and two separate cores would give; `cpu_probe bandwidth` rose
+only from 9.3 to 11.0 GB/s.
+
+`onnx_injection` alone, automatic pool size, 96 requests, 3 runs. Compare
+the two rows with each other, not with the tables above:
+
+| `intra_threads` | automatic pool (sessions × intra threads) | p50 alone (ms) | req/s at concurrency 8 | p50 at concurrency 8 (ms) | peak RSS (MiB) |
+|---:|---|---:|---:|---:|---:|
+| 1 | 2 × 1 | 675–683 | 1.5 | 5008–5106 | 2044–2114 |
+| 2 | 1 × 2 | 630–639 | 1.3–1.4 | 5318–5673 | 1234–1270 |
+
+Here a second thread inside one inference does little: it cuts the latency
+of one request by about 7% (about 40% where the logical CPUs were separate
+cores), and throughput at concurrency 8 is 7–13% lower. Memory is 40% lower,
+from the one session instead of two.
 
 #### Pools sized for both stages
 

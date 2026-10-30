@@ -190,13 +190,19 @@ From [measurements on an 8-core machine](benchmarks.md#onnx-on-8-cores-pool-size
   More intra threads shorten it (16 windows: 21 s with 1 thread, 9.5 s with
   4), but see `max_windows` and [long input](threat-model.md#denial-of-service-resource-exhaustion)
   for bounding it.
-- **On 2 to 8 cores** (one thread each; SMT pairs weren't measured), with
-  the automatic pool size, `intra_threads = 2` cut the latency of one
-  request by about 40% and, on 2 and 4 cores, memory by 40–48%. Throughput
-  at concurrency 8 stayed within 9% (it rose by 33% for one stage on
-  8 cores); see [smaller machines](benchmarks.md#smaller-machines). That is
-  why the default is 2. Where throughput matters more than latency and
-  memory on a small machine, `intra_threads = 1` gets up to 9% more.
+- **On 2 to 8 cores** (one thread each), with the automatic pool size,
+  `intra_threads = 2` cut the latency of one request by about 40% and, on
+  2 and 4 cores, memory by 40–48%. Throughput at concurrency 8 stayed
+  within 9% (it rose by 33% for one stage on 8 cores); see
+  [smaller machines](benchmarks.md#smaller-machines). That is why the
+  default is 2. Where throughput matters more than latency and memory on a
+  small machine, `intra_threads = 1` gets up to 9% more.
+- **On a 2-vCPU cloud instance** (likely one core with SMT, not confirmed),
+  the second thread cut the latency of one request by only about 7%, and
+  throughput at concurrency 8 was 7–13% lower than with `intra_threads = 1`;
+  memory was 40% lower (one session instead of two). If memory allows,
+  `intra_threads = 1` is the better choice there; see
+  [a 2-vCPU cloud instance](benchmarks.md#a-2-vcpu-cloud-instance).
 
 ```toml
 # SMT host, 8 cores × 2 threads, both ONNX stages: 8 / (2 × 2) = 2 sessions
