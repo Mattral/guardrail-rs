@@ -163,11 +163,16 @@ From [measurements on an 8-core machine](benchmarks.md#onnx-on-8-cores-pool-size
 - **Count threads across all enabled ONNX stages.** A stage keeps up to
   `sessions × intra_threads` threads busy, and `[onnx]` applies to every
   enabled ONNX stage, so the total is that times the number of stages. The
-  automatic size keeps the total at about the CPUs available. With SMT that
-  is twice the physical cores, and less can be better: with both stages on
-  8 cores × 2 threads, 4 × 2 per stage (16 threads, the automatic size
-  there) fell from 6.9 to 6.1 requests/s once both pools were full, while
-  2 × 2 per stage (8 threads) held 6.6–6.7 with half the memory.
+  automatic size keeps the total at about the CPUs available.
+- **On an SMT host with both ONNX stages, set `sessions` yourself.** The
+  automatic size counts hardware threads, which with SMT is twice the
+  physical cores, and fully loaded that is too many: on 8 cores × 2 threads
+  the automatic 4 × 2 per stage (16 threads) fell from 6.9 to 6.1
+  requests/s once both pools were full, while 2 × 2 per stage (8 threads)
+  held 6.6–6.7 with half the memory (about 3 GB against 6). Set
+  `sessions = physical cores / (intra_threads × 2)`, at least 1; see the
+  example below. (Sizing by physical cores automatically is on the
+  [roadmap](roadmap.md).)
 - **Throughput levels off at a ceiling the cores share.** One stage peaked
   at about 12.5–13 requests/s for `onnx_injection` at 1 KB and 16 for
   `toxicity`, with 8 busy threads. Throughput grew less than the compute
@@ -194,7 +199,8 @@ From [measurements on an 8-core machine](benchmarks.md#onnx-on-8-cores-pool-size
   memory on a small machine, `intra_threads = 1` gets up to 9% more.
 
 ```toml
-# 8 cores × 2 threads, both ONNX stages: 2 sessions × 2 threads each, 8 threads in all.
+# SMT host, 8 cores × 2 threads, both ONNX stages: 8 / (2 × 2) = 2 sessions
+# of 2 threads per stage, 8 threads in all.
 # Measured 6.6–6.7 requests/s and about 3 GB, against 6.9 falling to 6.1
 # requests/s at full load and about 6 GB for the automatic 4 × 2 per stage
 # (16 threads) on the same machine.
