@@ -228,7 +228,7 @@ arguments are not scanned, which matches the non-streamed path. The one
 exception to the guarantee: a run of more than 8 KB with no whitespace is
 released without waiting for a word boundary.
 
-**Cost.** In one local run (Intel Core Ultra 5 226V, Rust 1.99), a 2 KB answer
+**Cost.** In one local run (8 cores, Rust 1.99), a 2 KB answer
 containing PII, fed as 4-byte deltas, took 180 µs to redact in total. That's
 about 0.35 µs per delta, against 11.5 µs to redact the same text in one call;
 see `pii_stream` in [`benchmarks.md`](benchmarks.md). The visible latency is
