@@ -86,6 +86,8 @@ provider, creating a data-governance and compliance risk.
   [`architecture.md`](architecture.md#streaming-responses).
 - Luhn validation reduces false positives for credit card numbers, but cannot
   catch all edge cases of arbitrary numeric strings.
+- Card numbers, SSNs and IP addresses are recognized in ASCII digits only,
+  not in other scripts' digits (`١٢٣-٤٥-٦٧٨٩`) or full-width ones.
 - Redaction is one-way: the original value is not stored and cannot be
   recovered from the audit log (by design, per our privacy model).
 
@@ -284,20 +286,48 @@ Input built to take few tokens per byte, as 4 MiB bodies (3 runs):
 
 | 4 MiB of | bytes per token, `onnx_injection` / `toxicity` | `403` after, both stages | `toxicity` alone |
 |---|---|---:|---:|
-| `-` or `=` | 1 / 64 | 0.12–0.17 s | 0.09–0.12 s |
-| spaces | no tokens / 1 | 0.02–0.03 s | 0.11–0.12 s |
-| newlines | no tokens / 2 | 0.03 s | 0.09 s |
-| U+E000 (private use) | 2 tokens in all / 1.5 | 0.03 s | 0.82–0.91 s |
-| `ÃÂ` (mojibake) | 4 / 128 | 0.05–0.06 s | 0.90–1.01 s |
+| `-` or `=` | 1 / 64 | 0.12–0.17 s | 0.08–0.13 s |
+| spaces | no tokens / 1 | 0.02–0.03 s | 0.12–0.13 s |
+| newlines | no tokens / 2 | 0.03 s | 0.10 s |
+| U+E000 (private use) | 2 tokens in all / 1.5 | 0.03 s | 0.09–0.11 s |
+| `ÃÂ` (mojibake) | 4 / 128 | 0.05–0.06 s | 0.06–0.07 s |
 
 The DeBERTa tokenizer drops whitespace and fuses a run of unknown
 characters into one token; the RoBERTa one has single tokens for 64 dashes
 and for 32 `ÃÂ` pairs (its longest, 128 bytes). Peak memory rose by at most
-83 MiB for one request and 131 MiB for 4 at once. A short request sent
-alongside 4 of them was answered in under 0.1 s with both stages, and in
-up to 0.65 s with `toxicity` alone. That, and the 0.8–1 s for one request
-with `toxicity` alone, is the PII redactor, which runs before it, scanning
-4 MiB of non-ASCII text.
+83 MiB for one request and 153 MiB for 4 at once. A short request sent
+alongside 4 of them was answered in under 0.1 s. (Before the PII patterns
+were fixed, below, `toxicity` alone took 0.8–1 s on U+E000 and mojibake:
+that was the PII redactor, which runs before it.)
+
+#### Non-ASCII text in the regex stages
+
+Up to 0.3.1, the PII patterns for card numbers, SSNs, IP addresses and AWS
+keys used Unicode word boundaries (`\b`). The `regex` crate can't search
+those with its fast engine (a lazy DFA) once the text contains a single
+non-ASCII character, and falls back to one about 100 times slower: about
+0.2 s per MiB, against 2 ms per MiB for English text. `pii_redactor` is on
+by default and runs on the proxy's async worker threads, so enough large
+non-English requests at once occupy every worker. With the default
+configuration and 10 MiB messages, 3 runs:
+
+| 10 MiB messages at once, of | 0.3.1: time per request | 0.3.1: longest `GET /healthz` | now: time per request | now: longest `GET /healthz` |
+|---|---:|---:|---:|---:|
+| English text, 32 | 0.34–0.63 s | 91–105 ms | 0.37–0.58 s | 16–82 ms |
+| Chinese text, 8 | 2.9–3.1 s | 1 ms | 0.16–0.21 s | 1 ms |
+| Chinese text, 16 | 4.8–5.3 s | 4.6–4.8 s | 0.27–0.35 s | 67–80 ms |
+| Chinese text, 32 | 5.0–11.9 s | 4.8–5.0 s | 0.39–0.61 s | 79–199 ms |
+| U+E000, 32 | 4.8–11.1 s | 4.4–5.0 s | 0.38–0.59 s | 63–193 ms |
+
+A request the regex stage blocks, sent alongside, waited as long as
+`/healthz`. The patterns now use ASCII word boundaries (`(?-u:\b)`) and
+ASCII digits, and a test checks that every bundled PII pattern and
+injection rule can be searched by the lazy DFA. The same applies to custom
+`regex_injection` rules: one rule with a Unicode `\b` makes the whole rule
+set scan non-ASCII text about 100 times slower, so write `(?-u:\b)`.
+
+Memory still grows with the requests in flight, whatever their text:
+about 0.45 GB for 8 of these, 0.9 GB for 16 and 1.5 GB for 32.
 
 For a deployment that accepts traffic it doesn't trust:
 

@@ -916,6 +916,7 @@ dependencies = [
  "ort",
  "proptest",
  "regex",
+ "regex-automata",
  "rstest",
  "serde",
  "serde_json",

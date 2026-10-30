@@ -222,6 +222,17 @@ mod tests {
         assert!(scanner.num_patterns() > 0);
     }
 
+    #[test]
+    fn test_bundled_rules_can_be_searched_by_the_lazy_dfa() {
+        // A rule with a Unicode word boundary (`\b`) makes the regex crate
+        // scan non-ASCII text about 100 times slower; use `(?-u:\b)`.
+        for rule in parse_rules(BUNDLED_RULES) {
+            if let Err(e) = regex_automata::hybrid::regex::Regex::new(&rule) {
+                panic!("rule {rule:?}: {e}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_clean_request_allowed() {
         let scanner = RegexInjectionScanner::default();
