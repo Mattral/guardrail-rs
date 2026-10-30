@@ -327,8 +327,9 @@ A request the regex stage blocks, sent alongside, waited as long as
 `/healthz`. The patterns now use ASCII word boundaries (`(?-u:\b)`) and
 ASCII digits, and a test checks that every bundled PII pattern and
 injection rule can be searched by the lazy DFA. The same applies to custom
-`regex_injection` rules: one rule with a Unicode `\b` makes the whole rule
-set scan non-ASCII text about 100 times slower, so write `(?-u:\b)`.
+`regex_injection` rules: one rule with a Unicode `\b` made the whole rule
+set scan non-ASCII text about 100 times slower. Such rules are now refused
+at startup, on reload and by `guardrail validate`; write `(?-u:\b)`.
 
 Memory still grows with the requests in flight, whatever their text:
 about 0.45 GB for 8 of these, 0.9 GB for 16 and 1.5 GB for 32.

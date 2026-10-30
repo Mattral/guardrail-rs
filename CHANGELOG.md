@@ -54,9 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing changes. In other text, PII written right next to a letter of
   another script, with no space (`社保号123-45-6789`), is now redacted; it
   was missed before. Card numbers, SSNs and IP addresses written in
-  non-ASCII digits (`١٢٣-٤٥-٦٧٨٩`) are no longer matched. If you have custom
-  `regex_injection` rules (`rules_file`, `extra_rules`) with `\b`, write it
-  as `(?-u:\b)`, for the same reason.
+  non-ASCII digits (`١٢٣-٤٥-٦٧٨٩`) are no longer matched.
+- **A config that loaded on 0.3.1 can now fail to start.** A
+  `regex_injection` rule (`rules_file` or `extra_rules`) that the regex
+  crate can't search with its DFA is refused at startup, on reload and by
+  `guardrail validate`, with an error that names the rule. In practice
+  that is a Unicode word boundary: write `\b` as `(?-u:\b)` (and `\B` as
+  `(?-u:\B)`). One such rule made the whole rule set scan non-ASCII text
+  about 100 times slower (see Security). `guardrail validate` now also
+  reads `rules_file` and compiles the rules, so it reports a missing file
+  or an invalid rule too. `RegexInjectionScanner::from_rules` itself still
+  accepts such rules.
 
 ### Security
 
@@ -81,10 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /healthz` included, for 4–5 s, and 32 at once took up to 12 s each.
   The patterns now use ASCII word boundaries, and the same requests take
   as long as English text (0.2–0.6 s for 8–32 at once, with other requests
-  answered within 0.2 s). Affects 0.3.1 and earlier.
+  answered within 0.2 s). Custom `regex_injection` rules with a Unicode
+  `\b` slowed the injection scanner the same way; such rules are now
+  refused at load. Affects 0.3.1 and earlier.
 
 ### Added
 
+- `guardrail-classifiers`: `RegexInjectionScanner::rules`, the rules a
+  scanner was built from.
 - `docs/roadmap.md`: open work, grouped by what it needs to run (a GPU,
   or nothing special).
 - `docs/benchmarks.md`: ONNX measurements on an 8-core machine, for both

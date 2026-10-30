@@ -81,8 +81,8 @@ Unknown IDs are rejected by validation.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable this stage. |
-| `rules_file` | string | `""` | Path to a custom rule file (one regex per line; `#` for comments). Empty string = use the bundled rule set. In custom rules, write a word boundary as `(?-u:\b)`: with a Unicode `\b`, the whole rule set scans any text that contains a non-ASCII character about 100 times slower (about 0.2 s per MiB). |
-| `extra_rules` | array of strings | `[]` | Additional regex patterns appended to whichever rule set is active (bundled or `rules_file`). The same advice on `\b` applies. |
+| `rules_file` | string | `""` | Path to a custom rule file (one regex per line; `#` for comments). Empty string = use the bundled rule set. A rule the regex crate can't search with its DFA is refused at startup, on reload and by `guardrail validate`, because it makes the whole rule set scan any text that contains a non-ASCII character about 100 times slower (about 0.2 s per MiB). In practice that is a Unicode word boundary: write `\b` as `(?-u:\b)`. |
+| `extra_rules` | array of strings | `[]` | Additional regex patterns appended to whichever rule set is active (bundled or `rules_file`). Checked the same way as `rules_file`. |
 | `action` | `"block"` \| `"log_only"` | `"block"` | What to do on a match. `"log_only"` logs via `tracing::warn!` but allows the request — use this to dry-run new rules. `"redact"` is accepted for backward compatibility but behaves like `"block"`, with a warning at load. |
 
 ## `[stages.pii_redactor]`

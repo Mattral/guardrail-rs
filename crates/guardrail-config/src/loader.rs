@@ -106,7 +106,86 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigLoadError> {
         return Err(ConfigLoadError::Validation(errors));
     }
 
+    // Custom injection rules are checked here too, not only when the
+    // pipeline is built, so that `guardrail validate` reports them.
+    if config.stages.regex_injection.enabled
+        && config
+            .pipeline
+            .request_stages
+            .iter()
+            .any(|s| s == "regex_injection")
+    {
+        build_regex_injection(&config, true)?;
+    }
+
     Ok(config)
+}
+
+/// Build the `regex_injection` scanner: the bundled rules or `rules_file`,
+/// plus `extra_rules`.
+///
+/// # Errors
+///
+/// [`ConfigLoadError::Io`] if `rules_file` can't be read,
+/// [`ConfigLoadError::StageBuild`] if a rule doesn't compile, and
+/// [`ConfigLoadError::Validation`] for rules the regex crate can't search
+/// with its DFA (see [`slow_rule_errors`]).
+fn build_regex_injection(
+    config: &Config,
+    block_on_match: bool,
+) -> Result<RegexInjectionScanner, ConfigLoadError> {
+    let settings = &config.stages.regex_injection;
+    let mut source = if settings.rules_file.trim().is_empty() {
+        // The single bundled rule set lives in guardrail-classifiers.
+        RegexInjectionScanner::bundled_rule_source().to_string()
+    } else {
+        std::fs::read_to_string(&settings.rules_file).map_err(|source| ConfigLoadError::Io {
+            path: PathBuf::from(&settings.rules_file),
+            source,
+        })?
+    };
+    for rule in &settings.extra_rules {
+        source.push('\n');
+        source.push_str(rule);
+    }
+    let scanner =
+        RegexInjectionScanner::from_rule_str(&source, block_on_match).map_err(|source| {
+            ConfigLoadError::StageBuild {
+                stage: "regex_injection".into(),
+                source,
+            }
+        })?;
+    let errors = slow_rule_errors(scanner.rules());
+    if !errors.is_empty() {
+        return Err(ConfigLoadError::Validation(errors));
+    }
+    Ok(scanner)
+}
+
+/// One error for each rule the regex crate can't search with its lazy DFA.
+/// Such a rule (in practice, one with a Unicode word boundary `\b`) makes
+/// the whole rule set scan any text that contains a non-ASCII character
+/// about 100 times slower, about 0.2 s per MiB.
+fn slow_rule_errors(rules: &[String]) -> Vec<String> {
+    rules
+        .iter()
+        .filter_map(|rule| {
+            let err = regex_automata::hybrid::regex::Regex::new(rule).err()?;
+            let slow = "which makes the regex crate scan any text with a non-ASCII \
+                        character in it about 100 times slower";
+            Some(if rule.contains(r"\b") || rule.contains(r"\B") {
+                format!(
+                    "stages.regex_injection: rule '{rule}' has a Unicode word boundary, \
+                     {slow}; write \\b as (?-u:\\b) (and \\B as (?-u:\\B))"
+                )
+            } else {
+                format!(
+                    "stages.regex_injection: rule '{rule}' can't be searched with the \
+                     regex crate's DFA ({err}), {slow}; rewrite it without that feature"
+                )
+            })
+        })
+        .collect()
 }
 
 /// Apply environment-variable overrides to a partially-constructed [`Config`].
@@ -225,39 +304,7 @@ pub fn build_pipeline(config: &Config) -> Result<Pipeline, ConfigLoadError> {
                 warn_if_redact_on_detection_stage("regex_injection", action);
                 let log_only = action == crate::schema::StageAction::LogOnly;
 
-                let scanner = if !config.stages.regex_injection.rules_file.trim().is_empty() {
-                    let path = &config.stages.regex_injection.rules_file;
-                    let mut contents =
-                        std::fs::read_to_string(path).map_err(|source| ConfigLoadError::Io {
-                            path: PathBuf::from(path),
-                            source,
-                        })?;
-                    // Append extra_rules to the file content.
-                    for rule in &config.stages.regex_injection.extra_rules {
-                        contents.push('\n');
-                        contents.push_str(rule);
-                    }
-                    RegexInjectionScanner::from_rule_str(&contents, !log_only).map_err(
-                        |source| ConfigLoadError::StageBuild {
-                            stage: "regex_injection".into(),
-                            source,
-                        },
-                    )?
-                } else {
-                    // The single bundled rule set lives in guardrail-classifiers.
-                    let mut bundled_rules =
-                        RegexInjectionScanner::bundled_rule_source().to_string();
-                    for rule in &config.stages.regex_injection.extra_rules {
-                        bundled_rules.push('\n');
-                        bundled_rules.push_str(rule);
-                    }
-                    RegexInjectionScanner::from_rule_str(&bundled_rules, !log_only).map_err(
-                        |source| ConfigLoadError::StageBuild {
-                            stage: "regex_injection".into(),
-                            source,
-                        },
-                    )?
-                };
+                let scanner = build_regex_injection(config, !log_only)?;
                 builder = builder.stage_with_fail_mode(scanner, default_mode);
             }
 
@@ -666,6 +713,47 @@ url = "https://api.openai.com"
         let config = load_config(f.path()).unwrap();
         assert_eq!(config.upstream.url, "https://api.openai.com");
         assert_eq!(config.server.port, 8080);
+    }
+
+    /// `MINIMAL` with `regex_injection` settings appended.
+    fn with_injection_rules(settings: &str) -> String {
+        format!("{MINIMAL}\n[stages.regex_injection]\n{settings}\n")
+    }
+
+    /// The error from `load_config` (which `guardrail validate` runs) and
+    /// from `build_pipeline` (startup and reload), or `None` if both load.
+    fn load_errors(toml_text: &str) -> Option<(String, String)> {
+        let f = write_temp_config(toml_text);
+        let loaded = load_config(f.path()).err().map(|e| e.to_string());
+        let config: Config = toml::from_str(toml_text).unwrap();
+        let built = build_pipeline(&config).err().map(|e| e.to_string());
+        match (loaded, built) {
+            (None, None) => None,
+            (loaded, built) => Some((loaded.unwrap_or_default(), built.unwrap_or_default())),
+        }
+    }
+
+    #[test]
+    fn test_injection_rule_with_unicode_word_boundary_is_refused() {
+        // With a Unicode `\b` the regex crate scans any text that contains
+        // a non-ASCII character about 100 times slower.
+        let mut rules_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(rules_file, "(?i)ignore\\s+everything\n(?i)\\bjailbreak\\b").unwrap();
+        let from_file = format!("rules_file = '{}'", rules_file.path().display());
+        for settings in [r"extra_rules = ['(?i)\bjailbreak\b']", from_file.as_str()] {
+            let (loaded, built) = load_errors(&with_injection_rules(settings))
+                .unwrap_or_else(|| panic!("loaded with {settings}"));
+            for err in [loaded, built] {
+                assert!(err.contains(r"(?i)\bjailbreak\b"), "names the rule: {err}");
+                assert!(err.contains(r"(?-u:\b)"), "says what to write: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_injection_rule_with_ascii_word_boundary_loads() {
+        let settings = r"extra_rules = ['(?i)(?-u:\b)jailbreak(?-u:\b)']";
+        assert_eq!(load_errors(&with_injection_rules(settings)), None);
     }
 
     #[test]
