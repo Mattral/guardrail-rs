@@ -524,6 +524,10 @@ impl Stage for PiiRedactor {
 // ── Regex patterns ────────────────────────────────────────────────────────────
 
 fn entity_pattern(entity: &PiiEntityType) -> &'static str {
+    // Word boundaries are ASCII (`(?-u:\b)`), and so are the digits in the
+    // patterns that use them. With a Unicode `\b`, the regex crate can't use
+    // its DFA on text with any non-ASCII character in it, and scans about
+    // 100 times slower.
     match entity {
         PiiEntityType::Email => r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
         PiiEntityType::Phone => {
@@ -532,19 +536,19 @@ fn entity_pattern(entity: &PiiEntityType) -> &'static str {
         }
         PiiEntityType::CreditCard => {
             // Matches 13–19 digit sequences with optional spaces/hyphens
-            r"\b(?:\d[ \-]?){13,19}\b"
+            r"(?-u:\b)(?:[0-9][ \-]?){13,19}(?-u:\b)"
         }
-        PiiEntityType::Ssn => r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b",
+        PiiEntityType::Ssn => r"(?-u:\b)[0-9]{3}[-\s][0-9]{2}[-\s][0-9]{4}(?-u:\b)",
         PiiEntityType::IpAddress => {
             // IPv4 + simplified IPv6
-            r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b"
+            r"(?-u:\b)(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?-u:\b)|(?-u:\b)(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}(?-u:\b)"
         }
         PiiEntityType::ApiKey => {
             // OpenAI sk-..., Anthropic sk-ant-..., GitHub ghp_/gho_/ghs_, Bearer tokens
             // Relax GH token length to a reasonable range to match common examples
             r"(?:sk-[a-zA-Z0-9\-_]{20,}|sk-ant-[a-zA-Z0-9\-_]{20,}|ghp_[a-zA-Z0-9]{30,40}|gho_[a-zA-Z0-9]{30,40}|ghs_[a-zA-Z0-9]{30,40}|Bearer\s+[a-zA-Z0-9\-._~+/]{20,})"
         }
-        PiiEntityType::AwsKey => r"\bAKIA[A-Z0-9]{16}\b",
+        PiiEntityType::AwsKey => r"(?-u:\b)AKIA[A-Z0-9]{16}(?-u:\b)",
     }
 }
 
@@ -755,6 +759,43 @@ mod tests {
         assert!(json.contains("\"entity_type\":\"email\""));
     }
 
+    /// The regex crate searches with a lazy DFA, which can't evaluate a
+    /// Unicode word boundary (`\b`) once the text contains a non-ASCII
+    /// character. It then falls back to an engine about 100 times slower,
+    /// so one request of non-English text costs about 0.2 s of CPU per MiB.
+    /// Every pattern must build as a lazy DFA, which one with a Unicode
+    /// `\b` doesn't.
+    #[test]
+    fn every_pattern_can_be_searched_by_the_lazy_dfa() {
+        for entity in all_entities() {
+            let pattern = entity_pattern(&entity);
+            if let Err(e) = regex_automata::hybrid::regex::Regex::new(pattern) {
+                panic!("{entity:?} pattern {pattern:?}: {e}");
+            }
+        }
+    }
+
+    #[test]
+    fn pii_next_to_non_ascii_letters_is_redacted() {
+        // A Unicode `\b` sees no boundary between a CJK character and a
+        // digit, so these were missed in text written without spaces.
+        let r = PiiRedactor::default();
+        assert_eq!(r.redact_text("社保号123-45-6789。"), "社保号[SSN]。");
+        assert_eq!(r.redact_text("卡号4111111111111111"), "卡号[CARD]");
+        assert_eq!(
+            r.redact_text("服务器192.168.1.1宕机"),
+            "服务器[IP_ADDRESS]宕机"
+        );
+    }
+
+    #[test]
+    fn card_ssn_and_ip_digits_are_ascii() {
+        let r = PiiRedactor::new(all_entities(), false).unwrap();
+        for text in ["١٢٣-٤٥-٦٧٨٩", "١٩٢.١٦٨.١.١"] {
+            assert_eq!(r.redact_text(text), text);
+        }
+    }
+
     // ── Property-based tests ──────────────────────────────────────────────────
 
     use proptest::prelude::*;
@@ -795,6 +836,69 @@ mod tests {
                 assert_same(&r, &s);
             }
         }
+
+        /// On ASCII text, ASCII and Unicode word boundaries and digits are
+        /// the same, so the patterns redact as they did with Unicode ones.
+        #[test]
+        fn ascii_text_redacts_as_with_unicode_patterns(
+            parts in proptest::collection::vec(proptest::sample::select(FRAGMENTS), 0..24),
+            noise in "[a-zA-Z0-9@._%+\\-:()\\[\\] \t\n]{0,300}",
+        ) {
+            for luhn in [true, false] {
+                let r = PiiRedactor::new(all_entities(), luhn).unwrap();
+                let unicode = unicode_redactor(luhn);
+                for s in [parts.concat(), noise.clone()] {
+                    let (text, records) = r.redact_text_with_records(&s);
+                    let (old_text, old_records) = unicode.redact_text_with_records(&s);
+                    assert_eq!(text, old_text, "input: {s:?}");
+                    assert_eq!(key(&records), key(&old_records), "input: {s:?}");
+                }
+            }
+        }
+    }
+
+    /// The patterns before their word boundaries and digits were made
+    /// ASCII-only, in [`all_entities`] order.
+    fn unicode_redactor(validate_luhn: bool) -> PiiRedactor {
+        let patterns: Vec<PatternEntry> = [
+            (PiiEntityType::Email, r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"),
+            (PiiEntityType::CreditCard, r"\b(?:\d[ \-]?){13,19}\b"),
+            (
+                PiiEntityType::Phone,
+                r"(?:\+?1[\s\-.]?)?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4}",
+            ),
+            (PiiEntityType::Ssn, r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b"),
+            (
+                PiiEntityType::IpAddress,
+                r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b",
+            ),
+            (
+                PiiEntityType::ApiKey,
+                r"(?:sk-[a-zA-Z0-9\-_]{20,}|sk-ant-[a-zA-Z0-9\-_]{20,}|ghp_[a-zA-Z0-9]{30,40}|gho_[a-zA-Z0-9]{30,40}|ghs_[a-zA-Z0-9]{30,40}|Bearer\s+[a-zA-Z0-9\-._~+/]{20,})",
+            ),
+            (PiiEntityType::AwsKey, r"\bAKIA[A-Z0-9]{16}\b"),
+        ]
+        .into_iter()
+        .map(|(entity_type, pattern)| PatternEntry {
+            replacement: entity_type.default_replacement().to_string(),
+            entity_type,
+            regex: Regex::new(pattern).unwrap(),
+        })
+        .collect();
+        let set = RegexSet::new(patterns.iter().map(|p| p.regex.as_str())).unwrap();
+        PiiRedactor {
+            patterns,
+            set,
+            action: PiiAction::Redact,
+            validate_luhn,
+        }
+    }
+
+    fn key(records: &[RedactionRecord]) -> Vec<(PiiEntityType, usize, usize)> {
+        records
+            .iter()
+            .map(|x| (x.entity_type.clone(), x.offset, x.length))
+            .collect()
     }
 
     /// Pieces that hit every pattern, Luhn-valid and invalid cards, and
@@ -843,11 +947,6 @@ mod tests {
         let (text, records) = r.redact_text_with_records(s);
         let (ref_text, ref_records) = reference_redact(r, s);
         assert_eq!(text, ref_text, "input: {s:?}");
-        let key = |v: &[RedactionRecord]| {
-            v.iter()
-                .map(|x| (x.entity_type.clone(), x.offset, x.length))
-                .collect::<Vec<_>>()
-        };
         assert_eq!(key(&records), key(&ref_records), "input: {s:?}");
     }
 

@@ -42,6 +42,7 @@ tokenizers  = { version = "0.22", optional = true, default-features = false, fea
 tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 rstest     = { workspace = true }
 proptest   = { workspace = true }
+regex-automata = { workspace = true }
 tokio-test = { workspace = true }
 criterion  = { workspace = true, features = ["html_reports", "async_tokio"] }
 

@@ -47,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `over_limit`, or `unmeasured` for input longer than the stage measures.
   Rust API: `InputTooLong` has a `reason` field (`OversizeReason`), and
   `StageOutcome::OversizeAllowed` / `OversizeBlocked` carry it.
+- The PII patterns for card numbers, SSNs, IP addresses and AWS keys use
+  ASCII word boundaries and ASCII digits (see Security). On ASCII text
+  nothing changes. In other text, PII written right next to a letter of
+  another script, with no space (`社保号123-45-6789`), is now redacted; it
+  was missed before. Card numbers, SSNs and IP addresses written in
+  non-ASCII digits (`١٢٣-٤٥-٦٧٨٩`) are no longer matched. If you have custom
+  `regex_injection` rules (`rules_file`, `extra_rules`) with `\b`, write it
+  as `(?-u:\b)`, for the same reason.
 
 ### Security
 
@@ -61,6 +69,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than 32 bytes per token (runs of dashes, `ÃÂ` mojibake or unknown
   characters), is oversize too, counted with `reason="unmeasured"`. Affects
   0.3.1 and earlier with an ONNX stage enabled.
+- **Non-ASCII text made PII redaction about 100 times slower, on the
+  proxy's async worker threads.** The card, SSN, IP address and AWS key
+  patterns used Unicode word boundaries (`\b`), and the `regex` crate can't
+  search those with its fast engine once the text has a non-ASCII character
+  in it. With the default configuration, a 10 MiB message of Chinese text,
+  or of one non-ASCII character repeated, took about 3 s in `pii_redactor`
+  on a worker thread. 16 such requests at once stalled every other request,
+  `GET /healthz` included, for 4–5 s, and 32 at once took up to 12 s each.
+  The patterns now use ASCII word boundaries, and the same requests take
+  as long as English text (0.2–0.6 s for 8–32 at once, with other requests
+  answered within 0.2 s). Affects 0.3.1 and earlier.
 
 ### Added
 
