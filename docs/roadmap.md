@@ -46,6 +46,15 @@ Open work, grouped by what it needs to run. Measurements go in
   stages. A limit taken before the body is read (by `Content-Length`, or
   as chunks arrive), answering `503` with `Retry-After` when full, would
   bound it in the proxy itself.
+- [ ] Redact card numbers, SSNs and IP addresses written in non-ASCII
+  digits again (`١٢٣-٤٥-٦٧٨٩`, full-width digits), without Unicode `\b`.
+  0.4.0 made those patterns ASCII-only, because a Unicode word boundary
+  makes the regex crate scan non-ASCII text about 100 times slower (see
+  [non-ASCII text](threat-model.md#non-ascii-text-in-the-regex-stages)).
+  One way: map other scripts' decimal digits to ASCII before matching,
+  keeping a map back to the original byte offsets (the digits are 2–4
+  bytes in UTF-8), or add patterns with explicit digit classes and check
+  the boundaries in code. Must keep the lazy-DFA test passing.
 - [ ] Edition 2024 and `resolver = "3"` (the env-override tests no longer
   call `set_var`, so the migration has nothing left to break), and update
   `.rustfmt.toml`'s `edition`.
