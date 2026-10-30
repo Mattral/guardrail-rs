@@ -262,21 +262,25 @@ it takes more than 32 bytes per token, which some input does (below), and
 measuring all of it would cost what the limit is there to bound. It is
 counted in `guardrail_stage_oversize_total` with `reason="unmeasured"`
 (`"over_limit"` otherwise). So turning away a large input costs about as
-much as a small one. Before 0.4.0 the stage took a session first and
-tokenized all of the input. Through the proxy with both stages, at the
-default body limit of 10 MiB, 3 runs:
+much as a small one. Up to 0.3.1 the stages tokenized all of the input,
+and nothing bounded how many requests did that at once. Through the proxy
+with both stages, at the default body limit of 10 MiB, 3 runs (16 at once:
+one run):
 
-| | before | after |
-|---|---:|---:|
-| one 10 MiB message: `403` after | 3.4–3.8 s | 0.11–0.13 s |
-| its rise in the proxy's peak memory | about 0.8 GB | about 50 MB |
-| 4 at once: `403` after | 3.8–4.7 s | 0.12–0.17 s |
-| a short request sent alongside: answered after | 4.1–4.3 s | 0.47–0.57 s |
-| rise in peak memory, 4 at once | about 2.7 GB | about 0.25 GB |
+| 10 MiB messages at once | 0.3.1: `403` after | 0.3.1: peak memory rise | now: `403` after | now: peak memory rise |
+|---:|---:|---:|---:|---:|
+| 1 | 3.4–3.5 s | 0.8 GB | 0.11–0.13 s | 50 MB |
+| 4 | 3.8–4.5 s | 2.5 GB | 0.11–0.19 s | 0.25 GB |
+| 8 | 5.5–6.7 s | 3.9 GB | 0.16–0.21 s | 0.43 GB |
+| 16 | not recorded | 11.9 GB | 0.30–0.40 s | 1.1 GB |
 
-The short request takes 0.48–0.67 s alone. Images and base64
-documents in a request are not tokenized by either stage. Input built to take few tokens
-per byte, as 4 MiB bodies (3 runs):
+0.3.1 locked its one session per window, after tokenizing, so other
+requests were held up little (a short request sent alongside took
+0.55–0.78 s, 1.4 s next to 16, against about 0.55 s alone), but a few dozen
+such requests at once could run the proxy out of memory. Images and base64
+documents in a request are not tokenized by either stage.
+
+Input built to take few tokens per byte, as 4 MiB bodies (3 runs):
 
 | 4 MiB of | bytes per token, `onnx_injection` / `toxicity` | `403` after, both stages | `toxicity` alone |
 |---|---|---:|---:|
