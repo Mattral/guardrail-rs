@@ -11,7 +11,7 @@ resolver = "2"
 
 [workspace.package]
 # Also bump the guardrail-* entries in [workspace.dependencies] below.
-version     = "0.3.1"
+version     = "0.4.0"
 edition     = "2021"
 # Keep in sync with the "MSRV (1.88)" job in .github/workflows/ci.yml and
 # the MSRV badge in README.md — all three should always agree.
@@ -28,10 +28,10 @@ keywords    = ["llm", "security", "proxy", "guardrail", "prompt-injection"]
 [workspace.dependencies]
 # Internal crates. Members use `guardrail-x = { workspace = true }`; the
 # version is needed for publishing and must equal [workspace.package].version.
-guardrail-core        = { path = "crates/guardrail-core", version = "0.3.1" }
-guardrail-classifiers = { path = "crates/guardrail-classifiers", version = "0.3.1" }
-guardrail-config      = { path = "crates/guardrail-config", version = "0.3.1" }
-guardrail-proxy       = { path = "crates/guardrail-proxy", version = "0.3.1" }
+guardrail-core        = { path = "crates/guardrail-core", version = "0.4.0" }
+guardrail-classifiers = { path = "crates/guardrail-classifiers", version = "0.4.0" }
+guardrail-config      = { path = "crates/guardrail-config", version = "0.4.0" }
+guardrail-proxy       = { path = "crates/guardrail-proxy", version = "0.4.0" }
 # Async runtime. No features here: each crate turns on what it uses, so
 # embedding a library crate doesn't pull in all of tokio.
 tokio          = { version = "1", default-features = false }

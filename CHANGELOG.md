@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-06
+
 ### Upgrading from 0.3.x
 
 - OpenTelemetry crates are updated to `opentelemetry` 0.33 and
@@ -1347,7 +1349,8 @@ and multi-part `image_url` round-tripping) in `translate.rs`.
   files, only showing inline code snippets — added explicit file
   pointers to all three.
 
-[Unreleased]: https://github.com/Mattral/guardrail-rs/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Mattral/guardrail-rs/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Mattral/guardrail-rs/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Mattral/guardrail-rs/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Mattral/guardrail-rs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Mattral/guardrail-rs/compare/v0.1.1...v0.2.0
