@@ -78,7 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   takes about 0.1 s and 50 MB. Longer input whose first part fits, at more
   than 32 bytes per token (runs of dashes, `ÃÂ` mojibake or unknown
   characters), is oversize too, counted with `reason="unmeasured"`. Affects
-  0.3.1 and earlier with an ONNX stage enabled.
+  0.3.1 and earlier with an ONNX stage enabled
+  ([GHSA-hjh5-rqqc-7wfg](https://github.com/Mattral/guardrail-rs/security/advisories/GHSA-hjh5-rqqc-7wfg)).
 - **Non-ASCII text made PII redaction about 100 times slower, on the
   proxy's async worker threads.** The card, SSN, IP address and AWS key
   patterns used Unicode word boundaries (`\b`), and the `regex` crate can't
@@ -91,7 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as long as English text (0.2–0.6 s for 8–32 at once, with other requests
   answered within 0.2 s). Custom `regex_injection` rules with a Unicode
   `\b` slowed the injection scanner the same way; such rules are now
-  refused at load. Affects 0.3.1 and earlier.
+  refused at load. Affects 0.3.1 and earlier
+  ([GHSA-xphv-xpp2-9j9v](https://github.com/Mattral/guardrail-rs/security/advisories/GHSA-xphv-xpp2-9j9v)).
 
 ### Added
 
