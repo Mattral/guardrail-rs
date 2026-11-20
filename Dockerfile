@@ -20,9 +20,11 @@ ARG FEATURES=""
 
 WORKDIR /build
 
-# Install build dependencies. `pkg-config` + `libssl-dev` are required by
-# transitive deps even though guardrail-rs itself uses rustls; `protobuf`
-# headers may be needed by the `onnx` feature's `ort` crate on some platforms.
+# Install build dependencies. The default build is rustls-only and needs
+# neither `pkg-config` nor `libssl-dev`, but an ONNX build (FEATURES=onnx)
+# does: ort-sys downloads ONNX Runtime at build time through ureq ->
+# native-tls -> openssl-sys (`cargo tree -i openssl-sys -p guardrail-cli
+# --features onnx`). Installed unconditionally so both builds work.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \

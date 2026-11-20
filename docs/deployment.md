@@ -19,8 +19,9 @@ This links against the ONNX Runtime via the `ort` crate. See
 ## Docker
 
 A multi-stage `Dockerfile` is provided at the repository root, producing a
-minimal `distroless`-based image (~25 MB without ONNX, ~180 MB with ONNX due
-to the ONNX Runtime shared library).
+minimal `distroless`-based image. An ONNX build also carries the ONNX Runtime
+shared library, which makes the image considerably larger. Image sizes
+haven't been measured for this document; `docker image ls` shows yours.
 
 ```bash
 # CPU-only, no semantic classifiers (smallest image)

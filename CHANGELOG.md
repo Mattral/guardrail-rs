@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Release builds use `lto = "thin"`, `codegen-units = 1` and
+  `strip = "symbols"`. The `guardrail` binary (default features, x86_64
+  Linux, Rust 1.99.1) went from 16.3 MB to 9.9 MB; a clean release build of
+  `guardrail-cli` took 53 s with 16 logical CPUs. Benchmarks inherit the
+  release profile, so the benchmark dashboard may step at this commit.
+- `.rustfmt.toml` no longer sets the nightly-only `imports_granularity` and
+  `group_imports`, which stable `rustfmt` ignored with a warning.
 - `guardrail-config`: every configuration struct is
   `#[serde(deny_unknown_fields)]`.
 
