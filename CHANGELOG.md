@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `guardrail validate` and `guardrail run` warn when `pipeline.on_error` is
+  not set, since the default (`"allow"`) fails open. Setting the key to
+  either value silences the warning; the default is unchanged. `validate`
+  also prints the effective `pipeline.on_error`. The check is available to
+  embedders as `guardrail_config::config_warnings`.
 - `guardrail_proxy::audit_log::ndjson_layer`: the NDJSON audit-log layer
   that `guardrail run` installs, for embedders that want the same audit
   file. The CLI and the audit-log content test both use it.
