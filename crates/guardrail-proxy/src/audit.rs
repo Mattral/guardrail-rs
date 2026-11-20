@@ -23,11 +23,12 @@
 //! }
 //! ```
 //!
-//! **Privacy invariants (never violated):**
-//! - Audit records never contain message content or API keys.
+//! **Privacy invariants:**
+//! - Audit records carry no message content or API keys; [`AuditRecord`]
+//!   has no field for either. `audit_log_excludes_message_content_and_api_keys`
+//!   in `guardrail-test-suite` checks the NDJSON audit log end to end.
 //! - Only metadata needed for security analysis is logged.
 
-use chrono::{Datelike, Timelike};
 use guardrail_core::{
     decision::{BlockCode, Decision},
     request::GuardrailRequest,
@@ -121,7 +122,7 @@ impl AuditRecord {
         latency_pipeline_ms: f64,
         latency_total_ms: f64,
     ) -> Self {
-        let now = chrono_timestamp();
+        let now = utc_timestamp();
 
         let (decision_name, stage, reason, code, pii_entities) = match decision {
             Decision::Allow => ("allow", None, None, None, Vec::new()),
@@ -243,41 +244,42 @@ fn block_code_str(code: &BlockCode) -> String {
 }
 
 /// Return the current UTC time formatted as an ISO 8601 string with
-/// millisecond precision and a `Z` suffix, without pulling in the `chrono`
-/// crate (which would add a heavy dependency for a non-critical path).
+/// millisecond precision and a `Z` suffix.
 ///
 /// Format: `"2026-06-11T10:00:00.123Z"`
-fn chrono_timestamp() -> String {
+fn utc_timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
+    format_utc(now.as_secs(), now.subsec_millis())
+}
 
-    let total_secs = now.as_secs();
-    let millis = now.subsec_millis();
-
-    // Convert UNIX epoch seconds to (year, month, day, hour, min, sec)
-    // using a minimal algorithm to avoid pulling in `chrono`.
-    let (year, month, day, hour, min, sec) = unix_secs_to_datetime(total_secs);
-
+/// Format UNIX seconds plus milliseconds as `YYYY-MM-DDTHH:MM:SS.mmmZ`.
+fn format_utc(secs: u64, millis: u32) -> String {
+    let (year, month, day) = civil_from_days(secs / 86_400);
+    let rem = secs % 86_400;
+    let (hour, min, sec) = (rem / 3_600, rem % 3_600 / 60, rem % 60);
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}.{millis:03}Z")
 }
 
-/// Minimal, allocation-free conversion of UNIX seconds to calendar fields
-/// (Gregorian calendar, UTC). Handles dates from 1970 to ~2200 correctly.
-fn unix_secs_to_datetime(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
-    let dt = chrono::DateTime::from_timestamp(secs as i64, 0)
-        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
-    let dt = dt.naive_utc();
-    (
-        dt.year() as u64,
-        dt.month() as u64,
-        dt.day() as u64,
-        dt.hour() as u64,
-        dt.minute() as u64,
-        dt.second() as u64,
-    )
+/// Days since 1970-01-01 to a proleptic Gregorian (year, month, day).
+///
+/// Howard Hinnant's `civil_from_days`
+/// (<https://howardhinnant.github.io/date_algorithms.html#civil_from_days>),
+/// restricted to dates on or after the epoch.
+fn civil_from_days(days: u64) -> (u64, u64, u64) {
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11], March-based
+    let day = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = yoe + era * 400 + u64::from(month <= 2);
+    (year, month, day)
 }
 
 #[cfg(test)]
@@ -376,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_timestamp_format() {
-        let ts = chrono_timestamp();
+        let ts = utc_timestamp();
         // Must match "YYYY-MM-DDTHH:MM:SS.mmmZ"
         assert_eq!(ts.len(), 24, "unexpected length: {ts}");
         assert_eq!(&ts[10..11], "T");
@@ -385,25 +387,24 @@ mod tests {
     }
 
     #[test]
+    fn test_format_utc_known_instants() {
+        for (secs, millis, expected) in [
+            (0, 0, "1970-01-01T00:00:00.000Z"),
+            (951_782_400, 7, "2000-02-29T00:00:00.007Z"),
+            (1_709_164_800, 123, "2024-02-29T00:00:00.123Z"),
+            (1_781_136_000, 0, "2026-06-11T00:00:00.000Z"),
+            (4_107_542_399, 999, "2100-02-28T23:59:59.999Z"),
+            (4_107_542_400, 0, "2100-03-01T00:00:00.000Z"),
+            (253_402_300_799, 0, "9999-12-31T23:59:59.000Z"),
+        ] {
+            assert_eq!(format_utc(secs, millis), expected, "secs = {secs}");
+        }
+    }
+
+    #[test]
     fn test_emit_does_not_panic() {
         let req = clean_request();
         let record = AuditRecord::from_decision(&req, &Decision::Allow, 0.0, 0.0);
         record.emit(); // must not panic even without a subscriber
-    }
-
-    #[test]
-    fn test_unix_secs_epoch() {
-        let (y, mo, d, h, mi, s) = unix_secs_to_datetime(0);
-        assert_eq!((y, mo, d, h, mi, s), (1970, 1, 1, 0, 0, 0));
-    }
-
-    #[test]
-    fn test_unix_secs_known_date() {
-        // 2026-06-11T00:00:00Z = 1_781_136_000
-        let (y, mo, d, h, mi, s) = unix_secs_to_datetime(1_781_136_000);
-        assert_eq!(y, 2026);
-        assert_eq!(mo, 6);
-        assert_eq!(d, 11);
-        assert_eq!((h, mi, s), (0, 0, 0));
     }
 }

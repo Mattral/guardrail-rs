@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `file_name_prefix` and `rotation` (use `path` and `max_size_mb`), and
   `[upstream] upstream_timeout_secs` (use `timeout_secs`).
 
+### Security
+
+- `guardrail-proxy` no longer depends on `chrono`, which
+  [RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543)
+  reports as unmaintained. It was only used to format the audit-record
+  timestamp; that is now a short date conversion with tests for leap days,
+  century boundaries and the format itself.
+
 ### Changed
 
 - `guardrail-config`: every configuration struct is
