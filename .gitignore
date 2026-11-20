@@ -36,3 +36,6 @@ lcov.info
 
 # Evaluation datasets fetched on demand (eval/fetch-jackhhao.py)
 /eval/data/external/
+
+# Python bytecode
+__pycache__/
