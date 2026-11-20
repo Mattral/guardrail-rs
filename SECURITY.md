@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.4.x   | :white_check_mark: |
-| < 0.4   | :x: |
+| 0.5.x   | :white_check_mark: |
+| < 0.5   | :x: |
 
 Fixes are released for the latest minor version only. Versions before
 0.4.0 are affected by the denial-of-service issues fixed in 0.4.0 (see
