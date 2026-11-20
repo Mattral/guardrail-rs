@@ -9,9 +9,9 @@ guide.
 guardrail-rs is a reverse proxy, written in Rust, that sits between an app
 and an LLM provider. It checks each chat request (pattern rules for prompt
 injection, PII redaction, user policy rules, optional ONNX classifiers),
-then forwards, redacts or refuses it. It is experimental: detection rates
-have not been measured, so never describe it as a reliable security
-control.
+then forwards, redacts or refuses it. It is experimental: the bundled
+injection rules catch 1.5% of a public injection dataset (`eval/RESULTS.md`),
+so never describe it as a reliable security control.
 
 ## Crates
 
@@ -71,7 +71,11 @@ Real ONNX models are optional and slow; the smoke tests are `#[ignore]`d:
 - **New stage:** implement `guardrail_core::Stage` and wire it into
   `build_pipeline` in `guardrail-config/src/loader.rs`; see
   `docs/stage-api.md`.
-- **Detection test data:** `tests/fixtures/*.json`.
+- **Detection measurements:** `eval/` (datasets, `baseline.json`,
+  `RESULTS.md`) and `crates/guardrail-test-suite/tests/detection_eval.rs`.
+  A change to the injection rules changes the results; record them with
+  `GUARDRAIL_EVAL_UPDATE=1 cargo test -p guardrail-test-suite --test detection_eval`
+  and commit `eval/baseline.json` and `eval/RESULTS.md`.
 
 ## Rules for changes
 

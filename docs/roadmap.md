@@ -72,9 +72,13 @@ Open work, grouped by what it needs to run. Measurements go in
   defaults change).
 - [ ] Redact streamed `/v1/responses` events. Today, with response
   redaction on, `stream: true` on that route is refused with `400`.
-- [ ] Detection quality: normalize text before matching (NFKC, remove
-  zero-width and bidi characters, map common look-alike characters) and
-  broaden the injection phrasings ("prior", "preceding", "every" …), with an
-  offset map so PII redaction still lands on the original text; add an
-  evaluation harness over `tests/fixtures/*.json` that reports recall and
-  false-positive rate per rule set and fails CI on regressions.
+- [ ] Detection quality: the bundled injection rules catch 1.5% of the
+  injections in deepset/prompt-injections ([`eval/`](../eval/README.md)).
+  Raise that without new false alarms: normalize text before matching
+  (NFKC, remove zero-width and bidi characters, map common look-alike
+  characters) and broaden the injection phrasings ("prior", "preceding",
+  "every" …), with an offset map so PII redaction still lands on the
+  original text. The evaluation test records each change.
+- [ ] Measure PII detection the way injection is measured: a labelled
+  dataset with a redistributable licence, per-entity catch rate and false
+  redactions, and a baseline in CI.

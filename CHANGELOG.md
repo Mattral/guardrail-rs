@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Detection evaluation (`eval/`). `crates/guardrail-test-suite/tests/detection_eval.rs`
+  runs labelled prompts through the default pipeline and compares which ones
+  are blocked with `eval/baseline.json`; CI fails on any change until the new
+  results are recorded. Datasets: deepset/prompt-injections (662 rows,
+  committed), the hand-written `tests/fixtures/`, and optionally
+  jackhhao/jailbreak-classification (fetched by `eval/fetch-jackhhao.py`).
+  Results: the bundled injection rules catch 4 of 263 deepset injections
+  (1.5%) and flag none of 399 benign prompts (`eval/RESULTS.md`).
+- `onnx_detection_eval`, an ignored test that measures the real
+  `onnx_injection` model on the same data. In one local run it caught 106 of
+  263 deepset injections (40.3%) and flagged 3 of 399 benign prompts (0.8%);
+  see `docs/benchmarks.md#detection`.
+
+### Documentation
+
+- README, `docs/threat-model.md`, `AGENTS.md`: the measured detection rates
+  replace "not measured", and the threat model no longer says the ONNX
+  classifier makes adversarial rephrasing ineffective.
+- `tests/fixtures/README.md`: three injection fixtures are not caught by the
+  bundled rules; the file no longer says they must be blocked.
+- CONTRIBUTING: rule changes record new evaluation results.
+
 ## [0.5.0] - 2026-11-20
 
 ### Upgrading from 0.4.x

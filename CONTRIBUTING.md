@@ -53,11 +53,18 @@ Bundled rules live in
 3. Add both a **positive** test case (in `injection.rs`'s
    `test_known_injections_blocked`) and confirm it doesn't false-positive
    against the **benign** test cases (`test_benign_inputs_allowed`).
-4. Run the proptest suite to confirm no panics on arbitrary input:
+4. Record what the change does on the evaluation datasets (see
+   [`eval/README.md`](eval/README.md)); CI fails until the new results
+   are committed:
+   ```bash
+   GUARDRAIL_EVAL_UPDATE=1 cargo test -p guardrail-test-suite --test detection_eval
+   git diff eval/RESULTS.md
+   ```
+5. Run the proptest suite to confirm no panics on arbitrary input:
    ```bash
    cargo test -p guardrail-classifiers
    ```
-5. Benchmark the change if you're adding many patterns:
+6. Benchmark the change if you're adding many patterns:
    ```bash
    cargo bench -p guardrail-classifiers -- regex_injection
    ```

@@ -19,6 +19,41 @@ change to a specific latency shift.
 
 ---
 
+## Detection
+
+How often prompt injection is caught, not how fast. The pattern rules are
+measured in CI on every push; their results are in
+[`eval/RESULTS.md`](../eval/RESULTS.md), and how to read them is in
+[`eval/README.md`](../eval/README.md).
+
+### `onnx_injection` (one local run, 2026-11-20)
+
+| Dataset | Injections caught | Benign flagged |
+|---|---|---|
+| deepset/prompt-injections (not in the model's training data) | 106 of 263 (40.3%) | 3 of 399 (0.8%) |
+| jackhhao/jailbreak-classification (in the model's training data) | 545 of 666 (81.8%) | 7 of 1,332 (0.5%) |
+
+- Model: `protectai/deberta-v3-base-prompt-injection-v2` at commit
+  `90c9989b`, its published `onnx/model.onnx` (SHA-256 `f0ea7f23…`), fp32.
+- Settings: the stage's defaults, threshold 0.85 and up to 16 windows; no
+  case went over the window limit.
+- Software: guardrail-rs 0.5.0 code, `ort` 2.0.0-rc.15, ONNX Runtime 1.31,
+  Rust 1.99.1, CPU.
+- The jackhhao row is not an independent result: the model card lists that
+  dataset among its training data. The deepset row is the one to quote.
+
+To reproduce (about 7 minutes on 16 logical CPUs, mostly jackhhao's long
+prompts):
+
+```bash
+python3 eval/fetch-jackhhao.py
+GUARDRAIL_TEST_MODEL_DIR=$PWD/models \
+  cargo test --release -p guardrail-classifiers --features onnx \
+  --test onnx_detection_eval -- --ignored --nocapture
+```
+
+---
+
 ## Pipeline latency summary
 
 Figures are the **median across the 6 most recent tracked runs** (as of

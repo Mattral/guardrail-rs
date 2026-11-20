@@ -7,8 +7,9 @@ trust assumptions, and the threats it does **not** address.
 
 guardrail-rs is an experimental reverse proxy, not a verified security
 control. "In scope" below means a threat the project has mitigations for, not
-that those mitigations have measured effectiveness: no precision, recall or
-false-positive rates have been measured for prompt-injection or PII detection.
+that those mitigations are effective. Prompt-injection detection is measured
+on public labelled data (see [`eval/`](../eval/README.md)), and the pattern
+rules catch few of those attacks; PII detection is not measured yet.
 Stages also fail open by default (see
 [Fail-open by default](#fail-open-by-default-pipelineon_error--allow)).
 
@@ -46,12 +47,14 @@ persona.
 - `RegexInjectionScanner` (on by default) — single-pass `RegexSet` over 28
   bundled patterns covering jailbreaks, system-prompt extraction,
   delimiter-injection, and capability-elicitation attempts. It matches the
-  phrasings it was written for; its recall and false-positive rate haven't
-  been measured.
+  phrasings it was written for and little else: on [deepset/prompt-injections](https://huggingface.co/datasets/deepset/prompt-injections) it
+  catches 4 of 263 injections (1.5%) and flags none of 399 benign prompts
+  ([results](../eval/RESULTS.md)).
 - `OnnxInjectionClassifier` (optional, `onnx` feature) — DeBERTa-based
-  semantic classifier that catches paraphrased or novel injection attempts
-  that evade the regex layer. Operates at the sentence-embedding level so
-  adversarial rephrasing has diminishing returns.
+  classifier for paraphrased attempts the patterns miss. On the same
+  dataset, at the default threshold, it catches 106 of 263 injections
+  (40.3%) and flags 3 of 399 benign prompts (0.8%)
+  ([details](benchmarks.md#detection)).
 
 **Residual risk:** Highly novel injection techniques (new jailbreak styles,
 language-level obfuscation, multi-turn attacks across separate requests) may
