@@ -43,10 +43,11 @@ persona.
 
 **Mitigations:**
 
-- `RegexInjectionScanner` (always on) — single-pass `RegexSet` over 30+
+- `RegexInjectionScanner` (on by default) — single-pass `RegexSet` over 28
   bundled patterns covering jailbreaks, system-prompt extraction,
-  delimiter-injection, and capability-elicitation attempts. Catches the
-  vast majority of known attack payloads in < 50 µs.
+  delimiter-injection, and capability-elicitation attempts. It matches the
+  phrasings it was written for; its recall and false-positive rate haven't
+  been measured.
 - `OnnxInjectionClassifier` (optional, `onnx` feature) — DeBERTa-based
   semantic classifier that catches paraphrased or novel injection attempts
   that evade the regex layer. Operates at the sentence-embedding level so
