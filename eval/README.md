@@ -48,13 +48,43 @@ Read the numbers with these in mind:
   of deepset is in German. A low catch rate there still means the rules miss
   most of what the dataset's authors count as injection.
 - **The hand-written fixtures are not a test of quality.** They were written
-  with the rules, so they show intended behaviour only.
+  with the rules. Three of the seven injections are not caught; they stay
+  labelled as injections and are listed under "Known misses" in
+  [RESULTS.md](RESULTS.md).
+- **Intervals.** Every rate comes with a 95% Wilson score interval. With
+  263 injections and 399 benign prompts the intervals are wide: 3 false
+  alarms in 399 is consistent with anything from 0.3% to 2.2%.
+- **One operating point.** The ML model is measured at its default
+  threshold (0.85) only; no threshold sweep has been run.
+- **Static, non-adaptive attacks.** These are fixed prompts. An attacker
+  who probes the rules or the model and rewrites around them will do better
+  than these numbers suggest.
 - **The ML model was trained on jackhhao's data**, according to its
   [model card](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2),
   so its jackhhao score is not an independent result. deepset is not listed
   among its training sets.
 - **These are two public datasets, not your traffic.** Rates on real
   requests can be higher or lower.
+
+## Languages
+
+deepset mixes English and German, so its results are also split by
+language. `eval/label-language.py` adds a `lang` field (`en`, `de`, `mixed`,
+`unknown`) to each row, deterministically and with the Python standard
+library only; its docstring gives the method (counts of English and German
+function words, plus umlauts and ß).
+
+Hand check: on 60 rows drawn with `random.seed(20261120)`, 53 of the 55
+rows given a language were labelled correctly. Both errors were a German
+keyword list followed by a sentence in another language, labelled with the
+sentence's language instead of `mixed`. The 5 `unknown` rows were four
+keyword-only queries and one French prompt.
+
+To relabel after changing the data or the method:
+
+```bash
+python3 eval/label-language.py eval/data/deepset-prompt-injections.jsonl
+```
 
 ## Adding data
 
