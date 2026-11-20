@@ -41,6 +41,10 @@ struct Case {
     id: String,
     label: Label,
     messages: Vec<ChatMessage>,
+    /// Language from `eval/label-language.py`, for datasets that have one.
+    lang: Option<String>,
+    /// The message text, for listing known misses.
+    text: String,
 }
 
 struct Dataset {
@@ -54,12 +58,25 @@ struct Dataset {
     gated: bool,
 }
 
+/// Counts for one slice of a dataset.
+#[derive(Default, Clone, Copy)]
+struct Counts {
+    injections: usize,
+    caught: usize,
+    benign: usize,
+    flagged: usize,
+}
+
 #[derive(Default)]
 struct Outcome {
     injections: usize,
     benign: usize,
     caught: BTreeSet<String>,
     false_alarms: BTreeSet<String>,
+    /// Per language, for datasets with a `lang` field.
+    by_lang: BTreeMap<String, Counts>,
+    /// `(id, text)` of injections not caught, in dataset order.
+    missed: Vec<(String, String)>,
 }
 
 fn eval_dir() -> PathBuf {
@@ -91,8 +108,11 @@ fn load_jsonl(path: &Path) -> Vec<Case> {
             let record: Value = serde_json::from_str(line).unwrap();
             let id = record["id"].as_str().unwrap().to_string();
             let label = parse_label(record["label"].as_str().unwrap(), &id);
+            let text = record["text"].as_str().unwrap().to_string();
             Case {
-                messages: vec![user(record["text"].as_str().unwrap())],
+                messages: vec![user(&text)],
+                lang: record["lang"].as_str().map(str::to_string),
+                text,
                 id,
                 label,
             }
@@ -115,6 +135,13 @@ fn load_fixtures() -> Vec<Case> {
                 "allow" => Label::Benign,
                 other => panic!("{id}: unexpected decision {other:?}"),
             };
+            let text = case["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["content"].as_str().unwrap())
+                .collect::<Vec<_>>()
+                .join(" / ");
             let messages = case["messages"]
                 .as_array()
                 .unwrap()
@@ -133,6 +160,8 @@ fn load_fixtures() -> Vec<Case> {
                 id,
                 label,
                 messages,
+                lang: None,
+                text,
             });
         }
     }
@@ -152,7 +181,8 @@ fn datasets() -> Vec<Dataset> {
         Dataset {
             name: "handwritten-fixtures".into(),
             note: "tests/fixtures/ (this repository). Written alongside the rules, \
-                   so these show intended behaviour, not detection quality.",
+                   so not a measure of detection quality; the injections the rules \
+                   miss are listed under Known misses.",
             cases: load_fixtures(),
             gated: true,
         },
@@ -183,15 +213,29 @@ async fn evaluate(pipeline: &guardrail_core::pipeline::Pipeline, cases: &[Case])
                 ..
             }
         );
+        let slice = case
+            .lang
+            .as_ref()
+            .map(|lang| outcome.by_lang.entry(lang.clone()).or_default());
         match case.label {
             Label::Injection => {
                 outcome.injections += 1;
+                if let Some(c) = slice {
+                    c.injections += 1;
+                    c.caught += usize::from(flagged);
+                }
                 if flagged {
                     outcome.caught.insert(case.id.clone());
+                } else {
+                    outcome.missed.push((case.id.clone(), case.text.clone()));
                 }
             }
             Label::Benign => {
                 outcome.benign += 1;
+                if let Some(c) = slice {
+                    c.benign += 1;
+                    c.flagged += usize::from(flagged);
+                }
                 if flagged {
                     outcome.false_alarms.insert(case.id.clone());
                 }
@@ -201,12 +245,28 @@ async fn evaluate(pipeline: &guardrail_core::pipeline::Pipeline, cases: &[Case])
     outcome
 }
 
-fn percent(part: usize, whole: usize) -> String {
-    if whole == 0 {
-        "n/a".into()
-    } else {
-        format!("{:.1}%", 100.0 * part as f64 / whole as f64)
+/// 95% Wilson score interval for `k` successes in `n` trials, as fractions.
+fn wilson(k: usize, n: usize) -> (f64, f64) {
+    let (k, n, z) = (k as f64, n as f64, 1.959_964);
+    let p = k / n;
+    let denom = 1.0 + z * z / n;
+    let centre = (p + z * z / (2.0 * n)) / denom;
+    let half = z * (p * (1.0 - p) / n + z * z / (4.0 * n * n)).sqrt() / denom;
+    ((centre - half).max(0.0), (centre + half).min(1.0))
+}
+
+/// `"4 of 263: 1.5% (0.6–3.9%)"`, the bracket being the 95% Wilson interval.
+fn rate(k: usize, n: usize) -> String {
+    if n == 0 {
+        return "no cases".into();
     }
+    let (lo, hi) = wilson(k, n);
+    format!(
+        "{k} of {n}: {:.1}% ({:.1}–{:.1}%)",
+        100.0 * k as f64 / n as f64,
+        100.0 * lo,
+        100.0 * hi
+    )
 }
 
 fn results_markdown(sets: &[(Dataset, Outcome)]) -> String {
@@ -215,6 +275,7 @@ fn results_markdown(sets: &[(Dataset, Outcome)]) -> String {
          Generated by `crates/guardrail-test-suite/tests/detection_eval.rs`; do not edit by hand.\n\
          Detector: `regex_injection` with the bundled rules, default configuration.\n\
          A case counts as caught when the pipeline blocks it with code `prompt_injection`.\n\
+         Brackets give the 95% Wilson score interval.\n\
          Rows for fetched datasets (`eval/data/external/`) appear only when they were present.\n\
          How to read these numbers: [README.md](README.md).\n\n\
          | Dataset | Injections caught | Benign flagged |\n\
@@ -222,19 +283,50 @@ fn results_markdown(sets: &[(Dataset, Outcome)]) -> String {
     );
     for (set, outcome) in sets {
         out += &format!(
-            "| {} | {} of {} ({}) | {} of {} ({}) |\n",
+            "| {} | {} | {} |\n",
             set.name,
-            outcome.caught.len(),
-            outcome.injections,
-            percent(outcome.caught.len(), outcome.injections),
-            outcome.false_alarms.len(),
-            outcome.benign,
-            percent(outcome.false_alarms.len(), outcome.benign),
+            rate(outcome.caught.len(), outcome.injections),
+            rate(outcome.false_alarms.len(), outcome.benign),
         );
     }
     out += "\n";
     for (set, _) in sets {
         out += &format!("- **{}**: {}\n", set.name, set.note);
+    }
+
+    for (set, outcome) in sets.iter().filter(|(_, o)| !o.by_lang.is_empty()) {
+        out += &format!(
+            "\n## {} by language\n\n\
+             Languages from `eval/label-language.py` (method and accuracy in [README.md](README.md#languages)).\n\n\
+             | Language | Injections caught | Benign flagged |\n\
+             |---|---|---|\n",
+            set.name
+        );
+        for (lang, c) in &outcome.by_lang {
+            out += &format!(
+                "| {lang} | {} | {} |\n",
+                rate(c.caught, c.injections),
+                rate(c.flagged, c.benign)
+            );
+        }
+    }
+
+    for (set, outcome) in sets
+        .iter()
+        .filter(|(s, _)| s.name == "handwritten-fixtures")
+    {
+        out += &format!(
+            "\n## Known misses: {}\n\n\
+             Labelled as injections and not caught by the bundled rules. They stay \
+             labelled as injections; a rule change that catches them shows up here.\n\n",
+            set.name
+        );
+        if outcome.missed.is_empty() {
+            out += "None.\n";
+        }
+        for (id, text) in &outcome.missed {
+            out += &format!("- `{id}`: {text}\n");
+        }
     }
     out
 }
