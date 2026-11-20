@@ -45,7 +45,6 @@ prometheus          = { workspace = true }
 uuid                = { workspace = true }
 # Constant-time comparison of caller API keys (auth.rs).
 subtle              = { workspace = true }
-chrono              = { workspace = true }
 
 [dev-dependencies]
 tokio        = { workspace = true, features = ["rt-multi-thread"] }

@@ -78,7 +78,6 @@ tokio-stream = "0.1"
 arc-swap = "1"
 clap = { version = "4", features = ["derive", "env"] }
 subtle = "2.6"
-chrono = { version = "0.4", features = ["alloc"] }
 # Test and benchmark only
 tempfile   = "3"
 wiremock   = "0.6"
