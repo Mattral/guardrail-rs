@@ -24,6 +24,7 @@ wiremock   = { workspace = true }
 # feature unification would turn it on for the proxy too and hide bugs in it.
 flate2     = { workspace = true }
 tempfile   = { workspace = true }
+toml       = { workspace = true }
 # Audit-log content test: installs the NDJSON audit layer the CLI uses.
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }

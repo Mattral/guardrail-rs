@@ -1,0 +1,26 @@
+{
+  "regex_injection": {
+    "deepset-prompt-injections": {
+      "benign": 399,
+      "caught": [
+        "deepset-train-0074",
+        "deepset-train-0400",
+        "deepset-train-0512",
+        "deepset-train-0517"
+      ],
+      "false_alarms": [],
+      "injections": 263
+    },
+    "handwritten-fixtures": {
+      "benign": 6,
+      "caught": [
+        "fixture-classic_ignore_instructions",
+        "fixture-dan_style_jailbreak",
+        "fixture-developer_mode_jailbreak",
+        "fixture-embedded_in_otherwise_normal_text"
+      ],
+      "false_alarms": [],
+      "injections": 7
+    }
+  }
+}

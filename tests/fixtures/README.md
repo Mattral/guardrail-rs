@@ -5,8 +5,8 @@ testing with `guardrail check`.
 
 | File | Purpose |
 |------|---------|
-| `clean_prompts.json` | Benign requests that must produce `Decision::Allow` unchanged. |
-| `injection_prompts.json` | Known prompt-injection patterns that must be blocked by `regex_injection`. |
+| `clean_prompts.json` | Benign requests, labelled `allow`. |
+| `injection_prompts.json` | Prompt-injection examples, labelled `block`. Not all of them are caught by the bundled rules; [`eval/RESULTS.md`](../../eval/RESULTS.md) lists the results. |
 | `pii_prompts.json` | Requests containing PII, with expected entity types and redacted text. |
 | `policy_cases.json` | Request + policy-rule pairs exercising every `PolicyCondition` variant. |
 
@@ -26,10 +26,11 @@ cases), and an optional `note` explaining any subtlety.
 
 ## Using these in tests
 
-These fixtures are illustrative reference data — at present no test harness
-auto-loads them (the existing unit and integration tests construct
-`GuardrailRequest`/TOML literals inline for locality of reference). They are
-provided so that:
+`injection_prompts.json` and `clean_prompts.json` are loaded by the
+detection evaluation (`crates/guardrail-test-suite/tests/detection_eval.rs`,
+see [`eval/`](../../eval/README.md)). The other files are reference data:
+the unit and integration tests construct `GuardrailRequest`/TOML literals
+inline for locality of reference. They are provided so that:
 
 1. New tests can be written by copying a case's `messages` array directly.
 2. The expected behavior of every bundled rule and entity type is documented

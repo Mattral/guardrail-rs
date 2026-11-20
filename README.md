@@ -24,10 +24,12 @@ refuses it.
                    └─ breaks one of your rules?       refuse it (403)
 ```
 
-> **Status: experimental.** The checks are pattern rules plus optional ML
-> models. How often they catch real attacks, or flag harmless text, has not
-> been measured yet. Treat guardrail-rs as one extra layer, not as a
-> security control you can rely on by itself.
+> **Status: experimental.** On a public set of labelled prompt injections,
+> the built-in pattern rules catch **1.5%** of them and the optional ML
+> model catches **40%**, while flagging under 1% of harmless prompts
+> ([details](https://github.com/Mattral/guardrail-rs/blob/main/eval/README.md)).
+> Treat guardrail-rs as one extra layer, not as a security control you can
+> rely on by itself.
 
 ## Quick start
 
@@ -80,8 +82,9 @@ Docker and Kubernetes setups are in
 
 ## What it checks
 
-- **Prompt injection (pattern rules).** About 30 regular expressions for
-  common jailbreak and prompt-extraction phrasings. On by default.
+- **Prompt injection (pattern rules).** 28 regular expressions for common
+  jailbreak and prompt-extraction phrasings. On by default. They catch the
+  phrasings they were written for and little else.
 - **Personal data.** Emails, phone numbers, card numbers (Luhn-checked),
   SSNs, IP addresses and API keys are replaced before the request leaves.
   On by default for requests; for model responses, turn on
@@ -90,7 +93,8 @@ Docker and Kubernetes setups are in
   prompt.
 - **Optional ML models** (`--features onnx`, experimental). A DeBERTa
   prompt-injection model and a RoBERTa toxicity model, run locally with
-  ONNX Runtime on the CPU.
+  ONNX Runtime on the CPU. Much better at injection than the patterns, and
+  much slower (see below).
 
 ## What it does not do
 
@@ -141,8 +145,9 @@ needs no Python, GPU or model downloads unless you turn on the ML models.
 
 guardrail-rs reaches **1.0** when:
 
-1. **Detection is measured.** Catch rate and false-alarm rate for the
-   bundled rules are published, and CI fails if they get worse.
+1. **Detection is measured and worth having.** Injection detection is
+   already measured, and CI fails if it gets worse; the rules now need to
+   catch far more than 1.5%. PII redaction gets the same measurement.
 2. **Load is bounded inside the proxy.** Concurrent requests and the ML
    model queues have limits, answered with `503` and `Retry-After`.
 3. **Streaming is covered.** Response redaction works on every streamed
@@ -159,7 +164,8 @@ work is tracked in the
 Contributions are welcome, and the most useful ones right now are small:
 
 - **Test cases.** Real-world injection attempts, or harmless text that
-  gets flagged by mistake. These feed the detection measurements above.
+  gets flagged by mistake. These feed the
+  [detection measurements](https://github.com/Mattral/guardrail-rs/blob/main/eval/README.md).
 - **Rules.** A new injection pattern or a new kind of personal data, with
   tests.
 - **Reports.** Something that didn't work the way this README says.
