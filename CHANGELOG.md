@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading from 0.4.x
+
+- **Unknown configuration keys are now an error.** Earlier versions ignored
+  them, so a misspelt key silently kept its default (for example
+  `on_eror = "block"` left the pipeline failing open). `guardrail validate`,
+  startup and SIGHUP reload now refuse the file and name the key. Run
+  `guardrail validate --config guardrail.toml` before upgrading. Keys seen in
+  older configs: `[observability.audit_log]` `directory`,
+  `file_name_prefix` and `rotation` (use `path` and `max_size_mb`), and
+  `[upstream] upstream_timeout_secs` (use `timeout_secs`).
+
+### Changed
+
+- `guardrail-config`: every configuration struct is
+  `#[serde(deny_unknown_fields)]`.
+
 ### Documentation
 
 - README: add a status note under the tagline. guardrail-rs is an
