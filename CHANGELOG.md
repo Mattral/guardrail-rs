@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   jackhhao/jailbreak-classification (fetched by `eval/fetch-jackhhao.py`).
   Results: the bundled injection rules catch 4 of 263 deepset injections
   (1.5%) and flag none of 399 benign prompts (`eval/RESULTS.md`).
+- The detection results give a 95% Wilson interval for every rate, split
+  deepset by language (`eval/label-language.py`, hand-checked on 60 rows),
+  and list the hand-written fixtures the rules miss as known misses. The
+  rules catch 0 of 70 German and 4 of 147 English deepset injections.
+- `onnx_detection_eval` writes its tables into `docs/benchmarks.md` with
+  `GUARDRAIL_EVAL_UPDATE=1`, so the published model numbers come from the
+  test.
 - `onnx_detection_eval`, an ignored test that measures the real
   `onnx_injection` model on the same data. In one local run it caught 106 of
   263 deepset injections (40.3%) and flagged 3 of 399 benign prompts (0.8%);

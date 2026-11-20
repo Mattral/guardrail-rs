@@ -26,8 +26,9 @@ refuses it.
 
 > **Status: experimental.** On a public set of labelled prompt injections,
 > the built-in pattern rules catch **1.5%** of them and the optional ML
-> model catches **40%**, while flagging under 1% of harmless prompts
-> ([details](https://github.com/Mattral/guardrail-rs/blob/main/eval/README.md)).
+> model catches **40%**; the model also flagged 3 of 399 harmless prompts
+> (intervals and method in
+> [eval](https://github.com/Mattral/guardrail-rs/blob/main/eval/README.md)).
 > Treat guardrail-rs as one extra layer, not as a security control you can
 > rely on by itself.
 
@@ -145,9 +146,9 @@ needs no Python, GPU or model downloads unless you turn on the ML models.
 
 guardrail-rs reaches **1.0** when:
 
-1. **Detection is measured and worth having.** Injection detection is
-   already measured, and CI fails if it gets worse; the rules now need to
-   catch far more than 1.5%. PII redaction gets the same measurement.
+1. **Detection is measured and stated.** Every check is measured on
+   labelled data, with intervals and the method published, and the
+   defaults say plainly what they catch. Injection is done; PII is next.
 2. **Load is bounded inside the proxy.** Concurrent requests and the ML
    model queues have limits, answered with `503` and `Retry-After`.
 3. **Streaming is covered.** Response redaction works on every streamed
