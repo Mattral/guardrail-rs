@@ -61,16 +61,6 @@ Open work, grouped by what it needs to run. Measurements go in
 - [ ] `[workspace.lints]` (`missing_docs = "deny"`, `unsafe_code = "forbid"`)
   with `[lints] workspace = true` in each crate, replacing the per-crate
   `#![deny(missing_docs)]`.
-- [ ] `.rustfmt.toml`: remove the nightly-only `imports_granularity` and
-  `group_imports` (ignored on stable).
-- [ ] `[profile.release]` with `lto = "thin"`, `codegen-units = 1`,
-  `strip = "symbols"`; measure the release binary size (the README does not
-  quote one).
-- [ ] Dockerfile: correct the comment on `pkg-config` and `libssl-dev`.
-  The default build is rustls-only, but ONNX builds need both:
-  `ort-sys` → `ureq` → `native-tls` → `openssl-sys`, a build dependency
-  that downloads ONNX Runtime (`cargo tree -i openssl-sys --features
-  guardrail-cli/onnx`). Keep installing them.
 - [ ] Repo artifacts: delete `.github/NEXT_PUSH_ISSUE.md`; rewrite the
   "the spec" / "§N" references in `CHANGELOG.md`, `audit.rs`,
   `audit_log.rs`, `error.rs`, `schema.rs`, `benches/pipeline.rs`, `justfile`
