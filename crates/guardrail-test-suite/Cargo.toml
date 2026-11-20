@@ -27,7 +27,6 @@ tempfile   = { workspace = true }
 # Audit-log content test: installs the NDJSON audit layer the CLI uses.
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
-tracing-appender   = { workspace = true }
 criterion  = { workspace = true, features = ["html_reports"] }
 
 [[bench]]

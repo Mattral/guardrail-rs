@@ -216,32 +216,18 @@ fn init_tracing(
     let env_filter =
         EnvFilter::try_new(&observability.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
 
-    use tracing_subscriber::filter::filter_fn;
-    use tracing_subscriber::fmt::format::FmtSpan;
-
     let fmt_layer = fmt::layer().with_filter(env_filter);
 
     // Layer 2: audit-log (non-fatal).
-    let (audit_layer, guard) = {
-        match guardrail_proxy::audit_log::build_layer(&observability.audit_log) {
-            Ok(Some((non_blocking, g))) => {
-                let layer = fmt::layer()
-                    .json()
-                    .with_span_events(FmtSpan::NONE)
-                    .with_target(false)
-                    .with_writer(non_blocking)
-                    .with_filter(filter_fn(|metadata| {
-                        metadata.target() == guardrail_proxy::audit_log::AUDIT_TARGET
-                    }));
-                (Some(layer), Some(g))
-            }
+    let (audit_layer, guard) =
+        match guardrail_proxy::audit_log::ndjson_layer(&observability.audit_log) {
+            Ok(Some((layer, g))) => (Some(layer), Some(g)),
             Ok(None) => (None, None),
             Err(e) => {
                 eprintln!("warning: NDJSON audit log disabled: {e}");
                 (None, None)
             }
-        }
-    };
+        };
 
     // Layer 3: OTel OTLP (fatal if endpoint set but broken).
     let provider = match guardrail_proxy::telemetry::build_otel_layer(observability) {
