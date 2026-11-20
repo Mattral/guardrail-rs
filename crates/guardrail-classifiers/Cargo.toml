@@ -31,7 +31,7 @@ tracing        = { workspace = true }
 tokio          = { workspace = true, features = ["rt", "sync"] }
 
 # Optional ONNX deps (behind feature flag)
-ort         = { version = "2.0.0-rc.12", optional = true }
+ort         = { version = "2.0.0-rc.15", optional = true }
 # Default features are off: `esaxx_fast` builds C++ with the static MSVC
 # runtime, which can't link alongside ONNX Runtime on Windows (LNK2038
 # RuntimeLibrary mismatch), and `progressbar` is only for training. We only

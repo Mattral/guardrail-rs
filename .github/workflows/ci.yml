@@ -112,13 +112,6 @@ jobs:
         with:
           key: onnx-${{ matrix.os }}
       - uses: taiki-e/install-action@nextest
-      # ort-sys's build script (copy-dylibs) links the ONNX Runtime DLLs into
-      # target/debug, target/debug/examples and target/debug/deps, and panics
-      # on Windows when one of them doesn't exist yet, which is the case
-      # for a clippy run on an empty target directory (a cache miss).
-      - name: create target directories for ort-sys
-        shell: bash
-        run: mkdir -p target/debug/examples target/debug/deps
       - name: cargo clippy --features onnx
         run: cargo clippy --workspace --all-targets --features guardrail-cli/onnx -- -D warnings
       - name: cargo nextest run --features onnx

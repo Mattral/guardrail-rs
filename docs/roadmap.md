@@ -68,7 +68,7 @@ Open work, grouped by what it needs to run. Measurements go in
   from `README.md`, `docs/benchmarks.md` and `docs/architecture.md`.
 - [ ] Release 0.4.0 (version bump, CHANGELOG date, tag) once the above is in.
 - [ ] Dependency upgrades: `prometheus` 0.14, `criterion` 0.8, `toml` 1.x,
-  `rstest` 0.28, `ort` rc.15; evaluate `reqwest` 0.13 separately (its TLS
+  `rstest` 0.28; evaluate `reqwest` 0.13 separately (its TLS
   defaults change).
 - [ ] Redact streamed `/v1/responses` events. Today, with response
   redaction on, `stream: true` on that route is refused with `400`.
