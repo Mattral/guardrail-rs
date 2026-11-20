@@ -156,8 +156,11 @@ everything-in-one-place dumping ground as the proxy grows:
   latency histograms (p50/p95/p99 via Grafana), per-stage latency, upstream
   error counts by class, and active connection gauge.
 - [`audit`](../crates/guardrail-proxy/src/audit.rs) — structured `tracing`
-  events at `target: "guardrail::audit"`. **Never logs raw request content**
-  — only metadata (request ID, model, decision, reason, entity types).
+  events at `target: "guardrail::audit"`. Records carry metadata only
+  (request ID, model, decision, reason, entity types); there is no field for
+  message content. The test that checks the NDJSON audit log, and what it
+  does not cover, are in
+  [threat-model.md](threat-model.md#no-raw-content-in-the-audit-log).
 - [`audit_log`](../crates/guardrail-proxy/src/audit_log.rs) — true
   size-based rotating NDJSON file writer (`SizeRotatingWriter`, a custom
   `Write` impl — `tracing-appender`'s built-in rolling only supports

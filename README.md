@@ -13,11 +13,19 @@
 
 **A zero-Python LLM security proxy written in Rust.**
 
+> **Status: experimental.** guardrail-rs is an experimental reverse proxy.
+> No precision, recall or false-positive rates have been measured for its
+> prompt-injection or PII detection (an evaluation harness is on the
+> [roadmap](docs/roadmap.md)), and it is not a verified security control.
+> By default a stage that errors is skipped and the request proceeds
+> unchecked; see [Fails open](#at-a-glance).
+
 `guardrail-rs` is a reverse-proxy that sits between your application and an
 LLM provider (OpenAI, Anthropic, Azure OpenAI, or any OpenAI-compatible
 endpoint). It inspects every chat-completion request before it leaves your
-infrastructure, blocking prompt injection attempts, redacting PII, and
-enforcing custom policy rules. The default regex + PII pipeline took
+infrastructure, blocking requests that match its prompt-injection checks
+(detection rates not yet measured; see the status note above), redacting
+the PII patterns it recognizes, and enforcing custom policy rules. The default regex + PII pipeline took
 47 µs on an 8 KB request in our measurement (see [Latency](#at-a-glance)).
 
 ## Installation
@@ -62,9 +70,9 @@ walks through blocking a prompt injection and redacting PII live.
 | | |
 |---|---|
 | **Threat model scope** | Prompt injection, PII leakage, toxic content, custom policy violations. PII is redacted from requests by default. Redacting PII from model *responses* is opt-in (`redact_responses = true`) and covers both complete and streamed (`stream: true`) responses; streams stay streamed, with PII redacted as tokens flow. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
-| **Latency** | Default regex + PII pipeline, measured end to end (`Pipeline::run`): 4.7 µs at 512 B, 26.5 µs at 4 KB, 47.3 µs at 8 KB. The optional ONNX stages are far slower: 36–42 ms per stage for a 64 B prompt, 0.38–0.43 s at 1 KB. These figures are Criterion means from one local run (8 cores, Rust 1.99); CI's shared-runner medians are in [`docs/benchmarks.md`](docs/benchmarks.md), along with how to reproduce both. CI hard-fails if the regex + PII pipeline exceeds 5 ms. |
-| **Fails open** | By default, a stage that errors on a request (e.g. ONNX inference fails) is skipped and the request continues without that check. Set `pipeline.on_error = "block"`, or `on_error` on an individual ONNX stage, to block instead. A model that fails to load stops startup rather than failing open. |
-| **Observability** | Prometheus metrics at `/metrics` on the proxy's own port, OpenTelemetry traces (OTLP), and an NDJSON audit log — which never contains message content or API keys, only decision metadata. |
+| **Latency** | Default regex + PII pipeline, measured end to end (`Pipeline::run`): 4.7 µs at 512 B, 26.5 µs at 4 KB, 47.3 µs at 8 KB. The optional ONNX stages are far slower: 36–42 ms per stage for a 64 B prompt, 0.38–0.43 s at 1 KB. These figures are Criterion means from one local run (8 cores, Rust 1.99.0 as recorded in [`docs/benchmarks.md`](docs/benchmarks.md); the crates themselves require Rust 1.88+); CI's shared-runner medians are in [`docs/benchmarks.md`](docs/benchmarks.md), along with how to reproduce both. CI hard-fails if the regex + PII pipeline exceeds 5 ms. |
+| **Fails open (risk)** | By default, a stage that errors on a request (e.g. ONNX inference fails) is skipped and the request proceeds to the upstream unchecked by that stage. To fail closed, set `pipeline.on_error = "block"`, or `on_error = "block"` on an individual ONNX stage. A model that fails to load stops startup rather than failing open. |
+| **Observability** | Prometheus metrics at `/metrics` on the proxy's own port, OpenTelemetry traces (OTLP), and an NDJSON audit log of decision metadata. `audit_log_excludes_message_content_and_api_keys` (`crates/guardrail-test-suite/tests/audit_log_content.rs`) asserts that the NDJSON audit log holds no message text, PII values, response text or API key for an allowed, a redacted and a blocked non-streaming chat-completion request. Streaming, error and fail-open paths, application logs, metrics and traces are not covered by that test; see [`docs/threat-model.md`](docs/threat-model.md#no-raw-content-in-the-audit-log). |
 
 ```mermaid
 flowchart LR
@@ -76,22 +84,27 @@ flowchart LR
 
 ## Why guardrail-rs?
 
-- **No Python, no PyTorch, no GPU required.** A single static binary
-  (~15 MB), built from the Rust source in this repository.
+- **No Python, no PyTorch, no GPU required.** A single binary built from
+  the Rust source in this repository (dynamically linked against the system
+  C library; its size has not been measured here).
 - **Fast without ONNX.** In the default configuration (regex + PII), the
   pipeline took 4.7 µs for a 512 B request and 47 µs for 8 KB in our
   measurement. Cost grows with input size, mostly from PII redaction. The
   optional ONNX classifiers cost tens to hundreds of milliseconds per
   request; see [Latency](#at-a-glance).
-- **Drop-in.** Point your existing OpenAI/Anthropic SDK's `base_url` at
-  `guardrail-rs` — no application code changes required.
-- **Fails open by default.** A stage that errors on a request doesn't take
-  down your production traffic; switch to fail-closed with
-  `pipeline.on_error = "block"` or per ONNX stage with `on_error`.
+- **Drop-in for supported routes.** Point your existing OpenAI/Anthropic
+  SDK's `base_url` at `guardrail-rs`; no application code changes are needed
+  for the [routes it handles](docs/configuration.md#routes).
+- **Fails open by default — a stated risk.** A stage that errors on a
+  request is skipped and the request proceeds unchecked by that stage. This
+  keeps traffic flowing when a stage fails, at the cost of coverage. To fail
+  closed, set `pipeline.on_error = "block"`, or `on_error = "block"` per
+  ONNX stage.
 - **Hot-reloadable configuration.** Update rules and policies without
   dropping connections.
-- **Observable.** Structured audit logs (never logging raw PII) and
-  Prometheus metrics out of the box.
+- **Observable.** An NDJSON audit log of decision metadata (what its test
+  covers is under [Observability](#at-a-glance)) and Prometheus metrics out
+  of the box.
 
 ## Quick start
 
@@ -180,7 +193,7 @@ reference configuration, and [`docs/`](docs/) for detailed guides:
 - [`docs/policy-rules.md`](docs/policy-rules.md) — writing custom policy rules
 - [`docs/deployment.md`](docs/deployment.md) — Docker, Kubernetes, and bare-metal deployment
 - [`docs/onnx-models.md`](docs/onnx-models.md) — enabling semantic classifiers
-- [`docs/threat-model.md`](docs/threat-model.md) — what guardrail-rs protects against (and what it doesn't)
+- [`docs/threat-model.md`](docs/threat-model.md) — what guardrail-rs is designed to address (and what it doesn't)
 - [`docs/stage-api.md`](docs/stage-api.md) — implementing custom pipeline stages
 - [`docs/benchmarks.md`](docs/benchmarks.md) — performance targets and how to run benchmarks
 
