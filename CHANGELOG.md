@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Test `audit_log_excludes_message_content_and_api_keys`
+  (`crates/guardrail-test-suite/tests/audit_log_content.rs`): sends an
+  allowed, a redacted and a blocked chat-completion request through the proxy
+  with the NDJSON audit log enabled, and asserts that the log holds one record
+  per request and none of the message text, PII values, upstream response
+  text or API key.
 - `guardrail validate` and `guardrail run` warn when `pipeline.on_error` is
   not set, since the default (`"allow"`) fails open. Setting the key to
   either value silences the warning; the default is unchanged. `validate`
@@ -55,38 +61,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- README: add a status note under the tagline. guardrail-rs is an
-  experimental reverse proxy; no precision, recall or false-positive rates
-  have been measured for prompt-injection or PII detection, and it is not a
-  verified security control. The intro's description of prompt-injection
-  blocking now refers to this note.
-- README and `docs/threat-model.md`: describe fail-open as a stated risk. By
-  default a stage that errors is skipped and the request proceeds unchecked
-  by that stage; `pipeline.on_error = "block"` (or `on_error = "block"` per
-  ONNX stage) fails closed. The default is unchanged.
-- README: the local benchmark toolchain is given as Rust 1.99.0, as recorded
-  in `docs/benchmarks.md`, alongside the 1.88+ requirement for the crates.
-- README: the binary is described as a single binary dynamically linked
-  against the system C library; the approximate size is no longer quoted, as
-  it has not been measured in this repository. `docs/roadmap.md` updated to
-  match.
-- README, `docs/architecture.md`, `docs/threat-model.md`: audit-log content
-  statements now refer to the NDJSON audit log, name the test that asserts
-  them, and list what the test does not cover (streaming, error and fail-open
-  paths, the optional ONNX stages, application logs, `/metrics`, OTLP
-  traces).
-
-### Added
-
-- Test `audit_log_excludes_message_content_and_api_keys`
-  (`crates/guardrail-test-suite/tests/audit_log_content.rs`): sends an
-  allowed, a redacted and a blocked chat-completion request through the proxy
-  with the NDJSON audit log enabled, and asserts that the log holds one record
-  per request and none of the message text, PII values, upstream response
-  text or API key.
-- README and `docs/threat-model.md`: "protects against" is reworded to
-  "designed to address", and "drop-in" is limited to the routes listed in
-  `docs/configuration.md`.
+- README rewritten for a quick read: a status note (experimental; detection
+  rates not measured; not a security control to rely on by itself), what it
+  checks, what it deliberately does not do, the defaults to know (fail-open,
+  unknown keys rejected, what the audit log holds), measured performance
+  with its source, the goals for 1.0, and how to contribute. Links are
+  absolute so they work on crates.io.
+- New `AGENTS.md` for AI coding agents: crate map, the commands CI runs,
+  where to make common changes, and known gotchas.
+- `docs/threat-model.md`: a status paragraph; "designed to address" in
+  place of "protects against"; fail-open described as a risk; the bundled
+  rule count (28) with a note that its recall is not measured; the audit-log
+  section names its test and lists what the test does not cover.
+- `docs/architecture.md`: audit records have no field for message content;
+  links to the test.
+- `docs/configuration.md`: unknown keys are rejected; the `on_error`
+  warning. `docs/deployment.md`: no Docker image sizes (not measured), and
+  `upstream.timeout_secs` in place of `upstream_timeout_secs`.
 
 ## [0.4.0] - 2026-11-06
 
