@@ -29,6 +29,10 @@ async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     // for the entire process lifetime.
     let (_audit_guard, _otel_provider) = init_tracing(&config_handle.config().observability)?;
 
+    for warning in guardrail_config::config_warnings(&config_path)? {
+        tracing::warn!("{warning}");
+    }
+
     let handle = guardrail_proxy::run_server(config_handle.clone()).await?;
     tracing::info!(addr = %handle.local_addr(), "guardrail-rs is running");
 
@@ -117,6 +121,16 @@ fn validate(config_path: std::path::PathBuf) -> anyhow::Result<()> {
                     "disabled".to_string()
                 }
             );
+            println!(
+                "  pipeline.on_error:    {}",
+                match config.pipeline.on_error {
+                    guardrail_config::OnErrorBehavior::Allow => "allow (fail-open)",
+                    guardrail_config::OnErrorBehavior::Block => "block (fail-closed)",
+                }
+            );
+            for warning in guardrail_config::config_warnings(&config_path)? {
+                eprintln!("warning: {warning}");
+            }
             Ok(())
         }
         Err(e) => {

@@ -121,6 +121,51 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigLoadError> {
     Ok(config)
 }
 
+/// Advisories about a configuration that loads but may not do what its
+/// author expects. `guardrail validate` prints them and `guardrail run` logs
+/// them at startup; none of them stops the proxy.
+///
+/// Today there is one: `pipeline.on_error` left unset. The default is
+/// `"allow"`, so a stage that errors is skipped and the request proceeds
+/// unchecked by it. Setting the key, to either value, records that choice
+/// and silences the warning.
+///
+/// # Errors
+///
+/// [`ConfigLoadError::Io`] or [`ConfigLoadError::Parse`] if the file can't be
+/// read or isn't TOML.
+pub fn config_warnings(path: impl AsRef<Path>) -> Result<Vec<String>, ConfigLoadError> {
+    let path = path.as_ref();
+    let contents = std::fs::read_to_string(path).map_err(|source| ConfigLoadError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let table: toml::Table =
+        toml::from_str(&contents).map_err(|source| ConfigLoadError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(warnings_for(&table))
+}
+
+fn warnings_for(table: &toml::Table) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let on_error_set = table
+        .get("pipeline")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|pipeline| pipeline.contains_key("on_error"));
+    if !on_error_set {
+        warnings.push(
+            "pipeline.on_error is not set, so it defaults to \"allow\" (fail-open): a stage \
+             that errors is skipped and the request proceeds unchecked by it. Set \
+             pipeline.on_error = \"block\" to fail closed, or = \"allow\" to keep this \
+             behaviour and silence this warning."
+                .to_string(),
+        );
+    }
+    warnings
+}
+
 /// Build the `regex_injection` scanner: the bundled rules or `rules_file`,
 /// plus `extra_rules`.
 ///
@@ -713,6 +758,20 @@ url = "https://api.openai.com"
         let config = load_config(f.path()).unwrap();
         assert_eq!(config.upstream.url, "https://api.openai.com");
         assert_eq!(config.server.port, 8080);
+    }
+
+    #[test]
+    fn test_warns_when_on_error_is_implicit() {
+        let warnings = |text: &str| config_warnings(write_temp_config(text).path()).unwrap();
+        let implicit = warnings(MINIMAL);
+        assert_eq!(implicit.len(), 1, "{implicit:?}");
+        assert!(implicit[0].contains("pipeline.on_error"), "{implicit:?}");
+        for value in ["allow", "block"] {
+            let explicit = format!("{MINIMAL}\n[pipeline]\non_error = \"{value}\"\n");
+            assert!(warnings(&explicit).is_empty(), "on_error = {value}");
+        }
+        let other_key = format!("{MINIMAL}\n[pipeline]\nstage_timeout_ms = 100\n");
+        assert_eq!(warnings(&other_key).len(), 1);
     }
 
     /// A key the schema doesn't know is an error that names the key, at
