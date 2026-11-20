@@ -5,6 +5,11 @@
 for a complete, annotated example. This document is the field-by-field
 reference, matching `crates/guardrail-config/src/schema.rs` exactly.
 
+Unknown keys are an error, at every level: `guardrail validate`, startup and
+a SIGHUP reload all refuse a file with a key this reference doesn't list,
+and name the key and its line. A refused reload leaves the running
+configuration in place.
+
 ## `[server]`
 
 | Field | Type | Default | Description |

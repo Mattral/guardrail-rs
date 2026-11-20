@@ -715,6 +715,31 @@ url = "https://api.openai.com"
         assert_eq!(config.server.port, 8080);
     }
 
+    /// A key the schema doesn't know is an error that names the key, at
+    /// every level: a misspelt setting must not fall back to its default.
+    #[test]
+    fn test_unknown_keys_are_refused() {
+        for (extra, key) in [
+            ("unknown_section = 1", "unknown_section"),
+            ("[pipeline]\non_eror = \"block\"", "on_eror"),
+            (
+                "[stages.pii_redactor]\nredact_response = true",
+                "redact_response",
+            ),
+            (
+                "[observability.audit_log]\nenabled = true\ndirectory = \"/tmp\"",
+                "directory",
+            ),
+        ] {
+            let f = write_temp_config(&format!("{MINIMAL}\n{extra}\n"));
+            let err = load_config(f.path())
+                .expect_err(&format!("loaded with {extra:?}"))
+                .to_string();
+            assert!(err.contains("unknown field"), "{err}");
+            assert!(err.contains(&format!("`{key}`")), "names `{key}`: {err}");
+        }
+    }
+
     /// `MINIMAL` with `regex_injection` settings appended.
     fn with_injection_rules(settings: &str) -> String {
         format!("{MINIMAL}\n[stages.regex_injection]\n{settings}\n")

@@ -66,6 +66,7 @@ use serde::Deserialize;
 
 /// Top-level configuration structure.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Server bind settings.
     pub server: ServerConfig,
@@ -96,6 +97,7 @@ pub struct Config {
 
 /// Server bind address and worker settings.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Bind address (default: `"127.0.0.1"`).
     #[serde(default = "default_host")]
@@ -215,6 +217,7 @@ fn default_max_body_size() -> usize {
 
 /// Upstream LLM API connection settings.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpstreamConfig {
     /// Base URL of the upstream LLM API (default: `"https://api.openai.com"`).
     #[serde(default = "default_upstream_url")]
@@ -258,6 +261,7 @@ fn default_connect_timeout() -> u64 {
 /// This is separate from the upstream API key; `guardrail-rs` never inspects,
 /// stores, or modifies the upstream `Authorization` header.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     /// Whether to require callers to present a guardrail API key.
     /// Default: `false`.
@@ -273,6 +277,7 @@ pub struct AuthConfig {
 
 /// Pipeline ordering and error-behavior settings.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PipelineConfig {
     /// Ordered list of stage IDs to run on the **request** side.
     /// Remove a stage ID to disable it. Order is significant.
@@ -326,6 +331,7 @@ fn default_response_stages() -> Vec<String> {
 /// `[onnx]`: how the ONNX stages (`onnx_injection`, `toxicity`) run their
 /// models. Each enabled stage gets its own pool of `sessions`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OnnxRuntimeConfig {
     /// Sessions per stage: how many requests a stage scores in parallel.
     /// Each session holds its own copy of the model in memory. `0` (the
@@ -394,6 +400,7 @@ impl OnErrorBehavior {
 
 /// Per-stage configuration block.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StagesConfig {
     /// Regex-based prompt injection scanner.
     #[serde(default)]
@@ -424,6 +431,7 @@ pub enum StageAction {
 
 /// Configuration for [`guardrail_classifiers::RegexInjectionScanner`].
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegexInjectionConfig {
     /// Whether this stage is enabled. Default: `true`.
     #[serde(default = "default_true")]
@@ -452,6 +460,7 @@ impl Default for RegexInjectionConfig {
 
 /// Custom PII replacement tokens.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PiiReplacements {
     /// Replacement for email addresses. Default: `"[EMAIL]"`.
     #[serde(default = "default_email_replacement")]
@@ -514,6 +523,7 @@ fn default_awskey_replacement() -> String {
 
 /// Configuration for [`guardrail_classifiers::PiiRedactor`].
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PiiRedactorConfig {
     /// Whether this stage is enabled. Default: `true`.
     #[serde(default = "default_true")]
@@ -583,6 +593,7 @@ fn default_pii_entities() -> Vec<String> {
 
 /// Configuration for ONNX-backed injection/toxicity stages.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OnnxStageConfig {
     /// Whether this stage is enabled. Default: `false` (requires model files).
     #[serde(default)]
@@ -629,6 +640,7 @@ impl Default for OnnxStageConfig {
 
 /// Configuration specific to the toxicity classifier (adds `scan_roles`).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToxicityStageConfig {
     /// Whether this stage is enabled.
     #[serde(default)]
@@ -741,6 +753,7 @@ fn default_true() -> bool {
 
 /// User-defined policy configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyConfig {
     /// List of policy rules, evaluated in order.
     #[serde(default)]
@@ -760,6 +773,7 @@ pub struct PolicyConfig {
 /// then.message = "Competitor mentions are not permitted."
 /// ```
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyRuleConfig {
     /// Human-readable rule name (used in audit logs).
     pub name: String,
@@ -774,6 +788,7 @@ pub struct PolicyRuleConfig {
 
 /// Policy condition (flattened `when.*` table).
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyConditionConfig {
     /// Matches if any keyword appears in any message content (case-insensitive).
     #[serde(default)]
@@ -791,6 +806,7 @@ pub struct PolicyConditionConfig {
 
 /// Policy action (the `then.*` table).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyActionConfig {
     /// The action to take: `"allow"`, `"redact"`, `"block"`, or `"log_only"`.
     #[serde(default)]
@@ -828,6 +844,7 @@ pub enum PolicyAction {
 
 /// Observability (metrics, tracing, audit log) configuration.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ObservabilityConfig {
     /// Log level: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`. Default: `"info"`.
     #[serde(default = "default_log_level")]
@@ -870,6 +887,7 @@ fn default_metrics_port() -> u16 {
 
 /// Rotating NDJSON audit log configuration.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuditLogConfig {
     /// Whether the audit log is enabled. Default: `false`.
     #[serde(default)]

@@ -332,7 +332,7 @@ async fn upstream_failure_returns_bad_gateway() {
 
         [upstream]
         url = "http://127.0.0.1:1"
-        upstream_timeout_secs = 1
+        timeout_secs = 1
     "#;
 
     let (handle, _f) = start_proxy(config_toml).await;
@@ -666,13 +666,15 @@ async fn audit_log_config_does_not_break_proxy() {
 
         [observability.audit_log]
         enabled = true
-        directory = "{}"
-        file_name_prefix = "audit-e2e"
-        rotation = "never"
+        path = "{}"
         "#,
         upstream.uri(),
         // Escape backslashes on Windows path separators.
-        audit_dir.path().to_string_lossy().replace('\\', "\\\\")
+        audit_dir
+            .path()
+            .join("audit-e2e.ndjson")
+            .to_string_lossy()
+            .replace('\\', "\\\\")
     );
 
     let (handle, _f) = start_proxy(&config_toml).await;

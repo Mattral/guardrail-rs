@@ -169,5 +169,5 @@ With `onnx`:
 already-accepted connections are given a short grace period (500ms) to
 complete before the process exits. For zero-downtime deployments, ensure
 your orchestrator's termination grace period is at least a few seconds longer
-than your `upstream_timeout_secs` to allow in-flight upstream calls to
+than your `upstream.timeout_secs` to allow in-flight upstream calls to
 complete or time out.
