@@ -76,6 +76,8 @@ Real ONNX models are optional and slow; the smoke tests are `#[ignore]`d:
   A change to the injection rules changes the results; record them with
   `GUARDRAIL_EVAL_UPDATE=1 cargo test -p guardrail-test-suite --test detection_eval`
   and commit `eval/baseline.json` and `eval/RESULTS.md`.
+- **Rule changes:** follow "Changing the rules" in `eval/README.md`;
+  develop on jackhhao's data and never read deepset's cases to write rules.
 
 ## Rules for changes
 

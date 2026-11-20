@@ -83,9 +83,12 @@ Docker and Kubernetes setups are in
 
 ## What it checks
 
-- **Prompt injection (pattern rules).** 28 regular expressions for common
-  jailbreak and prompt-extraction phrasings. On by default. They catch the
-  phrasings they were written for and little else.
+- **Prompt injection (pattern rules).** 28 regular expressions for specific
+  phrasings; tested examples include "ignore all previous instructions",
+  "you are now DAN" and "reveal your full system prompt". On by default.
+  They catch phrasings like these and little else: 1.5% of a public
+  injection dataset
+  ([what they miss](https://github.com/Mattral/guardrail-rs/blob/main/eval/RESULTS.md)).
 - **Personal data.** Emails, phone numbers, card numbers (Luhn-checked),
   SSNs, IP addresses and API keys are replaced before the request leaves.
   On by default for requests; for model responses, turn on
@@ -155,6 +158,14 @@ guardrail-rs reaches **1.0** when:
    route.
 4. **The configuration is stable.** No breaking changes to
    `guardrail.toml` within 1.x.
+
+**Decided for 1.0: errors fail open by default.** guardrail-rs is meant
+as one extra layer, so a check that breaks shouldn't take your app down
+with it. The cost is that a request can go through unchecked, so it is
+never silent: `guardrail validate` warns until `pipeline.on_error` is set,
+and every skipped check is counted in `/metrics` and named in the audit
+log (`failed_open_stages`). If you would rather refuse the request, set
+`pipeline.on_error = "block"`.
 
 Everything outside the "does not do" list above is up for discussion. Open
 work is tracked in the
