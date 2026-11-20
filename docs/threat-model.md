@@ -1,9 +1,16 @@
 # Threat Model
 
-`guardrail-rs` defends against threats at the boundary between a **caller**
+`guardrail-rs` addresses threats at the boundary between a **caller**
 (your application) and an **upstream LLM provider** (OpenAI, Anthropic, etc.).
-This document describes what guardrail-rs protects against, its explicit trust
-assumptions, and the threats it does **not** address.
+This document describes what guardrail-rs is designed to address, its explicit
+trust assumptions, and the threats it does **not** address.
+
+guardrail-rs is an experimental reverse proxy, not a verified security
+control. "In scope" below means a threat the project has mitigations for, not
+that those mitigations have measured effectiveness: no precision, recall or
+false-positive rates have been measured for prompt-injection or PII detection.
+Stages also fail open by default (see
+[Fail-open by default](#fail-open-by-default-pipelineon_error--allow)).
 
 ## Trust boundaries
 
@@ -25,7 +32,7 @@ assumptions, and the threats it does **not** address.
       [Upstream LLM Provider]
 ```
 
-## In scope: what guardrail-rs protects against
+## In scope: what guardrail-rs is designed to address
 
 ### 1. Prompt injection (request side)
 
@@ -380,11 +387,13 @@ cost of throughput per core; see [`configuration.md`](configuration.md#onnx).
 
 If a stage returns an error while handling a request (for example, ONNX
 inference fails), the request continues as if that stage had allowed it, so
-it reaches the upstream without that stage's check. This keeps a failing
-model from taking down production traffic. Set `pipeline.on_error = "block"`
-to fail closed for every stage, or set `on_error = "block"` on an individual
-ONNX stage to fail closed only for that stage. Fail-closed errors are
-returned as `403` with code `stage_error`.
+it reaches the upstream without that stage's check. This is a risk: an
+erroring stage provides no protection for that request. The default keeps
+traffic flowing when a stage fails, at the cost of that coverage. Set
+`pipeline.on_error = "block"` to fail closed for every stage, or set
+`on_error = "block"` on an individual ONNX stage to fail closed only for
+that stage. Fail-closed errors are returned as `403` with code
+`stage_error`.
 
 Fail-open is only a defensible default if you can see it happening. Every
 stage error increments
