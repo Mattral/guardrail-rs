@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- README: add a status note under the tagline. guardrail-rs is an
+  experimental reverse proxy; no precision, recall or false-positive rates
+  have been measured for prompt-injection or PII detection, and it is not a
+  verified security control. The intro's description of prompt-injection
+  blocking now refers to this note.
+- README and `docs/threat-model.md`: describe fail-open as a stated risk. By
+  default a stage that errors is skipped and the request proceeds unchecked
+  by that stage; `pipeline.on_error = "block"` (or `on_error = "block"` per
+  ONNX stage) fails closed. The default is unchanged.
+- README: the local benchmark toolchain is given as Rust 1.99.0, as recorded
+  in `docs/benchmarks.md`, alongside the 1.88+ requirement for the crates.
+- README: the binary is described as a single binary dynamically linked
+  against the system C library; the approximate size is no longer quoted, as
+  it has not been measured in this repository. `docs/roadmap.md` updated to
+  match.
+- README, `docs/architecture.md`, `docs/threat-model.md`: audit-log content
+  statements are described as design intent. No test currently asserts that
+  audit records exclude message content or API keys.
+- README and `docs/threat-model.md`: "protects against" is reworded to
+  "designed to address", and "drop-in" is limited to the routes listed in
+  `docs/configuration.md`.
+
 ## [0.4.0] - 2026-11-06
 
 ### Upgrading from 0.3.x
