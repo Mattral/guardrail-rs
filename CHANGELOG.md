@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/fixtures/README.md`: three injection fixtures are not caught by the
   bundled rules; the file no longer says they must be blocked.
 - CONTRIBUTING: rule changes record new evaluation results.
+- README: the 1.0 section records the decision to keep fail-open as the
+  default, and how it stays visible; the pattern-rules bullet names tested
+  phrasings and links what the rules miss. `eval/README.md`: "Changing the
+  rules" keeps deepset held-out (develop on jackhhao, report on deepset's
+  test split).
 
 ## [0.5.0] - 2026-11-20
 

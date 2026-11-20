@@ -66,6 +66,21 @@ Read the numbers with these in mind:
 - **These are two public datasets, not your traffic.** Rates on real
   requests can be higher or lower.
 
+## Changing the rules
+
+deepset is the held-out set, and it only stays held-out if nobody tunes
+the rules to it:
+
+- **Develop against jackhhao's data** (`python3 eval/fetch-jackhhao.py`).
+  Read its misses, write rules, and check its false alarms.
+- **Report on deepset's test split**: the `deepset-test-*` rows (60
+  injections, 56 benign). `baseline.json` lists every caught row by ID.
+- **Don't read deepset's cases to write rules.** The test names the
+  deepset rows a change affects; use that to check a change, not to find
+  phrasings to add.
+- Record the new results as described above, so the change and its effect
+  land in the same commit.
+
 ## Languages
 
 deepset mixes English and German, so its results are also split by

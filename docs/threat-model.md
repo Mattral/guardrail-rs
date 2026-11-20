@@ -399,7 +399,10 @@ traffic flowing when a stage fails, at the cost of that coverage. Set
 that stage. Fail-closed errors are returned as `403` with code
 `stage_error`.
 
-Fail-open is only a defensible default if you can see it happening. Every
+Keeping this default for 1.0 is a recorded decision (README, "Where this
+is going"): guardrail-rs is an extra layer, and a broken check shouldn't
+take the application down. Fail-open is only a defensible default if you
+can see it happening. Every
 stage error increments
 `guardrail_pipeline_errors_total{stage, outcome="allowed"|"blocked"}`, and
 the request's audit record lists the stages that failed open in
