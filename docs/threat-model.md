@@ -402,13 +402,28 @@ the request's audit record lists the stages that failed open in
 `failed_open_stages`. [`contrib/prometheus-alerts.yml`](../contrib/prometheus-alerts.yml)
 has an example alert that fires on any fail-open in the last 5 minutes.
 
-### No raw content in logs
+### No raw content in the audit log
 
-By design, audit records (both `tracing` events and NDJSON file) do not
-contain message content, API keys, or PII values; no test currently asserts
-this. Only metadata (request ID, model, decision, entity types found,
-latency) is logged. The `PiiRedactor` itself runs before the audit event is
-emitted, so even the redacted text is not logged.
+Audit records carry only metadata (request ID, model, decision, entity types
+found, latency); the record type has no field for message content. The
+`PiiRedactor` runs before the audit event is emitted, so the redacted text is
+not recorded either.
+
+`audit_log_excludes_message_content_and_api_keys`
+in [`crates/guardrail-test-suite/tests/audit_log_content.rs`](../crates/guardrail-test-suite/tests/audit_log_content.rs)
+asserts that the NDJSON audit log contains no message text, PII values,
+upstream response text or API key, for three non-streaming
+`POST /v1/chat/completions` requests with the default stages: one allowed,
+one redacted, one blocked. The following are not covered by that test, so
+for them this holds by design only:
+
+- other routes, and streamed requests and responses, including the
+  `redact_responses` path;
+- error and fail-open paths, such as an upstream failure or a stage that
+  errored and was skipped;
+- the optional ONNX stages;
+- the application log on stderr (`tracing` output), `/metrics`, and OTLP
+  traces.
 
 ### Immutable pipeline per request
 

@@ -25,8 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it has not been measured in this repository. `docs/roadmap.md` updated to
   match.
 - README, `docs/architecture.md`, `docs/threat-model.md`: audit-log content
-  statements are described as design intent. No test currently asserts that
-  audit records exclude message content or API keys.
+  statements now refer to the NDJSON audit log, name the test that asserts
+  them, and list what the test does not cover (streaming, error and fail-open
+  paths, the optional ONNX stages, application logs, `/metrics`, OTLP
+  traces).
+
+### Added
+
+- Test `audit_log_excludes_message_content_and_api_keys`
+  (`crates/guardrail-test-suite/tests/audit_log_content.rs`): sends an
+  allowed, a redacted and a blocked chat-completion request through the proxy
+  with the NDJSON audit log enabled, and asserts that the log holds one record
+  per request and none of the message text, PII values, upstream response
+  text or API key.
 - README and `docs/threat-model.md`: "protects against" is reworded to
   "designed to address", and "drop-in" is limited to the routes listed in
   `docs/configuration.md`.
