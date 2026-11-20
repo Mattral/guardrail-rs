@@ -252,6 +252,46 @@ where
     Ok(Some((non_blocking, guard)))
 }
 
+/// Build the NDJSON audit-log [`Layer`](tracing_subscriber::Layer) that
+/// `guardrail run` installs: JSON lines, one per event under
+/// [`AUDIT_TARGET`] and nothing else, written to `config.path` through the
+/// size-rotating writer from [`build_layer`]. Returns `Ok(None)` when
+/// `config.enabled = false`.
+///
+/// Keep the returned [`WorkerGuard`] alive for as long as events should be
+/// written; dropping it flushes and stops the background writer.
+///
+/// # Errors
+///
+/// As for [`build_layer`].
+pub fn ndjson_layer<S>(
+    config: &AuditLogConfig,
+) -> Result<
+    Option<(
+        impl tracing_subscriber::Layer<S> + Send + Sync + 'static,
+        WorkerGuard,
+    )>,
+    AuditLogError,
+>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    use tracing_subscriber::filter::filter_fn;
+    use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_subscriber::Layer as _;
+
+    let Some((writer, guard)) = build_layer(config)? else {
+        return Ok(None);
+    };
+    let layer = tracing_subscriber::fmt::layer()
+        .json()
+        .with_span_events(FmtSpan::NONE)
+        .with_target(false)
+        .with_writer(writer)
+        .with_filter(filter_fn(|metadata| metadata.target() == AUDIT_TARGET));
+    Ok(Some((layer, guard)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

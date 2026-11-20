@@ -27,13 +27,10 @@ async fn start_proxy(
 
 /// The NDJSON audit log records decision metadata only. Drive an allowed, a
 /// redacted and a blocked request through the proxy, with the audit layer
-/// built the same way `guardrail run` builds it (`init_tracing` in
-/// `guardrail-cli`), and check that no message text, PII value, response text
-/// or API key reaches the file.
+/// `guardrail run` installs (`audit_log::ndjson_layer`), and check that no
+/// message text, PII value, response text or API key reaches the file.
 #[tokio::test]
 async fn audit_log_excludes_message_content_and_api_keys() {
-    use tracing_subscriber::filter::filter_fn;
-    use tracing_subscriber::fmt::format::FmtSpan;
     use tracing_subscriber::prelude::*;
 
     const ALLOW_TEXT: &str = "canary-allow-7f3a: explain borrowing in Rust";
@@ -60,17 +57,9 @@ async fn audit_log_excludes_message_content_and_api_keys() {
         path: audit_path.to_string_lossy().into_owned(),
         max_size_mb: 10,
     };
-    let (writer, guard) = guardrail_proxy::audit_log::build_layer(&audit_config)
+    let (layer, guard) = guardrail_proxy::audit_log::ndjson_layer(&audit_config)
         .unwrap()
         .expect("audit log is enabled");
-    let layer = tracing_subscriber::fmt::layer()
-        .json()
-        .with_span_events(FmtSpan::NONE)
-        .with_target(false)
-        .with_writer(writer)
-        .with_filter(filter_fn(|metadata| {
-            metadata.target() == guardrail_proxy::audit_log::AUDIT_TARGET
-        }));
     // `#[tokio::test]` uses a current-thread runtime, so the proxy's tasks run
     // on this thread and see this thread-local subscriber. This test lives in
     // its own test binary: with other tests running in parallel threads,

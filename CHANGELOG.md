@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timestamp; that is now a short date conversion with tests for leap days,
   century boundaries and the format itself.
 
+### Added
+
+- `guardrail_proxy::audit_log::ndjson_layer`: the NDJSON audit-log layer
+  that `guardrail run` installs, for embedders that want the same audit
+  file. The CLI and the audit-log content test both use it.
+
 ### Changed
 
 - `guardrail-config`: every configuration struct is
