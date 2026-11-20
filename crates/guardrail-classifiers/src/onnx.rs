@@ -26,7 +26,7 @@ use guardrail_core::{
     request::{GuardrailRequest, Role},
 };
 use std::path::Path;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 /// Longest token sequence sent to the model in one inference, special tokens
 /// included. Both recommended models accept at most 512 positions (RoBERTa
@@ -159,6 +159,25 @@ fn internal(e: impl std::fmt::Display) -> GuardrailError {
     GuardrailError::Internal(e.to_string())
 }
 
+/// The process's ONNX Runtime environment, shared by every session.
+///
+/// `ort` allows one environment per process and can't build another once
+/// it is dropped, so it is created on first use and kept for the life of
+/// the process. A failure to create it is kept too, and returned to every
+/// later caller.
+fn environment() -> Result<&'static ort::environment::Environment, GuardrailError> {
+    static ENVIRONMENT: OnceLock<Result<ort::environment::Environment, String>> = OnceLock::new();
+    ENVIRONMENT
+        .get_or_init(|| {
+            ort::init()
+                .with_name("guardrail")
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|e| GuardrailError::Internal(format!("ONNX Runtime environment: {e}")))
+}
+
 /// Identical ONNX Runtime sessions for one stage, each used by one
 /// inference at a time.
 pub(crate) struct SessionPool {
@@ -174,9 +193,10 @@ pub(crate) struct SessionPool {
 impl SessionPool {
     fn load(model_path: &Path, options: OnnxRuntimeOptions) -> Result<Arc<Self>, GuardrailError> {
         let options = options.normalized();
+        let environment = environment()?;
         let sessions = (0..options.sessions)
             .map(|_| {
-                ort::session::Session::builder()
+                ort::session::Session::builder(environment)
                     .map_err(internal)?
                     .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
                     .map_err(internal)?

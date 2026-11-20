@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ort` 2.0.0-rc.15 (ONNX Runtime 1.31, was rc.13 with 1.28). The
+  ONNX classifiers now share one ONNX Runtime environment per process,
+  which rc.15 requires. On Windows, rc.13's build script failed with recent
+  Cargo versions, which place build-script output one directory deeper.
 - Release builds use `lto = "thin"`, `codegen-units = 1` and
   `strip = "symbols"`. The `guardrail` binary (default features, x86_64
   Linux, Rust 1.99.1) went from 16.3 MB to 9.9 MB; a clean release build of
