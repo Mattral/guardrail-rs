@@ -70,9 +70,9 @@ walks through blocking a prompt injection and redacting PII live.
 | | |
 |---|---|
 | **Threat model scope** | Prompt injection, PII leakage, toxic content, custom policy violations. PII is redacted from requests by default. Redacting PII from model *responses* is opt-in (`redact_responses = true`) and covers both complete and streamed (`stream: true`) responses; streams stay streamed, with PII redacted as tokens flow. Does *not* cover adversarial-ML evasion of the classifiers or post-model LLM behavior — full details in [`docs/threat-model.md`](docs/threat-model.md). |
-| **Latency** | Default regex + PII pipeline, measured end to end (`Pipeline::run`): 4.7 µs at 512 B, 26.5 µs at 4 KB, 47.3 µs at 8 KB. The optional ONNX stages are far slower: 36–42 ms per stage for a 64 B prompt, 0.38–0.43 s at 1 KB. These figures are Criterion means from one local run (8 cores, Rust 1.99); CI's shared-runner medians are in [`docs/benchmarks.md`](docs/benchmarks.md), along with how to reproduce both. CI hard-fails if the regex + PII pipeline exceeds 5 ms. |
+| **Latency** | Default regex + PII pipeline, measured end to end (`Pipeline::run`): 4.7 µs at 512 B, 26.5 µs at 4 KB, 47.3 µs at 8 KB. The optional ONNX stages are far slower: 36–42 ms per stage for a 64 B prompt, 0.38–0.43 s at 1 KB. These figures are Criterion means from one local run (8 cores, Rust 1.99.0 as recorded in [`docs/benchmarks.md`](docs/benchmarks.md); the crates themselves require Rust 1.88+); CI's shared-runner medians are in [`docs/benchmarks.md`](docs/benchmarks.md), along with how to reproduce both. CI hard-fails if the regex + PII pipeline exceeds 5 ms. |
 | **Fails open (risk)** | By default, a stage that errors on a request (e.g. ONNX inference fails) is skipped and the request proceeds to the upstream unchecked by that stage. To fail closed, set `pipeline.on_error = "block"`, or `on_error = "block"` on an individual ONNX stage. A model that fails to load stops startup rather than failing open. |
-| **Observability** | Prometheus metrics at `/metrics` on the proxy's own port, OpenTelemetry traces (OTLP), and an NDJSON audit log — which never contains message content or API keys, only decision metadata. |
+| **Observability** | Prometheus metrics at `/metrics` on the proxy's own port, OpenTelemetry traces (OTLP), and an NDJSON audit log, which by design records only decision metadata, not message content or API keys (no test asserts this). |
 
 ```mermaid
 flowchart LR
@@ -84,8 +84,9 @@ flowchart LR
 
 ## Why guardrail-rs?
 
-- **No Python, no PyTorch, no GPU required.** A single static binary
-  (~15 MB), built from the Rust source in this repository.
+- **No Python, no PyTorch, no GPU required.** A single binary built from
+  the Rust source in this repository (dynamically linked against the system
+  C library; its size has not been measured here).
 - **Fast without ONNX.** In the default configuration (regex + PII), the
   pipeline took 4.7 µs for a 512 B request and 47 µs for 8 KB in our
   measurement. Cost grows with input size, mostly from PII redaction. The
@@ -101,7 +102,7 @@ flowchart LR
   ONNX stage.
 - **Hot-reloadable configuration.** Update rules and policies without
   dropping connections.
-- **Observable.** Structured audit logs (never logging raw PII) and
+- **Observable.** Structured audit logs (designed not to log raw PII) and
   Prometheus metrics out of the box.
 
 ## Quick start

@@ -404,10 +404,11 @@ has an example alert that fires on any fail-open in the last 5 minutes.
 
 ### No raw content in logs
 
-Audit records (both `tracing` events and NDJSON file) never contain message
-content, API keys, or PII values. Only metadata (request ID, model, decision,
-entity types found, latency) is logged. The `PiiRedactor` itself runs before
-the audit event is emitted, so even the redacted text is not logged.
+By design, audit records (both `tracing` events and NDJSON file) do not
+contain message content, API keys, or PII values; no test currently asserts
+this. Only metadata (request ID, model, decision, entity types found,
+latency) is logged. The `PiiRedactor` itself runs before the audit event is
+emitted, so even the redacted text is not logged.
 
 ### Immutable pipeline per request
 

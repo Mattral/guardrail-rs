@@ -64,7 +64,8 @@ Open work, grouped by what it needs to run. Measurements go in
 - [ ] `.rustfmt.toml`: remove the nightly-only `imports_granularity` and
   `group_imports` (ignored on stable).
 - [ ] `[profile.release]` with `lto = "thin"`, `codegen-units = 1`,
-  `strip = "symbols"`; re-measure the binary size quoted in the README.
+  `strip = "symbols"`; measure the release binary size (the README does not
+  quote one).
 - [ ] Dockerfile: correct the comment on `pkg-config` and `libssl-dev`.
   The default build is rustls-only, but ONNX builds need both:
   `ort-sys` → `ureq` → `native-tls` → `openssl-sys`, a build dependency
