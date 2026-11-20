@@ -33,3 +33,6 @@ tokenizer.json
 # Coverage
 *.profraw
 lcov.info
+
+# Evaluation datasets fetched on demand (eval/fetch-jackhhao.py)
+/eval/data/external/
